@@ -2,12 +2,17 @@ package com.example.data
 
 import android.content.Context
 import com.example.model.Album
+import com.example.model.EmptyInputError
+import com.example.model.InvalidUrlError
 import com.example.model.Playlist
 import com.example.model.Track
+import com.example.model.UnknownError
+import com.example.model.WearsicError
 import com.example.network.WearsicApiClient
 import com.example.network.WearsicHttpApiClient
 import com.example.network.model.ConnectionTestState
 import com.example.network.model.TrackDto
+import com.example.util.Validation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -39,10 +44,12 @@ class WearsicMusicRepository(
     }
 
     suspend fun testServerConnection(targetUrl: String): ConnectionTestState {
-        val url = targetUrl.trim()
-        if (!preferencesRepository.isValidServerUrl(url)) {
-            return ConnectionTestState.Error("Invalid URL. Must start with http:// or https://")
+        val urlValidation = Validation.validateServerUrl(targetUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return ConnectionTestState.Error(error?.getDisplayMessage() ?: "Invalid URL")
         }
+        val url = urlValidation.getOrThrow()
 
         val httpResult = httpApiClient.checkHealth(url)
         if (httpResult.isSuccess) {
@@ -50,14 +57,23 @@ class WearsicMusicRepository(
             return ConnectionTestState.Success(version = health.version, serverName = health.serverName)
         }
 
-        val errorMsg = httpResult.exceptionOrNull()?.message ?: "Connection failed"
+        val error = httpResult.exceptionOrNull()
+        val errorMsg = when (error) {
+            is WearsicError -> error.getDisplayMessage()
+            else -> error?.message ?: "Connection failed"
+        }
         return ConnectionTestState.Error(errorMsg)
     }
 
     suspend fun searchMusic(query: String): Result<List<Track>> {
+        val queryValidation = Validation.validateQuery(query)
+        if (queryValidation.isFailure) {
+            val error = queryValidation.exceptionOrNull() as? WearsicError
+            return Result.failure(error ?: EmptyInputError("query"))
+        }
         val currentUrl = getServerUrl()
         
-        val httpResult = httpApiClient.searchTracks(currentUrl, query)
+        val httpResult = httpApiClient.searchTracks(currentUrl, queryValidation.getOrThrow())
         if (httpResult.isSuccess) {
             val dtoList = httpResult.getOrThrow().tracks
             val domainTracks = dtoList.map { it.toDomainTrack() }
@@ -77,11 +93,16 @@ class WearsicMusicRepository(
     }
 
     suspend fun addFavorite(track: Track): Result<Unit> {
+        val trackIdValidation = Validation.validateTrackId(track.id)
+        if (trackIdValidation.isFailure) {
+            val error = trackIdValidation.exceptionOrNull() as? WearsicError
+            return Result.failure(error ?: com.example.model.InvalidTrackIdError(track.id))
+        }
         val currentUrl = getServerUrl()
         val dto = TrackDto(
-            id = track.id,
-            title = track.title,
-            artist = track.artist,
+            id = trackIdValidation.getOrThrow(),
+            title = track.title.sanitizeDisplay(),
+            artist = track.artist.sanitizeDisplay(),
             album = null,
             artworkUrl = track.artworkUrl,
             durationMs = track.durationMs,
@@ -91,8 +112,13 @@ class WearsicMusicRepository(
     }
 
     suspend fun removeFavorite(trackId: String): Result<Unit> {
+        val trackIdValidation = Validation.validateTrackId(trackId)
+        if (trackIdValidation.isFailure) {
+            val error = trackIdValidation.exceptionOrNull() as? WearsicError
+            return Result.failure(error ?: com.example.model.InvalidTrackIdError(trackId))
+        }
         val currentUrl = getServerUrl()
-        return httpApiClient.removeFavorite(currentUrl, trackId)
+        return httpApiClient.removeFavorite(currentUrl, trackIdValidation.getOrThrow())
     }
 
     suspend fun getPlaylists(): Result<List<Playlist>> {
@@ -139,16 +165,26 @@ class WearsicMusicRepository(
     }
 
     suspend fun createPlaylist(name: String): Result<Playlist> {
+        val nameValidation = Validation.validatePlaylistName(name)
+        if (nameValidation.isFailure) {
+            val error = nameValidation.exceptionOrNull() as? WearsicError
+            return Result.failure(error ?: EmptyInputError("playlist name"))
+        }
         val currentUrl = getServerUrl()
-        return httpApiClient.createPlaylist(currentUrl, name).map { it.toDomainPlaylist() }
+        return httpApiClient.createPlaylist(currentUrl, nameValidation.getOrThrow()).map { it.toDomainPlaylist() }
     }
 
     suspend fun addTrackToPlaylist(playlistId: String, track: Track): Result<Unit> {
+        val trackIdValidation = Validation.validateTrackId(track.id)
+        if (trackIdValidation.isFailure) {
+            val error = trackIdValidation.exceptionOrNull() as? WearsicError
+            return Result.failure(error ?: com.example.model.InvalidTrackIdError(track.id))
+        }
         val currentUrl = getServerUrl()
         val dto = TrackDto(
-            id = track.id,
-            title = track.title,
-            artist = track.artist,
+            id = trackIdValidation.getOrThrow(),
+            title = track.title.sanitizeDisplay(),
+            artist = track.artist.sanitizeDisplay(),
             album = null,
             artworkUrl = track.artworkUrl,
             durationMs = track.durationMs,

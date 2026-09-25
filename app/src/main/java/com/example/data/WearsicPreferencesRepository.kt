@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.util.Validation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -41,9 +42,10 @@ class WearsicPreferencesRepository(private val context: Context) {
         }
 
     suspend fun saveServerUrl(url: String) {
-        val cleanUrl = url.trim().trimEnd('/')
+        val urlValidation = Validation.validateServerUrl(url)
+        val cleanUrl = urlValidation.getOrElse { "" }
         context.dataStore.edit { preferences ->
-            preferences[KEY_SERVER_URL] = cleanUrl
+            preferences[KEY_SERVER_URL] = cleanUrl.trim().trimEnd('/')
         }
     }
 
@@ -89,20 +91,15 @@ class WearsicPreferencesRepository(private val context: Context) {
     }
 
     suspend fun saveApiKey(key: String) {
+        val keyValidation = Validation.validateApiKey(key)
+        val cleanKey = keyValidation.getOrElse { "" }
         context.dataStore.edit { preferences ->
-            preferences[KEY_API_KEY] = key.trim()
+            preferences[KEY_API_KEY] = cleanKey.trim()
         }
     }
 
     fun isValidServerUrl(url: String): Boolean {
-        if (url.isBlank()) return false
-        return try {
-            val uri = URI.create(url.trim())
-            val scheme = uri.scheme?.lowercase()
-            (scheme == "http" || scheme == "https") && !uri.host.isNullOrBlank()
-        } catch (_: Exception) {
-            false
-        }
+        return Validation.hasValidScheme(url)
     }
 
     val hiddenPlaylistsFlow: Flow<Set<String>> = context.dataStore.data

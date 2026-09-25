@@ -51,24 +51,31 @@ fun WearsicApp(
     }
 ) {
     val navController = rememberSwipeDismissableNavController()
-    val playbackState by playerViewModel.uiState.collectAsStateWithLifecycle()
-    val searchState by playerViewModel.searchState.collectAsStateWithLifecycle()
-    val serverUrl by playerViewModel.serverUrl.collectAsStateWithLifecycle()
-    val connectionTestState by playerViewModel.connectionTestState.collectAsStateWithLifecycle()
-    val downloads by playerViewModel.downloads.collectAsStateWithLifecycle()
-    val autoCacheEnabled by playerViewModel.autoCacheEnabled.collectAsStateWithLifecycle()
-    val offlineLimit by playerViewModel.offlineLimit.collectAsStateWithLifecycle()
-    val radioState by playerViewModel.radioState.collectAsStateWithLifecycle()
-    val apiKey by playerViewModel.apiKey.collectAsStateWithLifecycle()
-    val storageStats by playerViewModel.storageStats.collectAsStateWithLifecycle()
+    
+    // Extract the specialized ViewModels for convenience
+    val playbackVM = playerViewModel.playbackViewModel
+    val libraryVM = playerViewModel.libraryViewModel
+    val downloadsVM = playerViewModel.downloadsViewModel
+    val settingsVM = playerViewModel.settingsViewModel
+    
+    val playbackState by playbackVM.uiState.collectAsStateWithLifecycle()
+    val searchState by libraryVM.searchState.collectAsStateWithLifecycle()
+    val serverUrl by settingsVM.serverUrl.collectAsStateWithLifecycle()
+    val connectionTestState by settingsVM.connectionTestState.collectAsStateWithLifecycle()
+    val downloads by downloadsVM.allDownloads.collectAsStateWithLifecycle()
+    val autoCacheEnabled by settingsVM.autoCacheEnabled.collectAsStateWithLifecycle()
+    val offlineLimit by settingsVM.offlineLimit.collectAsStateWithLifecycle()
+    val radioState by libraryVM.radioState.collectAsStateWithLifecycle()
+    val apiKey by settingsVM.apiKey.collectAsStateWithLifecycle()
+    val storageStats by downloadsVM.storageStats.collectAsStateWithLifecycle()
     val sleepRemainingMs by playerViewModel.sleepRemainingMs.collectAsStateWithLifecycle()
-    val albumsState by playerViewModel.albumsState.collectAsStateWithLifecycle()
-    val artistsState by playerViewModel.artistsState.collectAsStateWithLifecycle()
-    val recentTracks by playerViewModel.recentTracks.collectAsStateWithLifecycle()
-    val startupHealth by playerViewModel.startupHealth.collectAsStateWithLifecycle()
-    val favoritesState by playerViewModel.favoritesState.collectAsStateWithLifecycle()
-    val playlistsState by playerViewModel.playlistsState.collectAsStateWithLifecycle()
-    val playlistDetailState by playerViewModel.playlistDetailState.collectAsStateWithLifecycle()
+    val albumsState by libraryVM.albumsState.collectAsStateWithLifecycle()
+    val artistsState by libraryVM.artistsState.collectAsStateWithLifecycle()
+    val recentTracks by libraryVM.recentTracks.collectAsStateWithLifecycle()
+    val startupHealth by settingsVM.startupHealth.collectAsStateWithLifecycle()
+    val favoritesState by libraryVM.favoritesState.collectAsStateWithLifecycle()
+    val playlistsState by libraryVM.playlistsState.collectAsStateWithLifecycle()
+    val playlistDetailState by libraryVM.playlistDetailState.collectAsStateWithLifecycle()
 
     val currentTrackDownload = downloads.find { it.trackId == playbackState.currentTrack.id }
     val isCurrentTrackDownloaded = currentTrackDownload?.isCompleted() == true
@@ -101,7 +108,7 @@ fun WearsicApp(
         kotlinx.coroutines.delay(1500)
         MainActivity.pendingTileAction?.let { action ->
             MainActivity.pendingTileAction = null
-            playerViewModel.handleTileAction(action)
+            playbackVM.handleTileAction(action)
         }
     }
 
@@ -119,7 +126,7 @@ fun WearsicApp(
                     playbackState = libraryPlaybackState,
                     recentTracks = recentTracks,
                     onPlayRecentTrack = { tracks, index ->
-                        playerViewModel.playTracksFromList(tracks, index)
+                        libraryVM.playTracksFromList(tracks, index)
                         navController.navigate(Screen.Player.route)
                     },
                     onNavigateToSearch = {
@@ -151,27 +158,27 @@ fun WearsicApp(
                 SearchScreen(
                     searchState = searchState,
                     onQuerySelected = { query ->
-                        playerViewModel.search(query)
+                        libraryVM.search(query)
                     },
                     onSearchTextChanged = { text ->
-                        playerViewModel.onSearchTextChanged(text)
+                        libraryVM.onSearchTextChanged(text)
                     },
                     onTrackSelected = { track ->
-                        playerViewModel.playTrack(track)
+                        libraryVM.playTrack(track)
                         navController.navigate(Screen.Player.route)
                     },
                     onDownloadTrack = { track ->
-                        playerViewModel.startDownload(track)
+                        downloadsVM.startDownload(track)
                     },
                     onAddToQueue = { track ->
-                        playerViewModel.addToQueue(track)
+                        playbackVM.addToQueue(track)
                     },
                     playlists = playlistsState.playlists,
                     onCreatePlaylistAndAdd = { name, track ->
-                        playerViewModel.createPlaylistAndAdd(name, track)
+                        libraryVM.createPlaylistAndAdd(name, track)
                     },
                     onAddToPlaylist = { playlistId, track ->
-                        playerViewModel.addToPlaylist(playlistId, track)
+                        libraryVM.addToPlaylist(playlistId, track)
                     }
                 )
             }
@@ -181,22 +188,22 @@ fun WearsicApp(
                 PlayerScreen(
                     playbackState = playbackState,
                     onTogglePlayPause = {
-                        playerViewModel.togglePlayPause()
+                        playbackVM.togglePlayPause()
                     },
                     onSkipNext = {
-                        playerViewModel.skipToNext()
+                        playbackVM.skipToNext()
                     },
                     onSkipPrevious = {
-                        playerViewModel.skipToPrevious()
+                        playbackVM.skipToPrevious()
                     },
                     onSeekForward = {
-                        playerViewModel.seekForward()
+                        playbackVM.seekForward()
                     },
                     onSeekBack = {
-                        playerViewModel.seekBack()
+                        playbackVM.seekBack()
                     },
                     onToggleFavorite = {
-                        playerViewModel.toggleFavorite()
+                        playbackVM.toggleFavorite()
                     },
                     onNavigateToVolume = {
                         navController.navigate(Screen.Volume.route)
@@ -205,7 +212,7 @@ fun WearsicApp(
                         navController.navigate(Screen.Queue.route)
                     },
                     onDownloadTrack = { track ->
-                        playerViewModel.startDownload(track)
+                        downloadsVM.startDownload(track)
                     },
                     isDownloaded = isCurrentTrackDownloaded,
                     isDownloading = isCurrentTrackDownloading,
@@ -219,10 +226,10 @@ fun WearsicApp(
                     currentOutputDevice = playbackState.outputDeviceName,
                     sleepRemainingMs = sleepRemainingMs,
                     onSleepTimerSet = { minutes ->
-                        playerViewModel.setSleepTimer(minutes)
+                        playbackVM.setSleepTimer(minutes)
                     },
                     onOutputDeviceChanged = {
-                        playerViewModel.refreshOutputDevice()
+                        playbackVM.refreshOutputDevice()
                     }
                 )
             }
@@ -233,29 +240,29 @@ fun WearsicApp(
                     serverUrl = serverUrl,
                     connectionTestState = connectionTestState,
                     onServerUrlChanged = { newUrl ->
-                        playerViewModel.saveServerUrl(newUrl)
+                        settingsVM.saveServerUrl(newUrl)
                     },
                     onTestConnection = { urlToTest ->
-                        playerViewModel.testConnection(urlToTest)
+                        settingsVM.testConnection(urlToTest)
                     },
                     apiKey = apiKey,
                     onApiKeyChanged = { key ->
-                        playerViewModel.setApiKey(key)
+                        settingsVM.saveApiKey(key)
                     },
                     onOpenStorage = {
-                        playerViewModel.refreshStorageStats()
+                        downloadsVM.refreshStorageStats()
                         navController.navigate(Screen.Storage.route)
                     },
                     autoCacheEnabled = autoCacheEnabled,
                     onAutoCacheToggled = { enabled ->
-                        playerViewModel.setAutoCacheEnabled(enabled)
+                        settingsVM.setAutoCacheEnabled(enabled)
                     },
                     offlineLimitSongs = offlineLimit,
                     onOfflineLimitChanged = { limit ->
-                        playerViewModel.saveOfflineLimit(limit)
+                        settingsVM.saveOfflineLimit(limit)
                     },
                     onClearDownloads = {
-                        playerViewModel.clearAllDownloads()
+                        downloadsVM.clearAllDownloads()
                     },
                     startupHealth = startupHealth
                 )
@@ -266,20 +273,20 @@ fun WearsicApp(
                 QueueScreen(
                     playbackState = queuePlaybackState,
                     onPlayItem = { index ->
-                        playerViewModel.seekToQueueItem(index)
+                        playbackVM.seekToQueueItem(index)
                     },
                     onRemoveItem = { index ->
-                        playerViewModel.removeFromQueue(index)
+                        playbackVM.removeFromQueue(index)
                     },
                     onClearQueue = {
-                        playerViewModel.clearQueue()
+                        playbackVM.clearQueue()
                     },
                     shuffleEnabled = playbackState.shuffleEnabled,
                     repeatMode = playbackState.repeatMode,
-                    onToggleShuffle = { playerViewModel.toggleShuffle() },
-                    onCycleRepeat = { playerViewModel.cycleRepeatMode() },
+                    onToggleShuffle = { playbackVM.toggleShuffle() },
+                    onCycleRepeat = { playbackVM.cycleRepeatMode() },
                     radioState = radioState,
-                    onStartRadio = { playerViewModel.startRadio() }
+                    onStartRadio = { libraryVM.startRadio() }
                 )
             }
 
@@ -288,21 +295,21 @@ fun WearsicApp(
                 DownloadsScreen(
                     downloads = downloads,
                     onPlayTrack = { track ->
-                        playerViewModel.playTrack(track)
+                        libraryVM.playTrack(track)
                         navController.navigate(Screen.Player.route)
                     },
                     onDeleteDownload = { trackId ->
-                        playerViewModel.deleteDownload(trackId)
+                        downloadsVM.deleteDownload(trackId)
                     },
                     onCancelDownload = { trackId ->
-                        playerViewModel.cancelDownload(trackId)
+                        downloadsVM.cancelDownload(trackId)
                     },
                     onRetryDownload = { track ->
-                        playerViewModel.deleteDownload(track.id)
-                        playerViewModel.startDownload(track)
+                        downloadsVM.deleteDownload(track.id)
+                        downloadsVM.startDownload(track)
                     },
                     onClearAllDownloads = {
-                        playerViewModel.clearAllDownloads()
+                        downloadsVM.clearAllDownloads()
                     }
                 )
             }
@@ -314,7 +321,7 @@ fun WearsicApp(
                     autoMb = storageStats.autoMb,
                     manualCount = storageStats.manualCount,
                     manualMb = storageStats.manualMb,
-                    onClearAutoCached = { playerViewModel.clearAutoCachedDownloads() }
+                    onClearAutoCached = { downloadsVM.clearAutoCachedDownloads() }
                 )
             }
 
@@ -323,7 +330,7 @@ fun WearsicApp(
                 PlaylistsScreen(
                     playlistsState = playlistsState,
                     onRefresh = {
-                        playerViewModel.refreshLibrary()
+                        libraryVM.refreshLibrary()
                     },
                     onNavigateToFavorites = {
                         navController.navigate(Screen.Favorites.route)
@@ -332,10 +339,10 @@ fun WearsicApp(
                         navController.navigate(Screen.PlaylistDetail.createRoute(playlist.id, playlist.name))
                     },
                     onCreatePlaylist = { name ->
-                        playerViewModel.createPlaylistAndAdd(name, null)
+                        libraryVM.createPlaylistAndAdd(name, null)
                     },
                     onRemovePlaylist = { id ->
-                        playerViewModel.removePlaylist(id)
+                        libraryVM.removePlaylist(id)
                     }
                 )
             }
@@ -345,24 +352,24 @@ fun WearsicApp(
                 FavoritesScreen(
                     favoritesState = favoritesState,
                     onRefresh = {
-                        playerViewModel.refreshFavorites()
+                        libraryVM.refreshFavorites()
                     },
                     onPlayTrack = { tracks, index ->
-                        playerViewModel.playTracksFromList(tracks, index)
+                        libraryVM.playTracksFromList(tracks, index)
                         navController.navigate(Screen.Player.route)
                     },
                     onDownloadTrack = { track ->
-                        playerViewModel.startDownload(track)
+                        downloadsVM.startDownload(track)
                     },
                     onRemoveFavorite = { trackId ->
-                        playerViewModel.removeFavorite(trackId)
+                        libraryVM.removeFavorite(trackId)
                     },
                     playlists = playlistsState.playlists,
                     onCreatePlaylistAndAdd = { name, track ->
-                        playerViewModel.createPlaylistAndAdd(name, track)
+                        libraryVM.createPlaylistAndAdd(name, track)
                     },
                     onAddToPlaylist = { playlistId, track ->
-                        playerViewModel.addToPlaylist(playlistId, track)
+                        libraryVM.addToPlaylist(playlistId, track)
                     }
                 )
             }
@@ -376,24 +383,24 @@ fun WearsicApp(
                     playlistName = playlistName,
                     detailState = playlistDetailState,
                     onLoadTracks = { id ->
-                        playerViewModel.loadPlaylistTracks(id)
+                        libraryVM.loadPlaylistTracks(id)
                     },
                     onPlayTrack = { tracks, index ->
-                        playerViewModel.playTracksFromList(tracks, index)
+                        libraryVM.playTracksFromList(tracks, index)
                         navController.navigate(Screen.Player.route)
                     },
                     onDownloadTrack = { track ->
-                        playerViewModel.startDownload(track)
+                        downloadsVM.startDownload(track)
                     },
                     onRemoveTrack = { id, trackId ->
-                        playerViewModel.removeTrackFromPlaylist(id, trackId)
+                        libraryVM.removeTrackFromPlaylist(id, trackId)
                     },
                     playlists = playlistsState.playlists,
                     onCreatePlaylistAndAdd = { name, track ->
-                        playerViewModel.createPlaylistAndAdd(name, track)
+                        libraryVM.createPlaylistAndAdd(name, track)
                     },
                     onAddToPlaylist = { playlistId, track ->
-                        playerViewModel.addToPlaylist(playlistId, track)
+                        libraryVM.addToPlaylist(playlistId, track)
                     }
                 )
             }
@@ -403,7 +410,7 @@ fun WearsicApp(
                 AlbumsScreen(
                     albumsState = albumsState,
                     onQueryChanged = { query ->
-                        playerViewModel.searchAlbums(query)
+                        libraryVM.searchAlbums(query)
                     },
                     onOpenAlbum = { album ->
                         navController.navigate(Screen.PlaylistDetail.createRoute(album.id, album.name))
@@ -415,9 +422,9 @@ fun WearsicApp(
             composable(Screen.Artists.route) {
                 ArtistsScreen(
                     artistsState = artistsState,
-                    onRefresh = { playerViewModel.refreshArtists() },
+                    onRefresh = { libraryVM.refreshArtists() },
                     onPlayArtistSongs = { group, index ->
-                        playerViewModel.playTracksFromList(group.songs, index)
+                        libraryVM.playTracksFromList(group.songs, index)
                         navController.navigate(Screen.Player.route)
                     }
                 )

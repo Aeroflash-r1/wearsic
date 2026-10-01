@@ -3,9 +3,10 @@ package com.wearsic.server
 import kotlinx.serialization.Serializable
 
 /**
- * Matches API_CONTRACT.md exactly. The client parses these defensively
- * (optString/optLong), so new fields can be added freely later, but
- * `videoId` must never be renamed or removed within this client generation.
+ * Matches API_CONTRACT.md exactly. The client parses these defensively with
+ * kotlinx.serialization (unknown keys ignored, missing fields defaulted), so
+ * new fields can be added freely later, but `videoId` must never be renamed
+ * or removed within this client generation.
  */
 @Serializable
 data class TrackDto(

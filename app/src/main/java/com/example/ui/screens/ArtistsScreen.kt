@@ -57,8 +57,8 @@ import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.util.wearsicClickable
 import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
-import com.example.ui.viewmodel.ArtistGroup
-import com.example.ui.viewmodel.ArtistsUiState
+import com.example.model.ArtistGroup
+import com.example.ui.viewmodel.LibraryViewModel.ArtistsUiState
 
 @Composable
 fun ArtistsScreen(

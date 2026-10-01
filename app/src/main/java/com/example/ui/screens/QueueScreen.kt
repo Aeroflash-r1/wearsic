@@ -87,7 +87,7 @@ fun QueueScreen(
     repeatMode: Int = 0,
     onToggleShuffle: () -> Unit = {},
     onCycleRepeat: () -> Unit = {},
-    radioState: com.example.ui.viewmodel.RadioState = com.example.ui.viewmodel.RadioState.Idle,
+    radioState: com.example.ui.viewmodel.LibraryViewModel.RadioState = com.example.ui.viewmodel.LibraryViewModel.RadioState.Idle,
     onStartRadio: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -160,7 +160,7 @@ fun QueueScreen(
                             .wearsicClickable(onClick = onStartRadio),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (radioState is com.example.ui.viewmodel.RadioState.Loading) {
+                        if (radioState is com.example.ui.viewmodel.LibraryViewModel.RadioState.Loading) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp))
                         } else {
                             Icon(

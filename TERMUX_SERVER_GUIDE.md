@@ -141,7 +141,7 @@ curl http://127.0.0.1:8080/health
 Expected response:
 
 ```json
-{"status":"ok","version":"1.0.0","serverName":"Wearsic Engine","transcoderAvailable":true}
+{"status":"ok","version":"1.1.0","serverName":"Wearsic Engine","transcoderAvailable":true}
 ```
 
 (The exact `version` value depends on the release you installed — it always
@@ -180,7 +180,7 @@ wearsic server api key my-secret-wearsic-2026
 wearsic server restart
 ```
 
-### Step 3 — restart the server
+### Restart the server
 
 Stop the supervisor with `Ctrl+C` in its session (or `pkill -f wearsic-server`),
 then start again:
@@ -192,7 +192,7 @@ cd ~/wearsic-server && ./run-termux.sh
 (Only needed if you changed the key yourself — the installer's key is
 already live.)
 
-### Step 4 — verify it is locked
+### Verify it is locked
 
 ```bash
 # without key -> rejected (HTTP error):
@@ -202,7 +202,7 @@ curl "http://127.0.0.1:8080/api/search?q=test"
 curl -H "X-Wearsic-Key: my-secret-wearsic-2026" "http://127.0.0.1:8080/api/search?q=test"
 ```
 
-### Step 5 — tell the watch the key
+### Tell the watch the key
 
 On the watch: **Wearsic → Settings → API Key** → type/paste the *same* key.
 The app now sends it (`X-Wearsic-Key` header) automatically with every request.
@@ -392,5 +392,4 @@ confirm it comes up by itself.
 ---
 
 *Server internals: [`wearsic-server/README.md`](wearsic-server/README.md).
-Full endpoint reference: [`API_CONTRACT.md`](API_CONTRACT.md).
-Historical jar-patch notes (obsolete): [`server-patches/PATCHES.md`](server-patches/PATCHES.md).*
+Full endpoint reference: [`API_CONTRACT.md`](API_CONTRACT.md).*

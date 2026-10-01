@@ -83,7 +83,7 @@ import com.example.ui.theme.WearsicTextPrimaryDark
 import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
-import com.example.ui.viewmodel.SearchUiState
+import com.example.ui.viewmodel.LibraryViewModel.SearchUiState
 
 import com.example.ui.util.wearsicClickable
 import com.example.ui.util.wearsicEntrance

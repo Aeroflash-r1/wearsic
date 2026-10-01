@@ -140,8 +140,7 @@ Note: album `id` is a full playlist URL, not a bare id.
 - **DELETE** `/api/playlists/{id}/tracks/{videoId}`
   - Special case: `videoId == "*"` deletes the entire playlist (FK cascade).
     This is how the app's "remove playlist" works. Implemented directly in
-    `Database.deletePlaylistTrack` (historical origin: see
-    `server-patches/PATCHES.md`).
+    `Database.deletePlaylistTrack`.
 
 ---
 
@@ -161,14 +160,15 @@ The client POSTs exactly these five fields as JSON.
 
 ## Compatibility Rules
 
-1. The client parses responses defensively (`optString`/`optLong`), so servers
-   may append new fields freely.
+1. The client parses responses defensively with kotlinx.serialization
+   (`ignoreUnknownKeys = true`, `coerceInputValues = true`, missing fields
+   defaulted), so servers may append new fields freely.
 2. Never rename or remove `videoId` or the `/api/stream/{videoId}` shape within
    this generation of clients; introduce `/api/v2/...` for breaking changes.
 3. Artwork: prefer serving pre-downscaled images (~150px) to protect watch
    bandwidth; the client will upscale ytimg URLs itself when needed.
 
-## Error Format (v1.4.1+)
+## Error Format
 
 All non-2xx responses carry a JSON body: `{"error": "<human-readable message>"}`.
 Statuses: `400` invalid request or malformed body, `401` bad/missing API key,
@@ -176,7 +176,7 @@ Statuses: `400` invalid request or malformed body, `401` bad/missing API key,
 `503` rate-limited (or ffmpeg missing for transcode-needing songs),
 `500` unexpected — message is generic, details only in the server log.
 
-## Rate Limiting (v1.4.1+)
+## Rate Limiting
 
 `GET /api/stream/{id}` is limited per client (API key, else source IP) to a
 sustained 30 requests/minute with short bursts above that. Exceeding it yields

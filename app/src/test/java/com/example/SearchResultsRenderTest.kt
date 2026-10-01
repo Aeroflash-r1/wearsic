@@ -9,7 +9,7 @@ import androidx.compose.ui.test.performScrollToNode
 import com.example.model.Track
 import com.example.ui.screens.SearchScreen
 import com.example.ui.theme.WearsicTheme
-import com.example.ui.viewmodel.SearchUiState
+import com.example.ui.viewmodel.LibraryViewModel.SearchUiState
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import org.junit.Assert.assertTrue
 import org.junit.Rule

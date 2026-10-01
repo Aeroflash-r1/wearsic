@@ -58,6 +58,7 @@ import com.example.model.PlaybackUiState
 import com.example.model.Track
 import com.example.ui.components.WearsicPrimaryPillButton
 import com.example.ui.components.WearsicScreenHeader
+import com.example.ui.components.WearsicSectionTitle
 import com.example.ui.components.WearsicSecondaryPillButton
 import com.example.ui.components.WearsicSettingsActionPill
 import com.example.ui.components.WearsicSongRow
@@ -147,32 +148,18 @@ fun LibraryScreen(
             // Recently Played Section
             if (recentTracks.isNotEmpty()) {
                 item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp, bottom = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.History,
-                            contentDescription = null,
-                            tint = WearsicVibrantLavender,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Recently Played",
-                            color = WearsicTextPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(modifier = Modifier.weight(1f))
-                        Text(
-                            text = "${recentTracks.size} songs",
-                            color = WearsicTextSecondary,
-                            fontSize = 9.sp
-                        )
-                    }
+                    WearsicSectionTitle(
+                        label = "Recently Played",
+                        icon = Icons.Rounded.History,
+                        iconContentDescription = null,
+                        trailing = {
+                            Text(
+                                text = "${recentTracks.size} songs",
+                                color = WearsicTextSecondary,
+                                fontSize = 9.sp
+                            )
+                        }
+                    )
                 }
 
                 items(recentTracks.take(5), key = { it.id }) { track ->

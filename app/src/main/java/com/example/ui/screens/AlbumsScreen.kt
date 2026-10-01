@@ -68,7 +68,7 @@ import com.example.ui.theme.WearsicTextPrimary
 import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
-import com.example.ui.viewmodel.AlbumsUiState
+import com.example.ui.viewmodel.LibraryViewModel.AlbumsUiState
 
 import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll

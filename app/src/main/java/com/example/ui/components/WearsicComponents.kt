@@ -25,7 +25,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -35,6 +36,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -417,25 +421,30 @@ fun WearsicScreenHeader(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Soft radial glow behind the title — the signature
-        // lavender→violet wash, drawn with drawBehind so it adds
-        // depth without taking up any layout height.
+        // lavender→violet wash, drawn with drawWithCache so it adds
+        // depth without taking up any layout height and without
+        // re-allocating the brush on every frame.
         Box(
             contentAlignment = Alignment.Center,
-            modifier = Modifier.drawBehind {
+            modifier = Modifier.drawWithCache {
+                // Built once per layout (drawWithCache only reruns when the
+                // size changes), so the glow is not re-allocated on every
+                // frame the header is drawn during scrolling or the title's
+                // entrance animation.
                 val radius = size.maxDimension * 1.8f
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            WearsicVibrantLavender.copy(alpha = 0.26f),
-                            WearsicViolet.copy(alpha = 0.12f),
-                            Color.Transparent
-                        ),
-                        center = center,
-                        radius = radius
+                val glowCenter = Offset(size.width / 2f, size.height / 2f)
+                val glow = Brush.radialGradient(
+                    colors = listOf(
+                        WearsicVibrantLavender.copy(alpha = 0.26f),
+                        WearsicViolet.copy(alpha = 0.12f),
+                        Color.Transparent
                     ),
-                    radius = radius,
-                    center = center
+                    center = glowCenter,
+                    radius = radius
                 )
+                onDrawBehind {
+                    drawCircle(brush = glow, radius = radius, center = glowCenter)
+                }
             }
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -460,21 +469,81 @@ fun WearsicScreenHeader(
                 .width(barWidth.dp)
                 .height(3.dp)
                 .clip(CircleShape)
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(WearsicGradientStart, WearsicGradientMid, WearsicGradientEnd)
-                    )
-                )
+                .background(SignatureGradient)
         )
         if (subtitle != null) {
+            // The subheading carries the signature gradient purple —
+            // lavender → mid-violet → deep violet painted into the
+            // glyphs themselves, never a flat solid fill.
+            val gradientSubtitle = remember(subtitle) { wearsicGradientText(subtitle) }
             Text(
-                text = subtitle,
-                color = WearsicTextSecondary,
+                text = gradientSubtitle,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Normal,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 6.dp)
             )
+        }
+    }
+}
+
+/**
+ * The app's signature gradient purple (lavender → mid-violet → deep violet)
+ * as a horizontal brush. Immutable and top-level, so every screen title,
+ * accent bar and section heading shares one instance instead of allocating a
+ * new brush on each composition.
+ */
+private val SignatureGradient: Brush =
+    Brush.horizontalGradient(listOf(WearsicGradientStart, WearsicGradientMid, WearsicGradientEnd))
+
+/** Wraps [text] in a span painted with the signature gradient purple. */
+private fun wearsicGradientText(text: String): AnnotatedString =
+    buildAnnotatedString {
+        pushStyle(SpanStyle(brush = SignatureGradient))
+        append(text)
+        pop()
+    }
+
+/**
+ * Section subheading used inside lists (e.g. "Recently Played").
+ *
+ * Reads as the app's own: a small icon plus the section label painted
+ * in the signature gradient purple — the same lavender → mid-violet →
+ * deep violet gradient as the screen-title accent bar — with optional
+ * trailing content (a count, a "See all", …) in muted white.
+ */
+@Composable
+fun WearsicSectionTitle(
+    label: String,
+    icon: ImageVector? = null,
+    iconContentDescription: String? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = iconContentDescription,
+                tint = WearsicVibrantLavender,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+        }
+        val gradientLabel = remember(label) { wearsicGradientText(label) }
+        Text(
+            text = gradientLabel,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        if (trailing != null) {
+            Spacer(modifier = Modifier.weight(1f))
+            trailing()
         }
     }
 }

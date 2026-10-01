@@ -5,6 +5,8 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import com.example.cache.WearsicCache
+import com.example.cache.WearsicResponseCache
 import com.example.di.AppContainer
 
 class WearsicApp : Application(), ImageLoaderFactory {
@@ -34,6 +36,9 @@ class WearsicApp : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
+        // Initialize caches early to prevent IllegalStateException
+        WearsicResponseCache.init()
+        WearsicCache.init(applicationContext)
         // Startup journal + crash hook + recovery-mode detection (must run
         // before any ViewModel is constructed).
         StartupDiagnostics.onApplicationCreate(this)

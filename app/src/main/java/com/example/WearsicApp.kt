@@ -62,6 +62,13 @@ class WearsicApp : Application(), ImageLoaderFactory {
         }
         Thread({
             runCatching {
+                // Restore the persisted API key into the process-wide HTTP
+                // interceptor before any background request can be issued.
+                // Wear OS may recreate the process without recreating the
+                // Settings screen, so DataStore is the source of truth here.
+                val savedApiKey = container.preferencesRepository.getApiKey()
+                container.musicRepository.refreshApiKeyWith(savedApiKey)
+
                 container.preferencesRepository
                 container.musicRepository
                 container.downloadRepository

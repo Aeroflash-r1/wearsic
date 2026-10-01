@@ -300,14 +300,31 @@ cmd_funnel() {
     curl -fsSL https://raw.githubusercontent.com/bropines/tailscale-termux-cli/main/remote-install.sh | bash \
       || die "tailscaled install failed — see https://github.com/bropines/tailscale-termux-cli"
   fi
-  # 2. logged in?
+  # 2. Ensure the Termux tailscaled daemon is actually running.
+  # Termux restarts stop the userspace daemon even though the tailscale
+  # package remains installed. Recover it automatically so "wearsic funnel"
+  # is a one-command operation after a phone/Termux restart.
+  if command -v sv >/dev/null 2>&1 && [ -x "$PREFIX/var/service/tailscaled/run" ]; then
+    sv up tailscaled >/dev/null 2>&1 || true
+  fi
+  local daemon_ok=0
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if tailscale status >/dev/null 2>&1; then
+      daemon_ok=1
+      break
+    fi
+    sleep 1
+  done
+  [ "$daemon_ok" -eq 1 ] || die "Tailscale daemon is not running. Try: sv up tailscaled"
+  # 3. logged in?
   if ! tailscale status >/dev/null 2>&1; then
     say "Logging in to Tailscale — open the printed link in a browser:"
     tailscale up || die "Tailscale login failed — run 'tailscale up' manually"
   else
     say "Tailscale is connected."
   fi
-  # 3. expose the server
+  # 4. expose the server
   local P; P="$(port)"
   say ""
   say "Enabling Funnel on port $P… (Ctrl+C to stop the public URL)"

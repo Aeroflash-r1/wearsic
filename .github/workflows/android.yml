@@ -19,9 +19,8 @@ on:
   pull_request:
   workflow_dispatch:
 
-concurrency:
-  group: android-ci-${{ github.ref }}
-  cancel-in-progress: true
+# Do not cancel previous runs: every push should produce its own Debug and
+# Release build/artifacts, even when several commits are pushed quickly.
 
 jobs:
   test:

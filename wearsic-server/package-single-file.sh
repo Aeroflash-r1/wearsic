@@ -5,7 +5,7 @@
 #
 #   ./wearsic-server.sh              install (default)
 #   ./wearsic-server.sh start        start the server (auto-heal supervisor)
-#   ./wearsic-server.sh stop|restart|status|logs|health|url|ip
+#   ./wearsic-server.sh stop|restart|status|logs|health|url|ip|api-key|update|doctor
 #   ./wearsic-server.sh uninstall    remove the installation
 #
 # Usage (build machine / CI):
@@ -49,7 +49,7 @@ mkdir -p "$(dirname "$OUT")"
 # then manage everything with the single `wearsic` command it installs
 # (or keep using ./wearsic-server.sh — it forwards to the same place):
 #
-#   ./wearsic-server.sh start|stop|restart|status|logs|health|url|ip
+#   ./wearsic-server.sh start|stop|restart|status|logs|health|url|api-key|update|doctor
 #   ./wearsic-server.sh uninstall
 #
 # Requires Java (Termux: pkg install -y openjdk-17). The install generates a
@@ -83,10 +83,34 @@ install_bundle() {
   say "Installing Wearsic server to $DEST …"
   mkdir -p "$DEST"
 
-  local line
+  local line stage
   line="$(awk '/^__ARCHIVE_BELOW__$/ {print NR + 1; exit}' "$0")"
   [ -n "$line" ] || die "corrupt bundle (payload marker missing)"
-  tail -n +"$line" "$0" | base64 -d | tar xz -C "$DEST" || die "payload extraction failed"
+
+  # Crash-safe install: extract to a staging dir, validate the payload, then
+  # swap it in — the previous engine is kept as bin.prev/lib.prev for
+  # rollback, and data (wearsic.db, .env, downloads/, wearsic-state/) is
+  # never touched.
+  stage="$DEST/.install-staging.$$"
+  rm -rf "$stage" && mkdir -p "$stage"
+  tail -n +"$line" "$0" | base64 -d | tar xz -C "$stage" || { rm -rf "$stage"; die "payload extraction failed"; }
+  { [ -f "$stage/bin/wearsic-server" ] && [ -n "$(ls -A "$stage/lib" 2>/dev/null)" ] && [ -f "$stage/run-termux.sh" ]; } \
+    || { rm -rf "$stage"; die "bundle payload is incomplete — nothing was changed"; }
+
+  rm -rf "$DEST/bin.new" "$DEST/lib.new"
+  mv "$stage/bin" "$DEST/bin.new" && mv "$stage/lib" "$DEST/lib.new" \
+    || { rm -rf "$stage" "$DEST/bin.new" "$DEST/lib.new"; die "could not stage the new engine"; }
+  rm -rf "$DEST/bin.prev" "$DEST/lib.prev"
+  if [ -d "$DEST/bin" ]; then
+    mv "$DEST/bin" "$DEST/bin.prev" && mv "$DEST/lib" "$DEST/lib.prev" \
+      || { rm -rf "$DEST/bin.new" "$DEST/lib.new"; die "swap failed — the current engine is untouched"; }
+  fi
+  mv "$DEST/bin.new" "$DEST/bin" && mv "$DEST/lib.new" "$DEST/lib" \
+    || die "swap failed midway — run the installer again to recover"
+  for f in run-termux.sh wearsic .env.example; do
+    [ -f "$stage/$f" ] && cp "$stage/$f" "$DEST/$f"
+  done
+  rm -rf "$stage"
 
   chmod +x "$DEST/run-termux.sh" "$DEST/wearsic" "$DEST"/bin/* 2>/dev/null || true
 
@@ -110,7 +134,7 @@ install_bundle() {
     warn "No bin directory on PATH — use: $CLI"
   fi
 
-  say "Done. Start it with:  wearsic server start"
+  say "Done. Start it with:  wearsic start"
   say "Everything lives inside this one file — no downloads, no extra steps."
 }
 
@@ -132,11 +156,15 @@ case "$cmd" in
   uninstall)
     uninstall_bundle
     ;;
-  start|stop|restart|status|logs|health|url|ip|api|cookies|funnel|public)
+  start|stop|restart|status|logs|health|url|ip|api|cookies|funnel|public|update|version|doctor)
     [ -x "$CLI" ] || install_bundle
     # bash explicitly: the CLI's shebang points at the Termux bash path,
     # which only exists on Termux. Dispatch works everywhere.
     exec bash "$CLI" server "$cmd" "${@:2}"
+    ;;
+  api-key|apikey)
+    [ -x "$CLI" ] || install_bundle
+    exec bash "$CLI" server api key "${@:2}"
     ;;
   version|--version|-V)
     echo "wearsic-server @VERSION@"

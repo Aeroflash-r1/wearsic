@@ -2,18 +2,19 @@
 # ─────────────────────────────────────────────────────────────────────
 # wearsic — the everyday command for the Wearsic server.
 #
-#   wearsic server start      start the server (self-healing supervisor)
-#   wearsic server stop       stop the server
-#   wearsic server restart    stop, then start
-#   wearsic server status     running? healthy? which version?
-#   wearsic server logs       live logs (Ctrl+C to exit)
-#   wearsic server health     raw /health JSON
-#   wearsic server url        Server URL + API key for the watch
-#   wearsic server ip         this phone's WiFi IP
-#   wearsic server api key [new]   show / change the API key
-#   wearsic server cookies [str]   set the YouTube cookie (live if running)
-#   wearsic server funnel     public HTTPS URL via Tailscale Funnel (stable)
-#   wearsic server public     public URL recipes (Funnel / Cloudflare)
+#   wearsic start             start the server (self-healing supervisor)
+#   wearsic stop              stop the server
+#   wearsic restart           stop, then start
+#   wearsic status            running? healthy? which version?
+#   wearsic logs              live logs (Ctrl+C to exit)
+#   wearsic health            raw /health JSON
+#   wearsic url               Server URL + API key for the watch
+#   wearsic api-key [new]     show / change the API key
+#   wearsic update            update to the latest release (verified + rollback)
+#   wearsic doctor            check the whole setup (exit 0 = READY)
+#
+# Also available: ready, ip, version, cookies [str], funnel, public.
+# The classic nested form keeps working: `wearsic server start` etc.
 #
 # Installed to $PREFIX/bin by install.sh. Finds the server in
 # $WEARSIC_DIR, else ~/wearsic-server.
@@ -37,6 +38,15 @@ env_value() {  # $1 = key name
 }
 
 port() { local p; p="$(env_value PORT)"; [ -n "$p" ] || p="8080"; printf '%s' "$p"; }
+
+# SHA-256 of a file (any platform: sha256sum or shasum).
+file_hash() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" 2>/dev/null | awk '{print $1}'
+  else
+    shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+  fi
+}
 api_key() { env_value WEARSIC_API_KEY; }
 
 # --- process helpers (pgrep when available, ps fallback) --------------
@@ -144,13 +154,23 @@ cmd_start() {
 
 cmd_stop() {
   installed
-  local pids pid
-  pids="$(pids_for "$RUN")"
+  local pids pid i
+  pids="$(pids_for "$RUN"; pids_for "com.wearsic.server.ApplicationKt"; pids_for "$DEST/bin/wearsic-server")"
   [ -n "$pids" ] || { say "Server is not running."; return 0; }
   say "Stopping server…"
-  for pid in $pids; do kill "$pid" 2>/dev/null; done   # supervisor's trap kills the JVM
-  sleep 2
-  # Belt and braces: the JVM itself, in case the supervisor was already dead.
+  # Stop the supervisor first: its trap kills the JVM — but the trap only
+  # runs after its current (up to 30s) sleep ends. So poll for REAL exit and
+  # escalate to kill -9, otherwise a "stopped" supervisor lingers and the
+  # next start is refused by its singleton guard.
+  for pid in $(pids_for "$RUN"); do kill "$pid" 2>/dev/null; done
+  i=0
+  while [ "$i" -lt 8 ] && [ -n "$(pids_for "$RUN")" ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  for pid in $(pids_for "$RUN"); do kill -9 "$pid" 2>/dev/null; done
+  # Then the JVM itself (graceful, then force), in case the supervisor was
+  # already dead and left it behind.
   pids="$(pids_for "com.wearsic.server.ApplicationKt"; pids_for "$DEST/bin/wearsic-server")"
   for pid in $pids; do kill "$pid" 2>/dev/null; done
   sleep 1
@@ -319,6 +339,188 @@ cmd_public() {
   say "A public URL MUST have an API key: wearsic server api key <your-key>"
 }
 
+# ── crash-safe update ─────────────────────────────────────────────────────
+# Downloads the latest release, VERIFIES its published SHA-256, stages and
+# validates it, swaps it in with a kept rollback copy, restarts and health-
+# checks. On ANY failure the previous engine is restored — a failed update
+# can never leave a broken server. Your database, .env (API key), downloads/
+# and wearsic-state/ are never touched.
+#
+# Overrides (mainly for testing/mirrors): WEARSIC_ZIP_URL, WEARSIC_SHA_URL,
+# WEARSIC_REPO, WEARSIC_UPDATE_TIMEOUT (health wait seconds, default 60).
+cmd_update() {
+  installed
+  local repo work zip sha expected actual stage src
+  repo="${WEARSIC_REPO:-Aeroflash-r1/wearsic}"
+  work="$(mktemp -d)" || die "could not create a temp dir"
+  # EXIT (not RETURN) so the temp dir is cleaned even when die() exits.
+  trap 'rm -rf "$work"' EXIT
+
+  say "Checking for the latest Wearsic server release…"
+  local zip_url sha_url json tag
+  zip_url="${WEARSIC_ZIP_URL:-}"
+  sha_url="${WEARSIC_SHA_URL:-}"
+  if [ -z "$zip_url" ]; then
+    json="$(curl -fsSL --retry 2 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null || true)"
+    zip_url="$(printf '%s' "$json" \
+      | grep -o '"browser_download_url"[^"]*"[^"]*wearsic-server-termux[^"]*\.zip"' \
+      | head -1 \
+      | sed -E 's/.*"(https[^"]*)".*/\1/')"
+    if [ -z "$zip_url" ]; then
+      tag="$(printf '%s' "$json" | grep -o '"tag_name"[^"]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
+      [ -n "$tag" ] && zip_url="https://github.com/${repo}/releases/latest/download/wearsic-server-termux-${tag}.zip"
+    fi
+    [ -n "$zip_url" ] || die "could not find a release for ${repo} — check your internet connection"
+  fi
+  [ -n "$sha_url" ] || sha_url="${zip_url}.sha256"
+  say "Downloading: $(basename "$zip_url")"
+
+  zip="$work/update.zip"
+  sha="$work/update.zip.sha256"
+  curl -fL --retry 3 --retry-delay 2 -o "$zip" "$zip_url" || die "download failed — nothing was changed"
+  [ -s "$zip" ] || die "downloaded file is empty — nothing was changed"
+
+  # Authenticity: refuse to install any release without a published checksum.
+  curl -fsSL --retry 2 -o "$sha" "$sha_url" 2>/dev/null && [ -s "$sha" ] \
+    || die "no SHA-256 checksum at $sha_url — refusing to install unverified code"
+  expected="$(awk '{print $1; exit}' "$sha" | tr 'A-F' 'a-f')"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$zip" | awk '{print $1}')"
+  else
+    actual="$(shasum -a 256 "$zip" | awk '{print $1}')"
+  fi
+  [ "$expected" = "$actual" ] || die "SHA-256 MISMATCH — the download is corrupt or tampered. Nothing was changed."
+  ok "SHA-256 verified"
+
+  # Stage + validate BEFORE touching the active engine.
+  stage="$work/stage"
+  mkdir -p "$stage"
+  unzip -t "$zip" >/dev/null 2>&1 || die "the downloaded file is not a valid ZIP — nothing was changed"
+  unzip -oq "$zip" -d "$stage" || die "could not extract the update — nothing was changed"
+  src="$stage/wearsic-server"
+  [ -d "$src" ] || src="$stage"
+  [ -f "$src/bin/wearsic-server" ] && [ -n "$(ls -A "$src/lib" 2>/dev/null)" ] && [ -f "$src/run-termux.sh" ] \
+    || die "the update package is incomplete (bin/lib/run-termux.sh) — nothing was changed"
+  ok "update package validated"
+
+  # Was it running? Update should end with the server back up if it was.
+  local was_running=0
+  if server_running || supervisor_running; then was_running=1; fi
+  [ "$was_running" = "1" ] && { say "Stopping the server for the swap…"; cmd_stop; }
+
+  # Crash-safe swap: prepare COMPLETE copies first, keep the old engine as
+  # bin.prev/lib.prev until the new one passes its health check.
+  say "Installing the update…"
+  rm -rf "$DEST/bin.new" "$DEST/lib.new"
+  cp -r "$src/bin" "$DEST/bin.new" && cp -r "$src/lib" "$DEST/lib.new" \
+    || { rm -rf "$DEST/bin.new" "$DEST/lib.new"; die "could not stage the new engine (disk full?) — the current engine is untouched"; }
+  rm -rf "$DEST/bin.prev" "$DEST/lib.prev"
+  if [ -d "$DEST/bin" ]; then
+    mv "$DEST/bin" "$DEST/bin.prev" && mv "$DEST/lib" "$DEST/lib.prev" \
+      || { rm -rf "$DEST/bin.new" "$DEST/lib.new"; die "swap failed — the current engine is untouched"; }
+  fi
+  if ! mv "$DEST/bin.new" "$DEST/bin" || ! mv "$DEST/lib.new" "$DEST/lib" || [ ! -f "$DEST/bin/wearsic-server" ]; then
+    # Half-swapped: restore the previous known-good engine immediately.
+    rm -rf "$DEST/bin" "$DEST/lib"
+    [ -d "$DEST/bin.prev" ] && mv "$DEST/bin.prev" "$DEST/bin"
+    [ -d "$DEST/lib.prev" ] && mv "$DEST/lib.prev" "$DEST/lib"
+    die "the swap did not complete — the previous engine was restored"
+  fi
+  for f in run-termux.sh .env.example README.md; do
+    [ -f "$src/$f" ] && cp "$src/$f" "$DEST/$f"
+  done
+  chmod +x "$DEST/run-termux.sh" "$DEST/bin/wearsic-server" 2>/dev/null || true
+  # Fingerprint of the engine we just installed: after the restart we check
+  # the ON-DISK engine still matches it, so an (auto)rollback by the
+  # supervisor can never masquerade as a successful update.
+  local new_hash
+  new_hash="$(file_hash "$DEST/bin/wearsic-server")"
+
+  # Refresh the CLI copy(s) — the code only, never config.
+  local bindir
+  for bindir in "${PREFIX:-/nonexistent}/bin" "$HOME/.local/bin" "$HOME/bin"; do
+    if [ -f "$bindir/wearsic" ] && [ -f "$src/wearsic" ]; then
+      cp "$src/wearsic" "$bindir/wearsic" && chmod +x "$bindir/wearsic"
+    fi
+  done
+  [ -f "$src/wearsic" ] && cp "$src/wearsic" "$DEST/wearsic" && chmod +x "$DEST/wearsic" 2>/dev/null
+  ok "update installed (previous engine kept for rollback)"
+
+  # Bring it up and PROVE it is healthy; otherwise roll back.
+  local timeout i
+  timeout="${WEARSIC_UPDATE_TIMEOUT:-60}"
+  if [ "$was_running" = "1" ]; then
+    say "Starting the updated server…"
+    cmd_start >/dev/null 2>&1 || true
+  else
+    say "Server was stopped — starting it briefly to validate the update…"
+    cmd_start >/dev/null 2>&1 || true
+  fi
+  i=0
+  while [ "$i" -lt "$timeout" ]; do
+    health_ok && break
+    i=$((i + 1))
+    sleep 1
+  done
+
+  if health_ok && [ "$(file_hash "$DEST/bin/wearsic-server")" = "$new_hash" ]; then
+    rm -rf "$DEST/bin.prev" "$DEST/lib.prev"
+    ok "update complete — server healthy on port $(port)"
+    [ "$was_running" = "1" ] || { cmd_stop >/dev/null 2>&1; say "Server stopped again (it was not running before the update)."; }
+    return 0
+  fi
+
+  # Healthy but NOT the engine we installed: the supervisor's own
+  # never-healthy rollback already restored the previous engine.
+  if health_ok; then
+    warn "the new engine failed to start — the previous engine was restored automatically"
+    warn "update rolled back — the server is running the previous version"
+    return 1
+  fi
+
+  # New engine never became healthy — roll back to the previous one.
+  # NOTE: the supervisor may have already rolled back by itself (its own
+  # never-healthy rollback consumes bin.prev). Check BEFORE deleting
+  # anything, so a restored good engine can never be destroyed here.
+  warn "the updated server did not become healthy — rolling back…"
+  cmd_stop >/dev/null 2>&1 || true
+  if [ -d "$DEST/bin.prev" ]; then
+    rm -rf "$DEST/bin" "$DEST/lib"
+    mv "$DEST/bin.prev" "$DEST/bin"
+    mv "$DEST/lib.prev" "$DEST/lib"
+    chmod +x "$DEST/bin/wearsic-server" 2>/dev/null
+    ok "previous engine restored"
+    cmd_start >/dev/null 2>&1 || true
+    i=0
+    while [ "$i" -lt "$timeout" ]; do
+      health_ok && break
+      i=$((i + 1))
+      sleep 1
+    done
+    if health_ok; then
+      warn "update rolled back — the server is running the previous version"
+    else
+      warn "rollback restored the files but the server is not healthy — see: wearsic logs"
+    fi
+  elif [ -f "$DEST/bin/wearsic-server" ]; then
+    ok "the previous engine is already in place (supervisor rolled back)"
+    cmd_start >/dev/null 2>&1 || true
+  else
+    warn "no rollback copy existed — run the installer again:"
+    warn "  curl -fsSL https://raw.githubusercontent.com/Aeroflash-r1/wearsic/main/install.sh | bash"
+  fi
+  return 1
+}
+
+# Installed vs running engine version (from /health when available).
+cmd_version() {
+  installed
+  local health ver
+  health="$(curl -sf -m 5 "http://127.0.0.1:$(port)/health" 2>/dev/null || true)"
+  ver="$(printf '%s' "$health" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+  say "engine: ${ver:-unknown (server not running)}"
+}
+
 # /ready in one line: can the server serve music RIGHT NOW?
 cmd_ready() {
   installed
@@ -466,27 +668,30 @@ cmd_doctor() {
 }
 
 usage() {
-  say "Wearsic doctor — check the whole setup:"
-  say "  wearsic doctor                 environment diagnostics (exit 0 = READY)"
-  say ""
   say "Wearsic server commands:"
-  say "  wearsic server start        start the server"
-  say "  wearsic server stop         stop the server"
-  say "  wearsic server restart      stop, then start"
-  say "  wearsic server status       running? healthy? which version?"
-  say "  wearsic server logs         live logs"
-  say "  wearsic server health       raw /health JSON"
-  say "  wearsic server ready        raw /ready JSON (can it serve music?)"
-  say "  wearsic server status       exit codes: 0 healthy, 3 stopped, 4 unhealthy"
-  say "  wearsic server url          Server URL + API key for the watch"
-  say "  wearsic server ip           this phone's WiFi IP"
-  say "  wearsic server api key [new]   show / change the API key"
-  say "  wearsic server cookies [str]   set the YouTube cookie"
-  say "  wearsic server funnel       public HTTPS URL (Tailscale Funnel)"
-  say "  wearsic server public       public URL recipes (Funnel / Cloudflare)"
+  say "  wearsic start               start the server"
+  say "  wearsic stop                stop the server"
+  say "  wearsic restart             stop, then start"
+  say "  wearsic status              running? healthy? which version? (0 healthy, 3 stopped, 4 unhealthy)"
+  say "  wearsic logs                live logs"
+  say "  wearsic health              raw /health JSON"
+  say "  wearsic ready               raw /ready JSON (can it serve music?)"
+  say "  wearsic url                 Server URL + API key for the watch"
+  say "  wearsic ip                  this phone's WiFi IP"
+  say "  wearsic api-key [new]       show / change the API key"
+  say "  wearsic update              update to the latest release (verified, rollback-safe)"
+  say "  wearsic version             installed + running engine version"
+  say "  wearsic doctor              environment diagnostics (exit 0 = READY)"
+  say "  wearsic cookies [str]       set the YouTube cookie"
+  say "  wearsic funnel              public HTTPS URL (Tailscale Funnel)"
+  say "  wearsic public              public URL recipes (Funnel / Cloudflare)"
+  say ""
+  say "The classic nested form also works:  wearsic server start"
 }
 
 # --- dispatch ---------------------------------------------------------
+# Both forms work: flat (`wearsic start`) and classic nested
+# (`wearsic server start`).
 case "${1:-}" in
   server)
     case "${2:-}" in
@@ -499,18 +704,37 @@ case "${1:-}" in
       ready)   cmd_ready ;;
       url)     cmd_url ;;
       ip)      cmd_ip ;;
+      version) cmd_version ;;
+      update)  cmd_update ;;
+      doctor)  cmd_doctor ;;
       api)
         case "${3:-}" in
           key) shift 3; cmd_api_key "$@" ;;
           *) usage; exit 2 ;;
         esac ;;
+      api-key) shift 2; cmd_api_key "$@" ;;
       cookies) shift 2; cmd_cookies "$@" ;;
       funnel)  cmd_funnel ;;
       public)  cmd_public ;;
       "") usage; exit 2 ;;
       *) die "Unknown command: wearsic server $2 — run 'wearsic' for the list" ;;
     esac ;;
-  doctor)  cmd_doctor ;;
+  start)     cmd_start ;;
+  stop)      cmd_stop ;;
+  restart)   cmd_restart ;;
+  status)    cmd_status ;;
+  logs)      cmd_logs ;;
+  health)    cmd_health ;;
+  ready)     cmd_ready ;;
+  url)       cmd_url ;;
+  ip)        cmd_ip ;;
+  version)   cmd_version ;;
+  update)    cmd_update ;;
+  doctor)    cmd_doctor ;;
+  api-key|apikey) shift; cmd_api_key "$@" ;;
+  cookies)   shift; cmd_cookies "$@" ;;
+  funnel)    cmd_funnel ;;
+  public)    cmd_public ;;
   ""|help|-h|--help) usage ;;
   *) die "Unknown command: wearsic $1 — run 'wearsic' for the list" ;;
 esac

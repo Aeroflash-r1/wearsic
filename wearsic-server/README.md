@@ -10,7 +10,7 @@ Standalone Ktor + NewPipe Extractor backend for the Wearsic Wear OS app. This pr
 
 No tunnel is required: the watch connects over WiFi, a Tailscale
 private network, or a public HTTPS endpoint (Tailscale Funnel via
-`wearsic server funnel`). See [`../TERMUX_SERVER_GUIDE.md`](../TERMUX_SERVER_GUIDE.md)
+`wearsic funnel`). See [`../TERMUX_SERVER_GUIDE.md`](../TERMUX_SERVER_GUIDE.md)
 for every connection option and the one-line installer.
 
 ## Build and run
@@ -35,12 +35,12 @@ One download contains the ENTIRE server (engine + launcher + CLI):
 pkg install -y openjdk-17
 chmod +x wearsic-server-v*.sh
 ./wearsic-server-v*.sh install     # extracts to ~/wearsic-server, generates an API key
-wearsic server start               # one command from here on
+wearsic start                      # one command from here on
 ```
 
-`wearsic server start|stop|restart|status|logs|health|url|ip` manages
-everything. Re-running `install` upgrades in place and keeps `wearsic.db` +
-`.env`. `./wearsic-server-v*.sh uninstall` removes it.
+`wearsic start|stop|restart|status|logs|health|url|api-key|update|doctor`
+manages everything. Re-running `install` upgrades in place and keeps
+`wearsic.db` + `.env`. `./wearsic-server-v*.sh uninstall` removes it.
 
 ### From the ready-made Termux ZIP (`wearsic-server-termux-v<version>.zip`)
 
@@ -149,7 +149,7 @@ Storage limitation: on Termux there is no OS secure-storage API available to
 this architecture, so the cookie lives in `wearsic.db` (settings table) or
 the `WEARSIC_YOUTUBE_COOKIE` environment variable — the same trust level as
 the phone's user account. Protect the phone accordingly; clear the cookie
-with `wearsic server cookies` + empty value or `POST {"cookie":""}`.
+with `wearsic cookies` + empty value or `POST {"cookie":""}`.
 
 The server caches search results and resolved stream targets in small bounded in-memory caches (stream targets expire after 1 hour — CDN URLs expire upstream). Search goes to YouTube Music first (official titles/artists with directly playable videoIds); when YTM is unreachable the NewPipeExtractor YouTube search is used as fallback. Legacy surrogate → YouTube video matches from pre-1.5 builds are additionally persisted in SQLite (bounded to 2000 rows, 30-day staleness), so old saved favorites keep replaying after upgrade. SQLite uses WAL mode with `synchronous=NORMAL` for good performance on a phone.
 
@@ -171,13 +171,13 @@ is entered in **Settings → API Key** — nothing to extend. For a public
 HTTPS URL, the stable option is Tailscale Funnel from Termux:
 
 ```bash
-wearsic server funnel     # prints https://<phone-name>.<tailnet>.ts.net
+wearsic funnel     # prints https://<phone-name>.<tailnet>.ts.net
 ```
 
-Public exposure REQUIRES an API key: `wearsic server funnel` and
-`wearsic server public` refuse to run without one (and `funnel` also refuses
+Public exposure REQUIRES an API key: `wearsic funnel` and
+`wearsic public` refuse to run without one (and `funnel` also refuses
 to expose a server that is not running and healthy). No key is ever invented
-or changed automatically — set one yourself with `wearsic server api key
+or changed automatically — set one yourself with `wearsic api-key
 <your-key>`.
 
 A Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:8080`)

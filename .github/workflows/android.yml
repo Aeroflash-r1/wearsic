@@ -137,7 +137,9 @@ jobs:
           cp -r wearsic-server/build/install/wearsic-server/bin "$STAGE/"
           cp -r wearsic-server/build/install/wearsic-server/lib "$STAGE/"
           cp wearsic-server/run-termux.sh "$STAGE/"
-          cp wearsic-server/install.sh "$STAGE/"
+          # The canonical installer (repo root) — detects the adjacent engine
+          # payload and installs it offline instead of re-downloading.
+          cp install.sh "$STAGE/"
           cp wearsic-server/wearsic "$STAGE/"
           cp wearsic-server/.env.example "$STAGE/"
           cp wearsic-server/README.md "$STAGE/"

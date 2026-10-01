@@ -48,10 +48,10 @@ wearsic doctor        # prints a ✓/✗/— report — exit 0 means READY
 From then on it's a single command for everything:
 
 ```bash
-wearsic server start     # start (self-healing supervisor)
-wearsic server status    # running? healthy? which version?
-wearsic server url       # Server URL + API key for the watch
-wearsic server stop      # stop
+wearsic start     # start (self-healing supervisor)
+wearsic status    # running? healthy? which version?
+wearsic url       # Server URL + API key for the watch
+wearsic stop      # stop
 ```
 
 (The downloaded file forwards to the same place — `~/wearsic-server.sh
@@ -65,7 +65,7 @@ Install **Termux from F-Droid** (https://f-droid.org/en/packages/com.termux/),
 open it, and paste this single line:
 
 ```bash
-pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/Aeroflash-r1/wearsic/main/wearsic-server/install.sh | bash
+pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/Aeroflash-r1/wearsic/main/install.sh | bash
 ```
 
 That one line does everything: installs Java + unzip, downloads the newest
@@ -79,7 +79,7 @@ inside the release ZIP, so you can re-run it any time with `bash install.sh`.
 When the one-liner says *"server started"*, skip ahead to:
 
 - **Section 4** — your API key (already set; just copy it to the watch —
-  re-show it any time with `wearsic server url`),
+  re-show it any time with `wearsic url`),
 - **Section 5** — connect your watch.
 
 > Want to see every step instead? Follow the manual walkthrough from Section 1.
@@ -205,16 +205,16 @@ watch keyboard. It was printed at the end of the install and saved in
 `~/wearsic-server/.env`. To see it any time:
 
 ```bash
-wearsic server api key
-# or: wearsic server url
+wearsic api-key
+# or: wearsic url
 ```
 
 Want your own key instead (longer = better, especially for public
 URLs)? Set one and restart:
 
 ```bash
-wearsic server api key my-secret-wearsic-2026
-wearsic server restart
+wearsic api-key my-secret-wearsic-2026
+wearsic restart
 ```
 
 ### Restart the server
@@ -279,7 +279,7 @@ is stable — `https://<phone-name>.<tailnet>.ts.net` — so you set it
 on the watch once and it keeps working on any network:
 
 ```bash
-wearsic server funnel
+wearsic funnel
 ```
 
 That command does all three steps:
@@ -330,18 +330,22 @@ you need, no paths to remember:
 
 | Action | Command |
 |---|---|
-| Start server | `wearsic server start` |
-| Stop server | `wearsic server stop` |
-| Restart | `wearsic server restart` |
-| Is it running? | `wearsic server status` |
-| Live logs | `wearsic server logs` |
-| Health JSON | `wearsic server health` |
-| **Server URL + API key** | `wearsic server url` |
-| Your WiFi IP | `wearsic server ip` |
-| Show / change API key | `wearsic server api key [new]` |
-| Set YouTube cookie | `wearsic server cookies [str]` |
-| **Public URL (Tailscale Funnel, stable)** | `wearsic server funnel` |
-| Public URL recipes | `wearsic server public` |
+| Start server | `wearsic start` |
+| Stop server | `wearsic stop` |
+| Restart | `wearsic restart` |
+| Is it running? | `wearsic status` |
+| Live logs | `wearsic logs` |
+| Health JSON | `wearsic health` |
+| **Server URL + API key** | `wearsic url` |
+| Your WiFi IP | `wearsic ip` |
+| Show / change API key | `wearsic api-key [new]` |
+| **Update to the latest release** | `wearsic update` |
+| Check the whole setup | `wearsic doctor` |
+| Set YouTube cookie | `wearsic cookies [str]` |
+| **Public URL (Tailscale Funnel, stable)** | `wearsic funnel` |
+| Public URL recipes | `wearsic public` |
+
+(The classic nested form still works: `wearsic server start` etc.)
 | Free disk space | `df -h ~` |
 
 (The raw supervisor also still works: `cd ~/wearsic-server &&
@@ -396,7 +400,7 @@ curl -s http://127.0.0.1:8080/health
 |---|---|
 | `Missing wearsic-server binary` | You're not inside `~/wearsic-server`; re-extract the zip fully (`bin/` and `lib/` must sit next to `run-termux.sh`) |
 | Something is wrong and I don't know what | Run **`wearsic doctor`** — it checks Java, ffmpeg, install, process, port, database, API key, health, readiness, network, storage, Termux, Tailscale/Funnel and the extractor, and exits 0 only when READY |
-| `wearsic server status` says "not running" | Expected exit code **3** (0 = healthy, 4 = running but unhealthy) — scripts can branch on it |
+| `wearsic status` says "not running" | Expected exit code **3** (0 = healthy, 4 = running but unhealthy) — scripts can branch on it |
 | Auto-update refuses a new version | Releases without a published `.zip.sha256` are never auto-installed (authenticity). Update manually with the zip + installer; from the first checksummed release on, auto-update resumes |
 | Server updated and now won't start | The supervisor auto-rolls back to the previous engine (see `wearsic-state/update-history.log`). A version that keeps failing is staged at most 3 times, then a manual update is required |
 | YouTube cookie safety | The cookie is never logged and never returned by the API (`hasCookie` only). It is stored in `wearsic.db`/`.env` — Termux offers no OS secure storage, so the phone's lock screen + user account are the security boundary |

@@ -42,7 +42,15 @@ class SelfHealOrchestrator(
         /** Minimum gap between engine-broken restart attempts. */
         private const val RETRY_AFTER_RESTART_MS = 10 * 60 * 1000L
 
-        /** Periodic update discovery cadence (also the loop tick). */
+        /**
+         * Health-check cadence. The engine can break at ANY moment
+         * (YouTube ships site changes continuously), so the watchdog
+         * must look often — checking only every few hours would leave
+         * the server silently dead for that long.
+         */
+        private const val HEALTH_CHECK_INTERVAL_MS = 60 * 1000L
+
+        /** Periodic update discovery cadence (much slower than health). */
         private const val UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L
 
         /**
@@ -81,17 +89,23 @@ class SelfHealOrchestrator(
     fun start() {
         scope.launch {
             // First check quickly after boot (catch a broken engine early),
-            // then settle into the slow cadence.
+            // then settle into the health cadence. Update DISCOVERY
+            // still runs only every few hours (time-gated in tick()).
             delay(60_000)
             while (isActive) {
                 tick()
-                delay(UPDATE_CHECK_INTERVAL_MS)
+                delay(HEALTH_CHECK_INTERVAL_MS)
             }
         }
     }
 
+    /** Last update-discovery run; touched only by the single loop coroutine. */
+    private var lastUpdateCheckMillis: Long = 0L
+
     internal suspend fun tick() {
         // 1) Engine-broken path: sustained failures + failing canary.
+        //    Runs on the FAST cadence so a broken engine is noticed
+        //    within minutes, not hours.
         val broken = healthMeter.consecutiveFailures() >= FAILURE_TRIGGER
         if (broken) {
             val canaryHealthy = canary.maybeProbe(minIntervalMs = 5 * 60 * 1000L)
@@ -101,8 +115,13 @@ class SelfHealOrchestrator(
             }
         }
 
-        // 2) Periodic discovery channel (cheap, once per cadence).
-        if (autoUpdate && !updater.hasStagedUpdate()) {
+        // 2) Periodic discovery channel: cheap GitHub check, but only
+        //    once per slow cadence even though tick() runs every minute.
+        val now = System.currentTimeMillis()
+        if (autoUpdate && !updater.hasStagedUpdate()
+            && now - lastUpdateCheckMillis >= UPDATE_CHECK_INTERVAL_MS
+        ) {
+            lastUpdateCheckMillis = now
             updater.checkForUpdate()?.let { remote ->
                 updater.downloadAndStage(remote)
             }

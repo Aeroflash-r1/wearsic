@@ -4,7 +4,6 @@ import android.content.Context
 import android.media.AudioManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Headphones
@@ -27,20 +25,17 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -55,25 +50,27 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.example.media.AudioOutputHelper
 import com.example.ui.components.WearsicCircularIconButton
 import com.example.ui.components.WearsicScreenHeader
-import com.example.ui.theme.WearsicBlack
+import com.example.ui.theme.WearsicAccentSky
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicGlassBorder
-import com.example.ui.theme.WearsicSurface
-import com.example.ui.theme.WearsicSurfaceActive
-import com.example.ui.theme.WearsicSurfaceBorderSubtle
+import com.example.ui.theme.WearsicGlassFill
 import com.example.ui.theme.WearsicTextMuted
 import com.example.ui.theme.WearsicTextPrimary
+import com.example.ui.theme.WearsicTextPrimaryDark
 import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
-
+import com.example.ui.util.wearsicClickable
+import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
 
 /**
- * VOLUME & OUTPUT — output picker first, then volume + sleep timer.
+ * SOUND — output picker, volume and sleep timer.
  *
- * The device picker matches the reference media-headphones design: on the
- * black backdrop, unselected outputs are deep-violet icon pills, while the
- * active output is a light-lavender pill carrying its dark icon and label
- * ("Headphones" / "Watch Speaker").
+ * Rebuilt flat and Wear-native: one solid accent (no multi-colour gradients),
+ * an output row where the ACTIVE device is a filled accent pill with a dark
+ * glyph (the same tinted-control language as the player) and the inactive one
+ * is a glass pill, a big readable volume number over a rounded bar, and the
+ * sleep timer as a row of chips.
  */
 @Composable
 fun VolumeScreen(
@@ -94,7 +91,6 @@ fun VolumeScreen(
     }
 
     var volumeLevel by remember { mutableIntStateOf(initialVolPercent) }
-    var selectedOutput by remember { mutableStateOf(currentOutputDevice) }
     val listState = rememberScalingLazyListState()
 
     // "Bluetooth Audio", "Bluetooth: Buds 2", … all count as the headphones
@@ -107,52 +103,44 @@ fun VolumeScreen(
         scrollState = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         ScalingLazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header
             item {
                 WearsicScreenHeader(
-                    title = activeDeviceLabel,
-                    subtitle = "Volume & Output"
+                    title = "Sound",
+                    subtitle = activeDeviceLabel,
                 )
             }
 
-            // ── Output picker (reference style pills) ─────────────────────
-            item {
-                SectionLabel("Audio Output")
-            }
+            // ── Output picker ─────────────────────────────────────────────
+            item { SectionLabel("Audio Output") }
 
-            // Output: Watch Speaker
             item {
-                OutputDevicePill(
+                DevicePill(
                     icon = Icons.AutoMirrored.Rounded.VolumeUp,
                     label = "Watch Speaker",
                     isSelected = !isHeadphonesActive,
-                    onClick = {
-                        selectedOutput = "Watch Speaker"
-                        onOutputDeviceChanged("Watch Speaker")
-                    },
+                    onClick = { onOutputDeviceChanged("Watch Speaker") },
                     testTag = "output_watch_speaker"
                 )
             }
 
-            // Output: Bluetooth Headphones (active device in reference)
             item {
-                OutputDevicePill(
+                DevicePill(
                     icon = Icons.Rounded.Headphones,
                     label = "Headphones",
                     isSelected = isHeadphonesActive,
                     onClick = {
-                        selectedOutput = "Bluetooth Audio"
                         onOutputDeviceChanged("Bluetooth Audio")
                         try {
                             context.startActivity(AudioOutputHelper.createBluetoothSettingsIntent())
@@ -165,28 +153,21 @@ fun VolumeScreen(
             }
 
             // ── Volume ────────────────────────────────────────────────────
+            item { SectionLabel("Volume") }
+
             item {
-                Spacer(modifier = Modifier.height(6.dp))
-            }
-            item {
-                SectionLabel("Volume")
-            }
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(CircleShape)
-                        .background(WearsicSurface)
-                        .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                        .testTag("volume_controls_container")
-                ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(CircleShape)
+                            .background(WearsicGlassFill)
+                            .border(1.dp, WearsicGlassBorder, CircleShape)
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .testTag("volume_controls_container"),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        // Decrease Volume
                         WearsicCircularIconButton(
                             icon = Icons.Rounded.Remove,
                             contentDescription = "Decrease Volume",
@@ -197,34 +178,19 @@ fun VolumeScreen(
                                     audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, streamVal, 0)
                                 }
                             },
-                            size = 36.dp,
+                            size = 34.dp,
                             iconSize = 18.dp,
-                            backgroundColor = WearsicSurfaceActive,
                             testTag = "volume_decrease_button"
                         )
 
-                        // Center Volume Percentage Indicator — gradient hero number
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "$volumeLevel%",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center,
-                                style = TextStyle(
-                                    brush = Brush.verticalGradient(
-                                        listOf(WearsicVibrantLavender, Color(0xFFE8D9FF))
-                                    )
-                                )
-                            )
-                            Text(
-                                text = if (volumeLevel == 0) "Muted" else "Level",
-                                color = WearsicTextMuted,
-                                fontSize = 10.sp,
-                                textAlign = TextAlign.Center
-                            )
-                        }
+                        Text(
+                            text = if (volumeLevel == 0) "Muted" else "$volumeLevel%",
+                            color = WearsicTextPrimary,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
 
-                        // Increase Volume
                         WearsicCircularIconButton(
                             icon = Icons.Rounded.Add,
                             contentDescription = "Increase Volume",
@@ -235,20 +201,19 @@ fun VolumeScreen(
                                     audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, streamVal, 0)
                                 }
                             },
-                            size = 36.dp,
+                            size = 34.dp,
                             iconSize = 18.dp,
-                            backgroundColor = WearsicSurfaceActive,
                             testTag = "volume_increase_button"
                         )
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    VolumeBar(fraction = volumeLevel / 100f)
                 }
             }
 
             // ── Sleep Timer ───────────────────────────────────────────────
             item {
-                Spacer(modifier = Modifier.height(6.dp))
-            }
-            item {
+                Spacer(modifier = Modifier.height(4.dp))
                 SectionLabel("Sleep Timer")
             }
             item {
@@ -258,67 +223,31 @@ fun VolumeScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         options.forEach { mins ->
                             val isActive = sleepRemainingMs > 0 && activeMinutes in (mins - 14)..mins
-                            Box(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (isActive) WearsicVibrantLavender.copy(alpha = 0.25f)
-                                        else WearsicSurface
-                                    )
-                                    .border(
-                                        1.dp,
-                                        if (isActive) WearsicVibrantLavender else WearsicVibrantLavender.copy(alpha = 0.4f),
-                                        CircleShape
-                                    )
-                                    .clickable { onSleepTimerSet(mins) }
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = "${mins}m",
-                                    color = if (isActive) WearsicVibrantLavender else WearsicTextPrimary,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
-                                )
-                            }
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(
-                                    if (sleepRemainingMs == 0L) WearsicSurfaceActive
-                                    else WearsicSurface
-                                )
-                                .border(
-                                    1.dp,
-                                    if (sleepRemainingMs == 0L) WearsicVibrantLavender else WearsicGlassBorder,
-                                    CircleShape
-                                )
-                                .clickable { onSleepTimerSet(0) }
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                "Off",
-                                color = if (sleepRemainingMs == 0L) WearsicVibrantLavender else WearsicTextMuted,
-                                fontSize = 11.sp,
-                                fontWeight = if (sleepRemainingMs == 0L) FontWeight.Bold else FontWeight.Medium
+                            SleepChip(
+                                label = "${mins}m",
+                                isActive = isActive,
+                                onClick = { onSleepTimerSet(mins) }
                             )
                         }
+                        SleepChip(
+                            label = "Off",
+                            isActive = sleepRemainingMs == 0L,
+                            onClick = { onSleepTimerSet(0) }
+                        )
                     }
                     if (sleepRemainingMs > 0) {
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "🌙 Sleep in ${sleepRemainingMs / 60000}m ${(sleepRemainingMs % 60000) / 1000}s",
-                            color = WearsicVibrantLavender,
-                            fontSize = 11.sp
+                            text = "Sleep in ${sleepRemainingMs / 60000}m ${(sleepRemainingMs % 60000) / 1000}s",
+                            color = WearsicAccentSky,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
             }
 
-            // Bottom Spacing
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-            }
+            item { Spacer(modifier = Modifier.height(16.dp)) }
         }
     }
 }
@@ -337,44 +266,49 @@ private fun SectionLabel(text: String) {
 }
 
 /**
- * Reference-style output pill.
- *
- *  · selected  — light lavender fill (#ECE7F5), dark icon + label ("Headphones")
- *  · unselected — deep violet fill (#5E4998), white icon only
+ * Output pill.
+ *  · selected   — flat accent fill, dark icon + label (same language as the
+ *                 player's tinted controls)
+ *  · unselected — translucent glass fill with an accent icon and white label
  */
 @Composable
-private fun OutputDevicePill(
+private fun DevicePill(
     icon: ImageVector,
     label: String,
     isSelected: Boolean,
     onClick: () -> Unit,
     testTag: String
 ) {
-    val fill = if (isSelected) Color(0xFFECE7F5) else Color(0xFF5E4998)
-    val contentTint = if (isSelected) Color(0xFF453678) else Color.White
-    val pillShape = RoundedCornerShape(28.dp)
+    val fill = if (isSelected) WearsicVibrantLavender else WearsicGlassFill
+    val contentTint = if (isSelected) WearsicTextPrimaryDark else WearsicTextPrimary
+    val iconTint = if (isSelected) WearsicTextPrimaryDark else WearsicVibrantLavender
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp)
-            .clip(pillShape)
+            .height(50.dp)
+            .clip(CircleShape)
             .background(fill)
-            .clickable(onClick = onClick)
+            .border(
+                width = 1.dp,
+                color = if (isSelected) Color.Transparent else WearsicGlassBorder,
+                shape = CircleShape
+            )
+            .wearsicClickable(onClick = onClick)
             .semantics {
                 contentDescription = if (isSelected) "$label, selected" else label
             }
             .testTag(testTag),
         contentAlignment = Alignment.Center
     ) {
-        if (isSelected) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = contentTint,
-                    modifier = Modifier.size(18.dp)
-                )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(19.dp)
+            )
+            if (isSelected) {
                 Spacer(modifier = Modifier.width(9.dp))
                 Text(
                     text = label,
@@ -383,14 +317,54 @@ private fun OutputDevicePill(
                     fontWeight = FontWeight.SemiBold
                 )
             }
-        } else {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = contentTint,
-                modifier = Modifier.size(22.dp)
+        }
+    }
+}
+
+/** Rounded, single-colour volume level bar. */
+@Composable
+private fun VolumeBar(fraction: Float, modifier: Modifier = Modifier) {
+    val clamped = fraction.coerceIn(0f, 1f)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(6.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.10f))
+    ) {
+        if (clamped > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(clamped)
+                    .height(6.dp)
+                    .clip(CircleShape)
+                    .background(WearsicVibrantLavender)
             )
         }
+    }
+}
+
+/** Sleep-timer chip: flat accent when active, glass when not. */
+@Composable
+private fun SleepChip(label: String, isActive: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(if (isActive) WearsicVibrantLavender else WearsicGlassFill)
+            .border(
+                width = 1.dp,
+                color = if (isActive) Color.Transparent else WearsicGlassBorder,
+                shape = CircleShape
+            )
+            .wearsicClickable(pressedScale = 0.94f, onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 7.dp)
+    ) {
+        Text(
+            text = label,
+            color = if (isActive) WearsicTextPrimaryDark else WearsicTextPrimary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 

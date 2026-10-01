@@ -1,15 +1,15 @@
-# Wearsic Server — Source Module (rewrite of the compiled-jar server)
+# Wearsic Server — Source Module
 
-This `wearsic-server/` folder now contains the **source** for the server, which
-previously existed only as a compiled jar (`lib/wearsic-server-1.0.0.jar`)
-with no source in the repo. The Kotlin/Ktor implementation is a from-scratch
-rewrite built against the same dependency versions proven in the Termux
-deployment (Ktor 2.3.12, NewPipeExtractor v0.26.4, kotlinx-coroutines 1.7.1,
-sqlite-jdbc 3.46.1.0) and produces the same `bin/`+`lib/` output shape that
-`run-termux.sh` expects.
+This `wearsic-server/` folder is the **canonical server implementation**
+(Kotlin/Ktor + NewPipeExtractor), registered in the root
+`settings.gradle.kts` as the `:wearsic-server` module alongside `:app`.
+Release ZIPs (`wearsic-server-termux-<version>.zip`) are built from this
+source by CI — there is no prebuilt jar in the repo.
 
-The module is registered in the root `settings.gradle.kts` as
-`:wearsic-server` alongside the `:app` Android module.
+Dependency versions follow the Termux deployment that the original
+compiled server used (Ktor 2.3.12, NewPipeExtractor v0.26.4,
+kotlinx-coroutines 1.7.1, sqlite-jdbc 3.46.1.0), and the output shape
+(`bin/` + `lib/`) is what `run-termux.sh` expects.
 
 ## Build
 
@@ -28,49 +28,43 @@ cd wearsic-server
 ./run-termux.sh
 ```
 
-To make the source build the default (over the legacy `bin/`+`lib/` jars),
-copy the fresh output over them:
+## Database compatibility
 
-```bash
-cp -r wearsic-server/build/install/wearsic-server/{bin,lib} wearsic-server/
-```
+The DDL in `Database.kt` mirrors the schema of the deployed `wearsic.db`
+(favorites / playlists / playlist_tracks with `ON DELETE CASCADE` /
+settings), so an existing database keeps working — `CREATE TABLE IF NOT
+EXISTS` is a no-op on those tables and the `settings` table (used to
+persist the YouTube cookie) is additive.
 
-## Database compatibility — resolved
-
-The original compiled server's SQLite schema was not documented anywhere in
-the repo. The DDL in `Database.kt` was written to **mirror the real schema**
-verified from the deployed `wearsic.db` (favorites / playlists /
-playlist_tracks with `ON DELETE CASCADE` / settings), so an existing database
-keeps working — `CREATE TABLE IF NOT EXISTS` is a no-op on those tables and
-the new `settings` table (used to persist the YouTube cookie) is additive.
-
-## What's different from the old (bytecode-patched) server
-
-The source below **supersedes** the patched jar — do not re-apply old
-bytecode patches (see `../server-patches/PATCHES.md`, kept as history only):
+## Behaviour notes
 
 - **Search**: YouTube Music-first (official titles/artists/durations with
-  directly playable videoIds — no iTunes, no surrogate matching step); the
-  NewPipeExtractor YouTube search runs only as fallback when YTM is
-  unreachable. The top results' streams are pre-resolved in the background
-  so taps play instantly.
-- **Stream resolution**: tries the iOS-spoofed YouTube client first (the one
-  that actually works), falls back to the default client only if that fails.
-  Because `setFetchIosClient` is a process-global static, ALL extractions are
-  serialized behind a mutex — the set→fetch→reset sequence is atomic.
+  directly playable videoIds); the NewPipeExtractor YouTube search runs
+  only as fallback when YTM is unreachable. Top results' streams are
+  pre-resolved in the background so taps play instantly.
+- **Stream resolution**: iOS-spoofed client first, default client as
+  fallback — and a client that yields nothing playable also falls through
+  (the two clients parse stream tables differently). `setFetchIosClient`
+  is process-global, so extractions are serialized behind a mutex.
 - **Audio profile**: AAC-LC ~128 kbps preferred (hardware-decoded on the
-  watch's SoC); the old 70 kbps/WebM patch behavior is intentionally NOT
-  preserved. Rare Opus/WebM-only songs are transcoded to AAC by ffmpeg on the
-  server (503 with guidance if ffmpeg is missing).
-- **HTTP transport**: NewPipeExtractor's `Downloader` runs on a pooled,
-  keep-alive Ktor CIO client instead of raw `HttpURLConnection`.
-- **Cookie handling**: read from `WEARSIC_YOUTUBE_COOKIE` on boot (env wins),
-  falling back to the value persisted in SQLite, and updatable at runtime via
-  `POST /api/config/youtube-cookie` — persisted so it survives restarts.
-  Never logged, never echoed by the API.
+  watch's SoC); rare Opus/WebM-only songs are transcoded to AAC by ffmpeg
+  on the server (503 with install guidance if ffmpeg is missing).
+- **HTTP transport**: NewPipeExtractor's `Downloader` and every other
+  outbound call share one tuned Ktor CIO client (12 s/20 s timeouts,
+  20 connections) — the default CIO client has NO timeouts.
+- **Cookie handling**: read from `WEARSIC_YOUTUBE_COOKIE` on boot (env
+  wins), falling back to the value persisted in SQLite, updatable at
+  runtime via `POST /api/config/youtube-cookie` — persisted so it
+  survives restarts. Never logged, never echoed by the API.
 - **Concurrency/memory**: per-key `SingleFlight` deduplication (entries
-  removed on completion — the old per-key Mutex map leaked one entry per key
-  ever seen), bounded LRU caches with TTL on stream targets.
+  removed on completion), atomic `getOrPut` on bounded LRU caches with
+  TTL'd stream targets, and zip verification that streams through the
+  file instead of loading whole ~30 MB packages into memory.
+- **Self-healing**: extraction failures are counted; a canary-confirmed
+  broken engine downloads, verifies and stages the newest release, and
+  the supervisor applies it on restart (see the README's
+  Self-healing section). Health is checked every 60 s; update discovery
+  every 6 h.
 - **Errors**: Ktor StatusPages maps every failure to JSON
   (`{"error": "..."}`); malformed bodies answer 400 instead of empty 500s.
 - **Auth**: `WEARSIC_API_KEY` compared with `MessageDigest.isEqual`
@@ -84,8 +78,8 @@ bytecode patches (see `../server-patches/PATCHES.md`, kept as history only):
 ## Verified
 
 `./gradlew :wearsic-server:test` runs offline unit/integration tests
-(YTM parsing/durations, search fallback, SingleFlight dedup, database CRUD incl.
-wildcard playlist deletion and legacy surrogate matches, JSON contract,
-Ktor routes/auth/errors/rate limit, transcoder plumbing). CI runs them on
-every push, and the release pipeline boots the packaged server and asserts
-`/health` reports the source version before publishing.
+(YTM parsing/durations, search fallback, SingleFlight dedup, database CRUD
+incl. wildcard playlist deletion, JSON contract, Ktor routes/auth/errors/
+rate limit, transcoder plumbing). CI runs them on every push, and the
+release pipeline boots the packaged server and asserts `/health` reports
+the source version before publishing.

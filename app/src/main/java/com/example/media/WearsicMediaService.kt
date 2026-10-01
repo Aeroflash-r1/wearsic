@@ -52,17 +52,25 @@ class WearsicMediaService : MediaSessionService() {
         //    TWO notifications (the media card + an orphaned ongoing-activity
         //    card), because every metadata update re-posts the notification
         //    without the manual ongoing-activity extras.
-        val sessionActivityIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
         mediaSession = MediaSession.Builder(this, exoPlayer)
-            .setSessionActivity(sessionActivityIntent)
+            .setSessionActivity(playerSessionIntent())
             .build()
     }
+
+    /**
+     * Tapping the media notification opens the PLAYER, not the library home
+     * screen: the extra is read by MainActivity and routed by the nav host.
+     * SINGLE_TOP so an already-running app receives it via onNewIntent instead
+     * of stacking a second activity on top of the player.
+     */
+    private fun playerSessionIntent(): PendingIntent = PendingIntent.getActivity(
+        this,
+        0,
+        Intent(this, MainActivity::class.java)
+            .putExtra(MainActivity.EXTRA_OPEN_PLAYER, true)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
         // Self-healing: if the session was torn down by a previous lifecycle
@@ -113,14 +121,8 @@ class WearsicMediaService : MediaSessionService() {
         player?.release()
         val exoPlayer = buildPlayer()
         this.player = exoPlayer
-        val sessionActivityIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
         mediaSession = MediaSession.Builder(this, exoPlayer)
-            .setSessionActivity(sessionActivityIntent)
+            .setSessionActivity(playerSessionIntent())
             .build()
     }
 
@@ -140,11 +142,16 @@ class WearsicMediaService : MediaSessionService() {
         )
 
         // 3. Buffer policy: a modest in-memory window (ExoPlayer memory
-        //    buffering only — nothing is written to disk).
+        //    buffering only — nothing is written to disk). Halved from
+        //    30s/60s: a watch has a small heap and this is the single largest
+        //    allocation the player holds, while 15s/30s still covers a whole
+        //    track transition plus a couple of seconds of network jitter (the
+        //    server-side warm-up removes the extraction stall that used to
+        //    justify the deep buffer).
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 30000,
-                /* maxBufferMs = */ 60000,
+                /* minBufferMs = */ 15000,
+                /* maxBufferMs = */ 30000,
                 /* bufferForPlaybackMs = */ 1500,
                 /* bufferForPlaybackAfterRebufferMs = */ 5000
             )

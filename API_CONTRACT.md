@@ -43,16 +43,26 @@ X-Wearsic-Key: <key>
 ### 1. Health
 
 - **GET** `/health`
-- **Response** `200 OK`:
+- **Response** `200 OK` (self-healing fields are optional — older clients ignore them):
 
 ```json
-{ "status": "ok", "version": "1.0.0", "serverName": "Wearsic Engine", "transcoderAvailable": true }
+{
+  "status": "ok",
+  "version": "1.1.0",
+  "serverName": "Wearsic Engine",
+  "transcoderAvailable": true,
+  "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
+  "canaryHealthy": null,
+  "update": { "status": "idle", "latestKnownVersion": null, "lastCheckAtMillis": 0, "lastError": null, "stagedVersion": null }
+}
 ```
 
 Client tolerates missing fields (`status` defaults to `"ok"` when HTTP 200).
 `version` comes from `ServerVersion.VERSION` (single source of truth shared
 with the Gradle build/JAR name); `transcoderAvailable` is informational and
-reports whether ffmpeg was found for Opus/WebM→AAC transcoding.
+reports whether ffmpeg was found for Opus/WebM→AAC transcoding;
+`extraction`/`canaryHealthy`/`update` expose the self-healing engine
+state (see `wearsic-server/README.md`).
 
 ### 2. Music Search
 

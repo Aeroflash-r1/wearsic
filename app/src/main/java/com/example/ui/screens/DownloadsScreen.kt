@@ -58,6 +58,7 @@ import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.components.WearsicSongRow
 import com.example.ui.components.WearsicSongRowActionButton
 import com.example.ui.components.WearsicSongRowPlayButton
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicError
 import com.example.ui.theme.WearsicLavenderContainer
@@ -71,6 +72,8 @@ import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
 
+import com.example.ui.util.wearsicClickable
+import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
 
 @Composable
@@ -91,12 +94,13 @@ fun DownloadsScreen(
         scrollState = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         ScalingLazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -106,7 +110,7 @@ fun DownloadsScreen(
             item {
                 WearsicScreenHeader(
                     title = "Downloads",
-                    subtitle = "${downloads.count { it.isCompleted() }} Offline Tracks"
+                    subtitle = "${downloads.count { it.isCompleted() }} Offline Tracks",
                 )
             }
 
@@ -165,7 +169,7 @@ fun DownloadsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicError.copy(alpha = 0.2f))
                                 .border(1.dp, WearsicError, CircleShape)
-                                .clickable {
+                                .wearsicClickable {
                                     onClearAllDownloads()
                                     showClearAllConfirmation = false
                                 }
@@ -187,7 +191,7 @@ fun DownloadsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
-                                .clickable { showClearAllConfirmation = true }
+                                .wearsicClickable { showClearAllConfirmation = true }
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .testTag("clear_all_downloads_button"),
                             contentAlignment = Alignment.Center
@@ -320,7 +324,7 @@ private fun DownloadingItemCard(
                     .clip(CircleShape)
                     .background(WearsicSurface)
                     .border(1.dp, WearsicSurfaceBorder, CircleShape)
-                    .clickable(onClick = onCancel)
+                    .wearsicClickable(onClick = onCancel)
                     .testTag("cancel_download_${entity.trackId}"),
                 contentAlignment = Alignment.Center
             ) {
@@ -393,7 +397,7 @@ private fun FailedDownloadItemCard(
                         .clip(CircleShape)
                         .background(WearsicVibrantLavender.copy(alpha = 0.15f))
                         .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.4f), CircleShape)
-                        .clickable(onClick = onRetry)
+                        .wearsicClickable(onClick = onRetry)
                         .testTag("retry_download_${entity.trackId}"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -413,7 +417,7 @@ private fun FailedDownloadItemCard(
                         .size(26.dp)
                         .clip(CircleShape)
                         .background(WearsicSurface)
-                        .clickable(onClick = onDelete),
+                        .wearsicClickable(onClick = onDelete),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(

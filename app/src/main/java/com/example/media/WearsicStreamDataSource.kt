@@ -31,7 +31,17 @@ object WearsicStreamDataSource {
         val upstreamFactory = OkHttpDataSource.Factory(
             com.example.network.WearsicHttp.client.newBuilder()
                 .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
+                // OkHttp's callTimeout spans the ENTIRE call, including
+                // reading the response body: the base client's 45s cap
+                // would cut any song longer than 45s off mid-playback
+                // (the 6s test tracks never reveal this). A stream has
+                // no whole-call budget — a stalled socket is governed by
+                // per-read inactivity instead, and 60s (the longer media
+                // timeout the base client documents for this path) rides
+                // out WiFi roaming on a watch without hard-erroring a
+                // healthy stream.
+                .callTimeout(0, TimeUnit.MILLISECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
                 .build()
         )
         return DefaultDataSource.Factory(context.applicationContext, upstreamFactory)

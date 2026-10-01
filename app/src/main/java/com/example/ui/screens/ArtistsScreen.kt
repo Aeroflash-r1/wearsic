@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.foundation.lazy.itemsIndexed
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ScreenScaffold
@@ -45,6 +46,7 @@ import com.example.ui.components.WearsicEmptyState
 import com.example.ui.components.WearsicLibraryTrackRow
 import com.example.ui.components.WearsicLoadingState
 import com.example.ui.components.WearsicScreenHeader
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
@@ -52,6 +54,8 @@ import com.example.ui.theme.WearsicTextPrimary
 import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
+import com.example.ui.util.wearsicClickable
+import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
 import com.example.ui.viewmodel.ArtistGroup
 import com.example.ui.viewmodel.ArtistsUiState
@@ -72,12 +76,13 @@ fun ArtistsScreen(
         scrollState = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         ScalingLazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -85,11 +90,14 @@ fun ArtistsScreen(
         ) {
             item {
                 if (selected == null) {
-                    WearsicScreenHeader(title = "Artists", subtitle = "From your saved songs")
+                    WearsicScreenHeader(
+                        title = "Artists",
+                        subtitle = "From your saved songs",
+                    )
                 } else {
                     WearsicScreenHeader(
                         title = selected!!.name,
-                        subtitle = "${selected!!.songs.size} songs • tap Clear to go back"
+                        subtitle = "${selected!!.songs.size} songs • tap Clear to go back",
                     )
                     // Clear button — exits the artist detail back to the full list
                     Row(
@@ -97,7 +105,7 @@ fun ArtistsScreen(
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
-                            .clickable { selected = null }
+                            .wearsicClickable { selected = null }
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                             .testTag("artist_clear"),
                         verticalAlignment = Alignment.CenterVertically
@@ -122,8 +130,7 @@ fun ArtistsScreen(
 
             val group = selected
             if (group != null) {
-                items(group.songs.size) { index ->
-                    val song = group.songs[index]
+                itemsIndexed(group.songs, key = { _, song -> song.id }) { index, song ->
                     WearsicLibraryTrackRow(
                         track = song,
                         onPlay = { onPlayArtistSongs(group, index) }
@@ -146,7 +153,7 @@ fun ArtistsScreen(
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
-                            .clickable { selected = artist }
+                            .wearsicClickable { selected = artist }
                             .padding(horizontal = 12.dp, vertical = 10.dp)
                             .testTag("artist_${artist.name}")
                     ) {

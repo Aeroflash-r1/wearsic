@@ -290,8 +290,12 @@ class YoutubeGateway(
 
         return streamSingleFlight.run(videoId) {
             // Re-check the cache after joining: the winner populated it.
+            // The clock is re-read here — a flight can take tens of
+            // seconds, so the 'now' captured before it would happily
+            // serve an entry that expired while waiting in line.
+            val joinedAt = System.currentTimeMillis()
             streamCache.get(videoId)?.let { cached ->
-                if (cached.expiresAtMillis > now) return@run cached.target
+                if (cached.expiresAtMillis > joinedAt) return@run cached.target
             }
 
             // Track whether the timeout fired vs extraction genuinely finding
@@ -380,7 +384,12 @@ class YoutubeGateway(
     private fun resolveAudioStreamWithFallback(videoId: String): AudioStream? {
         for (useIos in CLIENT_ORDER) {
             try {
-                return resolveAudioStream(videoId, useIosClient = useIos)
+                val audio = resolveAudioStream(videoId, useIosClient = useIos)
+                // Fall through when a client yields NOTHING playable,
+                // not only when it throws: the two clients parse
+                // stream tables differently, so a video the iOS
+                // client misreads can still play via the default one.
+                if (audio != null) return audio
             } catch (e: Exception) {
                 logger.info(
                     "{} client failed for video {}: {}",

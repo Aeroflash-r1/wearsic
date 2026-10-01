@@ -50,9 +50,15 @@ import kotlin.coroutines.coroutineContext
 class WearsicDownloadManager(
     private val context: Context,
     private val repository: WearsicDownloadRepository = WearsicDownloadRepository(context),
-    // Derived from the shared pool; only the longer read timeout differs.
+    // Derived from the shared pool: longer read tolerance and NO whole-
+    // call budget. OkHttp's callTimeout spans reading the response body,
+    // so the base client's 45s cap would abort a multi-megabyte song
+    // download partway through (a slow-but-steady watch connection keeps
+    // each read well under 30s; stalled sockets fail fast so the
+    // resumable download retries instead of hanging).
     private val okHttpClient: OkHttpClient = com.example.network.WearsicHttp.client.newBuilder()
         .readTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 ) {
 

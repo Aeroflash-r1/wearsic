@@ -48,11 +48,14 @@ fun main() {
     // v1.4.4: wipe matches persisted by older, version-blind matcher builds
     // so every song re-matches with the fixed logic once.
     database.clearStaleMatchesOnce("matcher_version_wipe", "1.4.4")
-    val healthMeter = ExtractionHealthMeter()
-    val gateway = YoutubeGateway(healthMeter = healthMeter)
-    // Tuned like NewPipeDownloader (12s/20s): the default CIO client has NO
-    // timeouts, so one stalled googlevideo.com CDN connection parked a server
-    // worker forever and the watch spun buffering until it heated up.
+    // One tuned client for EVERYTHING that talks to the internet
+    // (CDN audio proxy, ffmpeg source, engine updater, and the
+    // NewPipe downloader): identical tuning (12s/20s timeouts, 20
+    // connections), so sharing one pool halves the engine's thread
+    // and connection footprint and gives the whole process a single
+    // bounded concurrency budget. The default CIO client has NO
+    // timeouts — one stalled googlevideo.com connection used to park
+    // a server worker forever while the watch spun buffering.
     val proxyClient = HttpClient(CIO) {
         engine {
             maxConnectionsCount = 20
@@ -69,6 +72,11 @@ fun main() {
         }
         expectSuccess = false
     }
+    val healthMeter = ExtractionHealthMeter()
+    val gateway = YoutubeGateway(
+        downloader = NewPipeDownloader(proxyClient),
+        healthMeter = healthMeter,
+    )
 
     // Detect ffmpeg so songs without native AAC can be converted server-side.
     // Without it those rare songs answer 503 with install guidance instead.

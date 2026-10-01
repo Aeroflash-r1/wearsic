@@ -215,58 +215,76 @@ class EngineUpdater(
          * Verifies [zip] is a complete archive by walking its central
          * directory: EOCD present, every entry's header + data inside the
          * file. Throws [IllegalStateException] on any truncation/corruption.
+         *
+         * Streams through the file with [RandomAccessFile] instead of
+         * loading it whole — real packages are ~30MB and the updater runs
+         * on a phone, where a full in-memory copy is a pointless heap
+         * spike for a one-shot check.
          */
         fun verifyZipIntegrity(zip: File) {
-            val bytes = zip.readBytes()
-            val size = bytes.size
+            java.io.RandomAccessFile(zip, "r").use { raf ->
+                val size = raf.length()
+                if (size < 22) error("zip: file too small to be a zip archive")
 
-            // End Of Central Directory: scan the last 64KB+22 for its signature.
-            var eocd = -1
-            val scanFrom = maxOf(0, size - (65_536 + 22))
-            var i = size - 22
-            while (i >= scanFrom) {
-                if (bytes[i] == 0x50.toByte() && bytes[i + 1] == 0x4b.toByte() &&
-                    bytes[i + 2] == 0x05.toByte() && bytes[i + 3] == 0x06.toByte()
-                ) {
-                    eocd = i
-                    break
+                // End Of Central Directory: scan the last 64KB+22 (bounded
+                // window, never the whole archive) for its signature.
+                val tailSize = minOf(size, 65_536L + 22L).toInt()
+                val tail = ByteArray(tailSize)
+                raf.seek(size - tailSize)
+                raf.readFully(tail)
+                var eocdIndex = -1
+                var i = tailSize - 22
+                while (i >= 0) {
+                    if (tail[i] == 0x50.toByte() && tail[i + 1] == 0x4b.toByte() &&
+                        tail[i + 2] == 0x05.toByte() && tail[i + 3] == 0x06.toByte()
+                    ) {
+                        eocdIndex = i
+                        break
+                    }
+                    i--
                 }
-                i--
+                if (eocdIndex < 0) error("zip: missing End Of Central Directory (truncated download?)")
+                val eocd = size - tailSize + eocdIndex
+
+                val scratch2 = ByteArray(2)
+                fun u16(off: Long): Int {
+                    raf.seek(off)
+                    raf.readFully(scratch2)
+                    return (scratch2[0].toInt() and 0xFF) or ((scratch2[1].toInt() and 0xFF) shl 8)
+                }
+                fun u32(off: Long): Long =
+                    (u16(off).toLong() and 0xFFFF) or ((u16(off + 2).toLong() and 0xFFFF) shl 16)
+
+                val entryCount = u16(eocd + 10)
+                val cdSize = u32(eocd + 12)
+                val cdOffset = u32(eocd + 16)
+                if (cdOffset + cdSize > size) error("zip: central directory beyond end of file")
+
+                var pos = cdOffset
+                repeat(entryCount) {
+                    if (pos + 46 > size || u32(pos) != 0x02014b50L) error("zip: corrupt central directory entry")
+                    val compressedSize = u32(pos + 20)
+                    val nameLen = u16(pos + 28).toLong()
+                    val extraLen = u16(pos + 30).toLong()
+                    val commentLen = u16(pos + 32).toLong()
+                    val localOffset = u32(pos + 42)
+                    val entryEnd = pos + 46 + nameLen + extraLen + commentLen
+                    if (entryEnd > size) error("zip: central directory entry overruns file")
+
+                    // Local header must exist with its data fully inside the file.
+                    if (localOffset + 30 > size || u32(localOffset) != 0x04034b50L) {
+                        error("zip: missing/corrupt local header (truncated download?)")
+                    }
+                    val localNameLen = u16(localOffset + 26).toLong()
+                    val localExtraLen = u16(localOffset + 28).toLong()
+                    val dataStart = localOffset + 30 + localNameLen + localExtraLen
+                    if (dataStart + compressedSize > size) {
+                        error("zip: entry data beyond end of file (truncated download?)")
+                    }
+                    pos = entryEnd
+                }
+                if (entryCount == 0) error("zip: archive has no entries")
             }
-            if (eocd < 0) error("zip: missing End Of Central Directory (truncated download?)")
-
-            fun u16(off: Int) = (bytes[off].toInt() and 0xFF) or ((bytes[off + 1].toInt() and 0xFF) shl 8)
-            fun u32(off: Int) = (u16(off).toLong() and 0xFFFF) or ((u16(off + 2).toLong() and 0xFFFF) shl 16)
-
-            val entryCount = u16(eocd + 10)
-            val cdSize = u32(eocd + 12).toInt()
-            val cdOffset = u32(eocd + 16).toInt()
-            if (cdOffset + cdSize > size) error("zip: central directory beyond end of file")
-
-            var pos = cdOffset
-            repeat(entryCount) {
-                if (pos + 46 > size || u32(pos) != 0x02014b50L) error("zip: corrupt central directory entry")
-                val compressedSize = u32(pos + 20).toInt()
-                val nameLen = u16(pos + 28)
-                val extraLen = u16(pos + 30)
-                val commentLen = u16(pos + 32)
-                val localOffset = u32(pos + 42).toInt()
-                val entryEnd = pos + 46 + nameLen + extraLen + commentLen
-                if (entryEnd > size) error("zip: central directory entry overruns file")
-
-                // Local header must exist with its data fully inside the file.
-                if (localOffset + 30 > size || u32(localOffset) != 0x04034b50L) {
-                    error("zip: missing/corrupt local header (truncated download?)")
-                }
-                val localNameLen = u16(localOffset + 26)
-                val localExtraLen = u16(localOffset + 28)
-                val dataStart = localOffset + 30 + localNameLen + localExtraLen
-                if (dataStart.toLong() + compressedSize > size) {
-                    error("zip: entry data beyond end of file (truncated download?)")
-                }
-                pos = entryEnd
-            }
-            if (entryCount == 0) error("zip: archive has no entries")
         }
 
         /**

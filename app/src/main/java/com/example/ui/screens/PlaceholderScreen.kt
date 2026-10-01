@@ -29,6 +29,7 @@ import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicLavenderContainer
 import com.example.ui.theme.WearsicSurface
@@ -37,6 +38,7 @@ import com.example.ui.theme.WearsicTextPrimary
 import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
+import com.example.ui.util.wearsicClickable
 
 @Composable
 fun PlaceholderScreen(
@@ -49,7 +51,7 @@ fun PlaceholderScreen(
     ScreenScaffold(
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         Column(
             modifier = Modifier
@@ -101,7 +103,7 @@ fun PlaceholderScreen(
                     .clip(CircleShape)
                     .background(WearsicSurface)
                     .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
-                    .clickable(onClick = onBack)
+                    .wearsicClickable(onClick = onBack)
                     .padding(horizontal = 18.dp, vertical = 8.dp)
                     .testTag("placeholder_back_button"),
                 contentAlignment = Alignment.Center

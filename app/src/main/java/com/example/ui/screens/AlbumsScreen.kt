@@ -60,6 +60,7 @@ import com.example.ui.components.WearsicSongRow
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
 import com.example.ui.components.WearsicScreenHeader
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicError
 import com.example.ui.theme.WearsicTextMuted
@@ -69,6 +70,7 @@ import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.viewmodel.AlbumsUiState
 
+import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
 
 @Composable
@@ -105,18 +107,24 @@ fun AlbumsScreen(
         scrollState = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         ScalingLazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            item { WearsicScreenHeader(title = "Albums", subtitle = "Find full albums") }
+            item {
+                WearsicScreenHeader(
+                    title = "Albums",
+                    subtitle = "Find full albums",
+                )
+            }
 
             item {
                 var isFocused by remember { mutableStateOf(false) }

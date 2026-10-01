@@ -53,6 +53,7 @@ import com.example.ui.components.WearsicLoadingState
 import com.example.ui.components.WearsicSecondaryPillButton
 import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.components.WearsicSongRow
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicError
 import com.example.ui.theme.WearsicSurface
@@ -64,6 +65,8 @@ import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.viewmodel.PlaylistsUiState
 
+import com.example.ui.util.wearsicClickable
+import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
 
 @Composable
@@ -89,12 +92,13 @@ fun PlaylistsScreen(
         scrollState = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         ScalingLazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -103,7 +107,7 @@ fun PlaylistsScreen(
             item {
                 WearsicScreenHeader(
                     title = "Playlists",
-                    subtitle = "Your Library"
+                    subtitle = "Your Library",
                 )
             }
 
@@ -220,7 +224,7 @@ fun PlaylistsScreen(
                             modifier = Modifier
                                 .clip(CircleShape)
                                 .background(WearsicVibrantLavender)
-                                .clickable {
+                                .wearsicClickable {
                                     val name = newPlaylistName.trim()
                                     if (name.isNotBlank()) {
                                         onCreatePlaylist(name)
@@ -237,7 +241,7 @@ fun PlaylistsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicGlassFill)
                                 .border(1.dp, WearsicGlassBorder, CircleShape)
-                                .clickable { showCreateDialog = false; newPlaylistName = "" }
+                                .wearsicClickable { showCreateDialog = false; newPlaylistName = "" }
                                 .padding(horizontal = 14.dp, vertical = 6.dp)
                         ) {
                             Text("Cancel", color = WearsicTextPrimary, fontSize = 12.sp)
@@ -279,7 +283,7 @@ fun PlaylistsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicError.copy(alpha = 0.25f))
                                 .border(1.dp, WearsicError, CircleShape)
-                                .clickable {
+                                .wearsicClickable {
                                     onRemovePlaylist(pl.id)
                                     hideCandidate = null
                                 }
@@ -292,7 +296,7 @@ fun PlaylistsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicGlassFill)
                                 .border(1.dp, WearsicGlassBorder, CircleShape)
-                                .clickable { hideCandidate = null }
+                                .wearsicClickable { hideCandidate = null }
                                 .padding(horizontal = 14.dp, vertical = 6.dp)
                         ) {
                             Text("Cancel", color = WearsicTextPrimary, fontSize = 12.sp)

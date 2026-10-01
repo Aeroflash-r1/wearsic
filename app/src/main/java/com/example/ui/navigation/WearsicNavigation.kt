@@ -2,6 +2,7 @@ package com.example.ui.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -51,11 +52,13 @@ fun WearsicApp(
     }
 ) {
     val navController = rememberSwipeDismissableNavController()
-    val playbackState by playerViewModel.uiState.collectAsStateWithLifecycle()
+    // Held as a State (not read here) so ticking position updates never
+    // recompose this whole navigation host — see the derived projections below.
+    val playbackStateHolder = playerViewModel.uiState.collectAsStateWithLifecycle()
     val searchState by playerViewModel.searchState.collectAsStateWithLifecycle()
     val serverUrl by playerViewModel.serverUrl.collectAsStateWithLifecycle()
     val connectionTestState by playerViewModel.connectionTestState.collectAsStateWithLifecycle()
-    val downloads by playerViewModel.downloads.collectAsStateWithLifecycle()
+    val downloadsHolder = playerViewModel.downloads.collectAsStateWithLifecycle()
     val autoCacheEnabled by playerViewModel.autoCacheEnabled.collectAsStateWithLifecycle()
     val offlineLimit by playerViewModel.offlineLimit.collectAsStateWithLifecycle()
     val radioState by playerViewModel.radioState.collectAsStateWithLifecycle()
@@ -70,27 +73,30 @@ fun WearsicApp(
     val playlistsState by playerViewModel.playlistsState.collectAsStateWithLifecycle()
     val playlistDetailState by playerViewModel.playlistDetailState.collectAsStateWithLifecycle()
 
-    val currentTrackDownload = downloads.find { it.trackId == playbackState.currentTrack.id }
+    // Derived projections: recompute whenever the flow emits, but only
+    // NOTIFY their readers when the projected value actually changes. The
+    // position tracker pushes a tick every 2s for the whole session; without
+    // this, each tick recomposed the entire navigation graph (all 12 screens
+    // are reachable from here). Zeroing the ticking fields collapses ~1800
+    // no-op emissions an hour into zero recompositions.
+    val stablePlaybackState by remember {
+        derivedStateOf { playbackStateHolder.value.copy(currentPositionMs = 0L) }
+    }
+
+    val currentTrackDownload by remember {
+        derivedStateOf {
+            val trackId = playbackStateHolder.value.currentTrack.id
+            downloadsHolder.value.find { it.trackId == trackId }
+        }
+    }
     val isCurrentTrackDownloaded = currentTrackDownload?.isCompleted() == true
     val isCurrentTrackDownloading = currentTrackDownload?.downloadState == DownloadState.DOWNLOADING.name || currentTrackDownload?.downloadState == DownloadState.QUEUED.name
     val currentTrackDownloadProgress = currentTrackDownload?.progress ?: 0
 
-    // Stable snapshots: the 1Hz position ticks must not recompose screens
-    // that do not render progress. remember() returns the same instance until
-    // one of the displayed fields actually changes.
-    val libraryPlaybackState = remember(
-        playbackState.currentTrack.id,
-        playbackState.currentTrack.title,
-        playbackState.currentTrack.artist,
-        playbackState.isPlaying
-    ) { playbackState }
-
-    val queuePlaybackState = remember(
-        playbackState.currentTrack.id,
-        playbackState.currentTrackIndex,
-        playbackState.playlist.size,
-        playbackState.isPlaying
-    ) { playbackState }
+    // Library/Queue render only metadata + play state, never progress, so
+    // they take the stable projection.
+    val libraryPlaybackState = stablePlaybackState
+    val queuePlaybackState = stablePlaybackState
 
     // The first committed frame marks the process as having survived cold
     // start (clears the previous-run crash detector) and records the tile
@@ -102,6 +108,17 @@ fun WearsicApp(
         MainActivity.pendingTileAction?.let { action ->
             MainActivity.pendingTileAction = null
             playerViewModel.handleTileAction(action)
+        }
+    }
+
+    // Opened from the media notification → go straight to the player rather
+    // than the library home screen. Fires both on cold start (the request is
+    // already set before composition) and on onNewIntent while running.
+    val openPlayerRequested by MainActivity.openPlayerRequest
+    LaunchedEffect(openPlayerRequested) {
+        if (openPlayerRequested) {
+            MainActivity.openPlayerRequest.value = false
+            navController.navigate(Screen.Player.route) { launchSingleTop = true }
         }
     }
 
@@ -179,7 +196,9 @@ fun WearsicApp(
             // 3. Player Screen (Connected to real Media3 Playback + Offline awareness)
             composable(Screen.Player.route) {
                 PlayerScreen(
-                    playbackState = playbackState,
+                    // Read here (destination scope) so position ticks recompose
+                    // only the player, not the host above it.
+                    playbackState = playbackStateHolder.value,
                     onTogglePlayPause = {
                         playerViewModel.togglePlayPause()
                     },
@@ -216,7 +235,7 @@ fun WearsicApp(
             // 4. Volume & Output Screen
             composable(Screen.Volume.route) {
                 VolumeScreen(
-                    currentOutputDevice = playbackState.outputDeviceName,
+                    currentOutputDevice = stablePlaybackState.outputDeviceName,
                     sleepRemainingMs = sleepRemainingMs,
                     onSleepTimerSet = { minutes ->
                         playerViewModel.setSleepTimer(minutes)
@@ -274,8 +293,8 @@ fun WearsicApp(
                     onClearQueue = {
                         playerViewModel.clearQueue()
                     },
-                    shuffleEnabled = playbackState.shuffleEnabled,
-                    repeatMode = playbackState.repeatMode,
+                    shuffleEnabled = stablePlaybackState.shuffleEnabled,
+                    repeatMode = stablePlaybackState.repeatMode,
                     onToggleShuffle = { playerViewModel.toggleShuffle() },
                     onCycleRepeat = { playerViewModel.cycleRepeatMode() },
                     radioState = radioState,
@@ -286,7 +305,7 @@ fun WearsicApp(
             // 7. Downloads Screen (Full offline playback and download queue management)
             composable(Screen.Downloads.route) {
                 DownloadsScreen(
-                    downloads = downloads,
+                    downloads = downloadsHolder.value,
                     onPlayTrack = { track ->
                         playerViewModel.playTrack(track)
                         navController.navigate(Screen.Player.route)

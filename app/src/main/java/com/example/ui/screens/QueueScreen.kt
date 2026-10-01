@@ -32,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -59,6 +58,7 @@ import com.example.ui.components.WearsicEmptyState
 import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.components.WearsicSongRow
 import com.example.ui.components.WearsicSongRowActionButton
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicError
 import com.example.ui.theme.WearsicGlassBorder
@@ -73,6 +73,8 @@ import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
 
+import com.example.ui.util.wearsicClickable
+import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
 
 @Composable
@@ -99,12 +101,13 @@ fun QueueScreen(
         scrollState = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         ScalingLazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -113,7 +116,7 @@ fun QueueScreen(
             item {
                 WearsicScreenHeader(
                     title = "Queue",
-                    subtitle = "${upcoming.size} Up Next"
+                    subtitle = "${upcoming.size} Up Next",
                 )
             }
 
@@ -137,7 +140,7 @@ fun QueueScreen(
                                 if (shuffleEnabled) WearsicVibrantLavender else WearsicGlassBorder,
                                 CircleShape
                             )
-                            .clickable(onClick = onToggleShuffle),
+                            .wearsicClickable(onClick = onToggleShuffle),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -154,7 +157,7 @@ fun QueueScreen(
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
-                            .clickable(onClick = onStartRadio),
+                            .wearsicClickable(onClick = onStartRadio),
                         contentAlignment = Alignment.Center
                     ) {
                         if (radioState is com.example.ui.viewmodel.RadioState.Loading) {
@@ -182,7 +185,7 @@ fun QueueScreen(
                                 if (repeatMode != 0) WearsicVibrantLavender else WearsicGlassBorder,
                                 CircleShape
                             )
-                            .clickable(onClick = onCycleRepeat),
+                            .wearsicClickable(onClick = onCycleRepeat),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -241,7 +244,7 @@ fun QueueScreen(
                                 .clip(CircleShape)
                                 .background(WearsicError.copy(alpha = 0.2f))
                                 .border(1.dp, WearsicError, CircleShape)
-                                .clickable {
+                                .wearsicClickable {
                                     onClearQueue()
                                     showClearConfirmation = false
                                 }
@@ -263,7 +266,7 @@ fun QueueScreen(
                                 .clip(CircleShape)
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
-                                .clickable { showClearConfirmation = true }
+                                .wearsicClickable { showClearConfirmation = true }
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .testTag("clear_queue_button"),
                             contentAlignment = Alignment.Center
@@ -296,11 +299,7 @@ private fun QueueCurrentCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(CircleShape)
-            .background(
-                Brush.linearGradient(
-                    listOf(WearsicVibrantLavender.copy(alpha = 0.9f), androidx.compose.ui.graphics.Color(0xFF8A5CF6))
-                )
-            )
+            .background(WearsicVibrantLavender)
             .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), CircleShape)
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag("queue_current_track")
@@ -320,11 +319,14 @@ private fun QueueCurrentCard(
                     .clip(CircleShape)
                     .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
                 if (!track.artworkUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(context)
+                    val artRequest = remember(track.artworkUrl) {
+                        ImageRequest.Builder(context)
                             .data(track.artworkUrl)
-                            .size(160)
-                            .build(),
+                            .size(112)
+                            .build()
+                    }
+                    AsyncImage(
+                        model = artRequest,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = art

@@ -1,12 +1,7 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,8 +32,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -66,6 +61,7 @@ import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.components.WearsicSecondaryPillButton
 import com.example.ui.components.WearsicSettingsActionPill
 import com.example.ui.components.WearsicSongRow
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicGlassFill
 import com.example.ui.theme.WearsicGlassBorder
@@ -78,6 +74,8 @@ import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
 
+import com.example.ui.util.wearsicClickable
+import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
 
 @Composable
@@ -100,12 +98,13 @@ fun LibraryScreen(
         scrollState = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         ScalingLazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .wearsicEntrance()
                 .testTag("library_lazy_column")
                 .wearsicRotaryScroll(listState),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
@@ -115,7 +114,21 @@ fun LibraryScreen(
             // Header
             item {
                 WearsicScreenHeader(
-                    title = "Library"
+                    title = "Library",
+                    subtitle = "Your music, everywhere"
+                )
+            }
+
+            // Now Playing hero — always the first thing on the home screen so
+            // "continue listening" is one tap away and the top of the app
+            // reads as a real home rather than a plain menu.
+            item {
+                NowPlayingMiniCard(
+                    title = playbackState.currentTrack.title.ifBlank { "No Active Track" },
+                    artist = playbackState.currentTrack.artist.ifBlank { "Wearsic Player" },
+                    artworkUrl = playbackState.currentTrack.artworkUrl,
+                    isPlaying = playbackState.isPlaying,
+                    onClick = onNavigateToPlayer
                 )
             }
 
@@ -218,17 +231,6 @@ fun LibraryScreen(
                 )
             }
 
-            // Now Playing Shortcut Card
-            item {
-                NowPlayingMiniCard(
-                    title = playbackState.currentTrack.title.ifBlank { "No Active Track" },
-                    artist = playbackState.currentTrack.artist.ifBlank { "Wearsic Player" },
-                    artworkUrl = playbackState.currentTrack.artworkUrl,
-                    isPlaying = playbackState.isPlaying,
-                    onClick = onNavigateToPlayer
-                )
-            }
-
             // Settings Action Pill
             item {
                 WearsicSettingsActionPill(
@@ -256,32 +258,27 @@ private fun NowPlayingMiniCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val heroBrush = Brush.linearGradient(
-        listOf(WearsicVibrantLavender, Color(0xFF8A5CF6))
-    )
+    // Solid accent for the active hero — the purple multi-stop gradient was
+    // replaced with a single flat colour.
+    val heroColor = WearsicVibrantLavender
     val context = LocalContext.current
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val pressScale by animateFloatAsState(
-        targetValue = if (pressed) 0.97f else 1f,
-        animationSpec = tween(durationMillis = 90),
-        label = "nowPlayingPress"
-    )
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
-            }
+            .shadow(if (isPlaying) 12.dp else 6.dp, CircleShape)
             .clip(CircleShape)
-            .background(if (isPlaying) heroBrush else SolidColor(WearsicGlassFill))
+            .background(if (isPlaying) SolidColor(heroColor) else SolidColor(WearsicGlassFill))
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color.White.copy(alpha = 0.14f), Color.Transparent)
+                )
+            )
             .border(
                 1.dp,
                 if (isPlaying) Color.Transparent else WearsicSurfaceBorderSubtle,
                 CircleShape
             )
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 9.dp)
             .testTag("now_playing_shortcut")
     ) {
@@ -296,18 +293,21 @@ private fun NowPlayingMiniCard(
             ) {
                 // Real album art (or the music-note chip when there is none).
                 val artModifier = Modifier
-                    .size(32.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .then(
                         if (isPlaying) Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
                         else Modifier.border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
                     )
                 if (!artworkUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(context)
+                    val artRequest = remember(artworkUrl) {
+                        ImageRequest.Builder(context)
                             .data(artworkUrl)
                             .size(96)
-                            .build(),
+                            .build()
+                    }
+                    AsyncImage(
+                        model = artRequest,
                         contentDescription = "Now Playing",
                         contentScale = ContentScale.Crop,
                         modifier = artModifier

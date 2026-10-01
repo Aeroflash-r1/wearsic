@@ -23,8 +23,15 @@ class BoundedCache<K, V>(private val maxSize: Int) {
         map[key] = value
     }
 
-    fun getOrPut(key: K, compute: () -> V): V =
+    /**
+     * Atomic get-or-compute: [compute] runs at most once per
+     * concurrent miss (the whole check-compute-store sequence holds
+     * the map's lock, so two racing threads can't both run it).
+     * Keep [compute] short and non-blocking — it runs under the lock.
+     */
+    fun getOrPut(key: K, compute: () -> V): V = synchronized(map) {
         map[key] ?: compute().also { map[key] = it }
+    }
 
     fun remove(key: K) {
         map.remove(key)

@@ -25,6 +25,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -45,6 +47,9 @@ import androidx.wear.compose.material3.Text
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
+import com.example.ui.theme.WearsicGradientEnd
+import com.example.ui.theme.WearsicGradientMid
+import com.example.ui.theme.WearsicGradientStart
 import com.example.ui.theme.WearsicLavenderContainer
 import com.example.ui.theme.WearsicSurface
 import com.example.ui.theme.WearsicSurfaceBorder
@@ -57,6 +62,9 @@ import com.example.ui.theme.WearsicTextWhite60
 import com.example.ui.theme.WearsicTextWhite80
 import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.theme.WearsicViolet
+import com.example.ui.util.WearsicMotion
+import com.example.ui.util.rememberSpringIn
+import com.example.ui.util.wearsicEntrance
 
 /**
  * High-contrast vibrant primary pill button (e.g. "Downloads")
@@ -79,8 +87,8 @@ fun WearsicPrimaryPillButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
-        targetValue = if (pressed) 0.96f else 1f,
-        animationSpec = tween(durationMillis = 100),
+        targetValue = if (pressed) 0.95f else 1f,
+        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
         label = "primaryPillPress"
     )
 
@@ -92,8 +100,20 @@ fun WearsicPrimaryPillButton(
                 scaleX = pressScale
                 scaleY = pressScale
             }
+            .shadow(3.dp, CircleShape)
             .clip(CircleShape)
             .background(backgroundColor)
+            // Depth sheen: a light top edge and a faint dark base make the pill
+            // read as a physical, raised surface instead of a flat rectangle.
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.18f),
+                        Color.Transparent,
+                        Color.Black.copy(alpha = 0.10f)
+                    )
+                )
+            )
             .clickable(interactionSource = interaction, indication = null) {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onClick()
@@ -181,8 +201,8 @@ fun WearsicSecondaryPillButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
-        targetValue = if (pressed) 0.96f else 1f,
-        animationSpec = tween(durationMillis = 100),
+        targetValue = if (pressed) 0.95f else 1f,
+        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
         label = "secondaryPillPress"
     )
 
@@ -193,11 +213,12 @@ fun WearsicSecondaryPillButton(
                 scaleX = pressScale
                 scaleY = pressScale
             }
+            .shadow(2.dp, CircleShape)
             .clip(CircleShape)
             .background(WearsicGlassFill)
             .background(
                 Brush.verticalGradient(
-                    listOf(Color.White.copy(alpha = 0.10f), Color.Transparent)
+                    listOf(Color.White.copy(alpha = 0.12f), Color.Transparent, Color.Black.copy(alpha = 0.12f))
                 )
             )
             .border(1.dp, WearsicGlassBorder, CircleShape)
@@ -248,7 +269,7 @@ fun WearsicSettingsActionPill(
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
         targetValue = if (pressed) 0.93f else 1f,
-        animationSpec = tween(durationMillis = 100),
+        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
         label = "settingsPillPress"
     )
 
@@ -314,7 +335,7 @@ fun WearsicCircularIconButton(
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
         targetValue = if (pressed) 0.86f else 1f,
-        animationSpec = tween(durationMillis = 90),
+        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
         label = "circularIconPress"
     )
     Box(
@@ -376,6 +397,11 @@ fun WearsicGlassPanel(
 
 /**
  * Screen title header styled for round Wear OS displays.
+ *
+ * The signature Wearsic purple lives here: a soft lavender→violet
+ * glow behind the title and the little gradient accent bar drawn in
+ * beneath it. The title itself stays plain white text — readable on
+ * every screen — with the purple gradient carrying the identity.
  */
 @Composable
 fun WearsicScreenHeader(
@@ -386,27 +412,57 @@ fun WearsicScreenHeader(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = 6.dp, bottom = 6.dp),
+            .padding(top = 6.dp, bottom = 6.dp)
+            .wearsicEntrance(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = title,
-            color = WearsicTextPrimary,
-            fontSize = 22.sp,
-            fontWeight = FontWeight.SemiBold,
-            textAlign = TextAlign.Center,
-            letterSpacing = (-0.5).sp
-        )
-        // Signature gradient accent bar under every screen title.
+        // Soft radial glow behind the title — the signature
+        // lavender→violet wash, drawn with drawBehind so it adds
+        // depth without taking up any layout height.
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.drawBehind {
+                val radius = size.maxDimension * 1.8f
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            WearsicVibrantLavender.copy(alpha = 0.26f),
+                            WearsicViolet.copy(alpha = 0.12f),
+                            Color.Transparent
+                        ),
+                        center = center,
+                        radius = radius
+                    ),
+                    radius = radius,
+                    center = center
+                )
+            }
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    color = WearsicTextPrimary,
+                    fontSize = 23.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    letterSpacing = (-0.5).sp
+                )
+            }
+        }
+        // Signature gradient accent bar under every screen title,
+        // drawn in on entry: the app's own lavender→mid-violet→
+        // deep-violet gradient, the same one used by hero cards
+        // and primary pills.
+        val barWidth = rememberSpringIn(to = 30f, delayMillis = 40)
         Box(
             modifier = Modifier
                 .padding(top = 6.dp)
-                .width(30.dp)
+                .width(barWidth.dp)
                 .height(3.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.horizontalGradient(
-                        listOf(WearsicVibrantLavender, WearsicViolet)
+                        listOf(WearsicGradientStart, WearsicGradientMid, WearsicGradientEnd)
                     )
                 )
         )

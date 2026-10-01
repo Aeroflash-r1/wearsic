@@ -3,23 +3,42 @@ package com.example
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import android.content.Intent
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
-import androidx.wear.compose.material3.MaterialTheme
 import com.example.ui.navigation.WearsicApp
+import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicTheme
 
 class MainActivity : ComponentActivity() {
 
     companion object {
+        /** Intent extra attached by the media notification's session activity. */
+        const val EXTRA_OPEN_PLAYER = "com.example.extra.OPEN_PLAYER"
+
         @Volatile
         var pendingTileAction: String? = null
+
+        /**
+         * Set when the app is opened from the media notification. The nav
+         * host observes this snapshot state and routes straight to the player
+         * instead of the library home screen; it resets itself once consumed.
+         */
+        val openPlayerRequest = mutableStateOf(false)
     }
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -37,31 +56,59 @@ class MainActivity : ComponentActivity() {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        handleTileIntent(intent)
+        handleOpenIntent(intent)
 
         setContent {
             WearsicTheme {
-                // Scale all app text up for comfortable reading on the watch.
-                // The UI was tuned for 480x480 round displays; 1.25x lifts the
-                // smallest 8-12sp labels to a readable size.
+                // COLD-START CRITICAL SECTION
+                //
+                // The system splash screen (and its ANR window) lasts until
+                // the FIRST frame is drawn. Building the ViewModel, the
+                // repositories, the DataStore and the whole navigation graph
+                // during that first composition is what produced the
+                // "stuck on the opening screen, then the app closes" reports.
+                //
+                // So the first frame is deliberately trivial — a plain
+                // backdrop — and the real app is composed on the NEXT frame,
+                // after the splash has already been dismissed. Cold start is
+                // no longer gated on it.
+                var contentReady by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) { contentReady = true }
+
+                // Scale all app text up for comfortable reading on the watch
+                // (1.25x lifts the smallest 8-12sp labels to a readable size).
                 val density = LocalDensity.current
+
                 CompositionLocalProvider(
                     LocalDensity provides Density(density.density, fontScale = 1.25f)
                 ) {
-                    WearsicApp()
+                    if (contentReady) {
+                        WearsicApp()
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(WearsicBlack)
+                        )
+                    }
                 }
             }
         }
     }
-    override fun onNewIntent(intent: android.content.Intent) {
+
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleTileIntent(intent)
+        handleOpenIntent(intent)
     }
 
-    private fun handleTileIntent(intent: android.content.Intent?) {
+    private fun handleOpenIntent(intent: Intent?) {
         val action = intent?.getStringExtra("tile_action")
         if (!action.isNullOrBlank()) {
             pendingTileAction = action
+        }
+        // Tapping the media notification must land on the player, not home.
+        if (intent?.getBooleanExtra(EXTRA_OPEN_PLAYER, false) == true) {
+            openPlayerRequest.value = true
         }
     }
 }

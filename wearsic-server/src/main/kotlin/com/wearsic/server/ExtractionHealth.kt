@@ -1,5 +1,7 @@
 package com.wearsic.server
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -79,11 +81,14 @@ class ExtractionCanary(
     @Volatile var lastProbeAtMillis: Long = 0
         private set
 
+    /** Serializes probes: concurrent callers must not double-probe. */
+    private val probeMutex = Mutex()
+
     /**
      * Runs the canary at most once per [minIntervalMs]. Returns true when the
      * engine is healthy (or no probe ran — cached result stands).
      */
-    suspend fun maybeProbe(minIntervalMs: Long): Boolean {
+    suspend fun maybeProbe(minIntervalMs: Long): Boolean = probeMutex.withLock {
         val now = clock()
         val cached = lastProbeHealthy
         if (cached != null && now - lastProbeAtMillis < minIntervalMs) return cached
@@ -94,6 +99,6 @@ class ExtractionCanary(
         }
         lastProbeHealthy = healthy
         lastProbeAtMillis = now
-        return healthy
+        healthy
     }
 }

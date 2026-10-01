@@ -49,6 +49,7 @@ import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
 import com.example.ui.theme.WearsicTextPrimary
 import com.example.ui.theme.WearsicTextSecondary
+import com.example.ui.util.wearsicClickable
 
 /**
  * Long-press action sheet for any track row (glassmorphism overlay):
@@ -186,7 +187,7 @@ private fun SheetAction(
         modifier = Modifier
             .fillMaxWidth()
             .clip(CircleShape)
-            .clickable(onClick = onClick)
+            .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

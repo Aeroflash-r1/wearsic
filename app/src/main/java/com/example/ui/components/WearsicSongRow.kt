@@ -55,6 +55,7 @@ import com.example.ui.theme.WearsicTextPrimary
 import com.example.ui.theme.WearsicTextPrimaryDark
 import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicVibrantLavender
+import com.example.ui.util.WearsicMotion
 
 /**
  * The canonical song card used across every list (search, queue, downloads,
@@ -87,7 +88,7 @@ fun WearsicSongRow(
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
         targetValue = if (pressed) 0.975f else 1f,
-        animationSpec = tween(durationMillis = 90),
+        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
         label = "songRowPress"
     )
 
@@ -153,11 +154,20 @@ fun WearsicSongRowArtwork(
     val context = LocalContext.current
     val ring = Modifier.border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
     if (!artworkUrl.isNullOrBlank()) {
-        AsyncImage(
-            model = ImageRequest.Builder(context)
+        // Built once per URL: a fresh ImageRequest on every row recomposition
+        // (rows redraw during a press and on list updates) makes Coil restart
+        // the load instead of reusing the already-decoded bitmap.
+        val request = remember(artworkUrl) {
+            // ~80px at watch density; 112 leaves no visible headroom for
+            // scaling-based blurs/shaders but still cuts the decoded bitmap
+            // roughly in half versus the old 160px request.
+            ImageRequest.Builder(context)
                 .data(artworkUrl)
-                .size(160)
-                .build(),
+                .size(112)
+                .build()
+        }
+        AsyncImage(
+            model = request,
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
             modifier = modifier
@@ -207,7 +217,7 @@ fun WearsicSongRowActionButton(
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
         targetValue = if (pressed) 0.84f else 1f,
-        animationSpec = tween(durationMillis = 90),
+        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
         label = "songRowActionPress"
     )
 
@@ -250,7 +260,7 @@ fun WearsicSongRowPlayButton(
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
         targetValue = if (pressed) 0.84f else 1f,
-        animationSpec = tween(durationMillis = 90),
+        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
         label = "songRowPlayPress"
     )
 

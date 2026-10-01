@@ -1,0 +1,339 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# ─────────────────────────────────────────────────────────────────────
+# wearsic — the everyday command for the Wearsic server.
+#
+#   wearsic server start      start the server (self-healing supervisor)
+#   wearsic server stop       stop the server
+#   wearsic server restart    stop, then start
+#   wearsic server status     running? healthy? which version?
+#   wearsic server logs       live logs (Ctrl+C to exit)
+#   wearsic server health     raw /health JSON
+#   wearsic server url        Server URL + API key for the watch
+#   wearsic server ip         this phone's WiFi IP
+#   wearsic server api key [new]   show / change the API key
+#   wearsic server cookies [str]   set the YouTube cookie (live if running)
+#   wearsic server funnel     public HTTPS URL via Tailscale Funnel (stable)
+#   wearsic server public     public URL recipes (Funnel / Cloudflare)
+#
+# Installed to $PREFIX/bin by install.sh. Finds the server in
+# $WEARSIC_DIR, else ~/wearsic-server.
+# ─────────────────────────────────────────────────────────────────────
+set -u
+
+DEST="${WEARSIC_DIR:-$HOME/wearsic-server}"
+RUN="$DEST/run-termux.sh"
+LOG="$DEST/wearsic-server.log"
+ENV_FILE="$DEST/.env"
+
+say()  { printf '\033[1;35m[wearsic]\033[0m %s\n' "$*"; }
+die()  { printf '\033[1;31m[wearsic] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+installed() { [ -f "$RUN" ] || die "Not installed (no $DEST). Run the one-line installer first."; }
+
+# --- .env parsing (never `source` it — values may contain spaces) ----
+env_value() {  # $1 = key name
+  [ -f "$ENV_FILE" ] || return 0
+  sed -n "s/^$1=//p" "$ENV_FILE" | tail -1 | tr -d '\r\n'
+}
+
+port() { local p; p="$(env_value PORT)"; [ -n "$p" ] || p="8080"; printf '%s' "$p"; }
+api_key() { env_value WEARSIC_API_KEY; }
+
+# --- process helpers (pgrep when available, ps fallback) --------------
+pids_for() {  # $1 = pattern
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "$1" 2>/dev/null
+  else
+    ps -ef 2>/dev/null | awk -v p="$1" '$0 ~ p && $0 !~ /[a]wk/ {print $2}'
+  fi
+}
+
+supervisor_running() { [ -n "$(pids_for "$RUN")" ]; }
+server_running()     { [ -n "$(pids_for "$DEST/bin/wearsic-server")" ]; }
+
+health_ok() {
+  curl -sf -m 5 "http://127.0.0.1:$(port)/health" >/dev/null 2>&1
+}
+
+# Best-effort LAN IP of this device (wlan0 first, then any route).
+lan_ip() {
+  local ip=""
+  if command -v ip >/dev/null 2>&1; then
+    ip="$(ip -f inet addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+  fi
+  if [ -z "$ip" ] && command -v ifconfig >/dev/null 2>&1; then
+    ip="$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p' | head -1)"
+    [ -z "$ip" ] && ip="$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+  fi
+  if [ -z "$ip" ] && command -v hostname >/dev/null 2>&1; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  printf '%s' "$ip"
+}
+
+write_env_key() {  # $1 = key
+  if grep -q '^WEARSIC_API_KEY=' "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^WEARSIC_API_KEY=.*|WEARSIC_API_KEY=$1|" "$ENV_FILE"
+  else
+    printf '\n# Shared secret — enter the same value in the watch app (Settings → API Key)\nWEARSIC_API_KEY=%s\n' "$1" >> "$ENV_FILE"
+  fi
+}
+
+write_env_value() {  # $1 = key, $2 = value (may contain spaces/;)
+  if grep -q "^$1=" "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"
+  else
+    printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"
+  fi
+}
+
+server_url() {
+  local ip; ip="$(lan_ip)"
+  if [ -n "$ip" ]; then printf 'http://%s:%s' "$ip" "$(port)"
+  else printf 'http://<phone-IP>:%s   (find it: wearsic server ip)' "$(port)"; fi
+}
+
+show_pairing() {
+  say ""
+  say "═══════════════════════════════════════════════════════"
+  say "  Connect your watch:"
+  say ""
+  say "  Server URL : $(server_url)"
+  say "  API key    : $(api_key)"
+  say ""
+  say "  Watch → Wearsic → Settings → Server URL   (paste the URL)"
+  say "                           → API Key        (paste the key)"
+  say "═══════════════════════════════════════════════════════"
+  say ""
+}
+
+cmd_start() {
+  installed
+  if health_ok; then
+    say "Server is already running: $(server_url)"
+    return 0
+  fi
+  if supervisor_running; then
+    say "Supervisor is running — waiting for the server to come up…"
+  else
+    say "Starting the server (leave WiFi on; battery unrestricted for Termux)…"
+    ( cd "$DEST" && nohup "$RUN" >/dev/null 2>&1 & )
+  fi
+  # Wait up to ~30s for /health (the supervisor installs ffmpeg on
+  # first start, which can take a while).
+  local i
+  for i in $(seq 1 30); do
+    health_ok && break
+    sleep 1
+  done
+  if health_ok; then
+    say "server started — self-healing supervisor is watching it"
+    show_pairing
+  else
+    say "Not healthy yet — check the logs:  wearsic server logs"
+    return 1
+  fi
+}
+
+cmd_stop() {
+  installed
+  local pids pid
+  pids="$(pids_for "$RUN")"
+  [ -n "$pids" ] || { say "Server is not running."; return 0; }
+  say "Stopping server…"
+  for pid in $pids; do kill "$pid" 2>/dev/null; done   # supervisor's trap kills the JVM
+  sleep 2
+  # Belt and braces: the JVM itself, in case the supervisor was already dead.
+  pids="$(pids_for "$DEST/bin/wearsic-server")"
+  for pid in $pids; do kill "$pid" 2>/dev/null; done
+  sleep 1
+  pids="$(pids_for "$DEST/bin/wearsic-server")"
+  for pid in $pids; do kill -9 "$pid" 2>/dev/null; done
+  say "stopped."
+}
+
+cmd_restart() { cmd_stop; cmd_start; }
+
+cmd_status() {
+  installed
+  local P; P="$(port)"
+  if health_ok; then
+    say "running and healthy on port $P"
+    curl -sf -m 5 "http://127.0.0.1:$P/health" \
+      | sed 's/^{"status":"ok"//' 2>/dev/null || true
+    say ""
+  elif supervisor_running; then
+    say "supervisor running, server NOT healthy — try: wearsic server logs"
+  else
+    say "not running — start with: wearsic server start"
+  fi
+}
+
+cmd_logs() {
+  installed
+  [ -f "$LOG" ] || die "No log yet ($LOG). Start the server first."
+  say "Tailing $LOG (Ctrl+C to exit)…"
+  tail -f "$LOG"
+}
+
+cmd_health() {
+  installed
+  curl -sf -m 5 "http://127.0.0.1:$(port)/health" \
+    || die "No response — is the server running? (wearsic server start)"
+  say ""
+}
+
+cmd_url() { installed; show_pairing; }
+
+cmd_ip() {
+  local ip; ip="$(lan_ip)"
+  [ -n "$ip" ] && say "WiFi IP: $ip" || die "Could not find a WiFi IP — are you connected to WiFi?"
+}
+
+cmd_api_key() {
+  installed
+  if [ -n "${1:-}" ]; then
+    write_env_key "$1"
+    say "API key updated. Restart to apply:"
+    say "  wearsic server restart"
+    say "Then set the same key on the watch (Settings → API Key)."
+  else
+    local k; k="$(api_key)"
+    [ -n "$k" ] || die "No API key set — the server is OPEN. Set one with: wearsic server api key <your-key>"
+    say "API key: $k"
+    say "Enter it on the watch: Settings → API Key"
+    say "Set a new one with: wearsic server api key <new-key>"
+  fi
+}
+
+cmd_cookies() {
+  installed
+  local cookie port_ key_
+  cookie="${1:-}"
+  if [ -z "$cookie" ]; then
+    printf 'Paste the YouTube cookie string (SID=...; HSID=...): '
+    read -r cookie || return 1
+  fi
+  [ -n "$cookie" ] || die "Empty cookie."
+  port_="$(port)"
+  key_="$(api_key)"
+  if health_ok; then
+    # Live-update the running server (it persists the cookie itself).
+    local body
+    body="$(printf '{"cookie":"%s"}' "$cookie" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    if curl -sf -m 10 -X POST -H "X-Wearsic-Key: $key_" \
+         -H "Content-Type: application/json" \
+         -d "$body" "http://127.0.0.1:$port_/api/config/youtube-cookie" >/dev/null; then
+      say "Cookie set on the running server (persisted)."
+    else
+      say "Could not set the cookie live — writing to .env instead."
+      write_env_value WEARSIC_YOUTUBE_COOKIE "$cookie"
+      say "Restart to apply: wearsic server restart"
+    fi
+  else
+    write_env_value WEARSIC_YOUTUBE_COOKIE "$cookie"
+    say "Cookie saved to $ENV_FILE"
+    say "Start (or restart) the server to apply: wearsic server start"
+  fi
+  # Confirm what the server sees (never echoes the cookie itself).
+  if health_ok; then
+    local has
+    has="$(curl -sf -m 5 -H "X-Wearsic-Key: $key_" "http://127.0.0.1:$port_/api/config/youtube-cookie" 2>/dev/null || true)"
+    say "Server cookie status: $has"
+  fi
+}
+
+cmd_funnel() {
+  installed
+  # Funnel exposes the server to the whole internet — require a key.
+  if [ -z "$(api_key)" ]; then
+    die "Funnel exposes the server to the internet — set an API key first:"
+    die "  wearsic server api key <your-key>"
+  fi
+  say "Tailscale Funnel — a STABLE public HTTPS URL for the server."
+  say "Runs the tailscaled daemon inside Termux (userspace networking:"
+  say "no root, no /dev/net/tun). The official Android app cannot do this."
+  say ""
+  # 1. tailscaled present?
+  if ! command -v tailscale >/dev/null 2>&1; then
+    say "Installing the Termux tailscaled build (community project:"
+    say "bropines/tailscale-termux-cli)…"
+    say ""
+    curl -fsSL https://raw.githubusercontent.com/bropines/tailscale-termux-cli/main/remote-install.sh | bash \
+      || die "tailscaled install failed — see https://github.com/bropines/tailscale-termux-cli"
+  fi
+  # 2. logged in?
+  if ! tailscale status >/dev/null 2>&1; then
+    say "Logging in to Tailscale — open the printed link in a browser:"
+    tailscale up || die "Tailscale login failed — run 'tailscale up' manually"
+  else
+    say "Tailscale is connected."
+  fi
+  # 3. expose the server
+  local P; P="$(port)"
+  say ""
+  say "Enabling Funnel on port $P… (Ctrl+C to stop the public URL)"
+  say "If it complains about HTTPS certificates, enable them at:"
+  say "  https://login.tailscale.com/admin/dns  (DNS → HTTPS Certificates)"
+  say ""
+  tailscale funnel "$P"
+}
+
+cmd_public() {
+  installed
+  say "Public URL options (watch works on any network, no VPN app on the watch):"
+  say ""
+  say "1) Tailscale Funnel — STABLE url, recommended:"
+  say "     wearsic server funnel"
+  say "   → https://<phone-name>.<tailnet>.ts.net (same address every time)"
+  say ""
+  say "2) Cloudflare Tunnel — no account, but the URL changes every restart:"
+  say "     pkg install -y cloudflared"
+  say "     cloudflared tunnel --url http://localhost:$(port)"
+  say "   → https://<random>.trycloudflare.com"
+  say ""
+  say "A public URL MUST have an API key: wearsic server api key <your-key>"
+}
+
+usage() {
+  say "Wearsic server commands:"
+  say "  wearsic server start        start the server"
+  say "  wearsic server stop         stop the server"
+  say "  wearsic server restart      stop, then start"
+  say "  wearsic server status       running? healthy? which version?"
+  say "  wearsic server logs         live logs"
+  say "  wearsic server health       raw /health JSON"
+  say "  wearsic server url          Server URL + API key for the watch"
+  say "  wearsic server ip           this phone's WiFi IP"
+  say "  wearsic server api key [new]   show / change the API key"
+  say "  wearsic server cookies [str]   set the YouTube cookie"
+  say "  wearsic server funnel       public HTTPS URL (Tailscale Funnel)"
+  say "  wearsic server public       public URL recipes (Funnel / Cloudflare)"
+}
+
+# --- dispatch ---------------------------------------------------------
+case "${1:-}" in
+  server)
+    case "${2:-}" in
+      start)   cmd_start ;;
+      stop)    cmd_stop ;;
+      restart) cmd_restart ;;
+      status)  cmd_status ;;
+      logs)    cmd_logs ;;
+      health)  cmd_health ;;
+      url)     cmd_url ;;
+      ip)      cmd_ip ;;
+      api)
+        case "${3:-}" in
+          key) shift 3; cmd_api_key "$@" ;;
+          *) usage; exit 2 ;;
+        esac ;;
+      cookies) shift 2; cmd_cookies "$@" ;;
+      funnel)  cmd_funnel ;;
+      public)  cmd_public ;;
+      "") usage; exit 2 ;;
+      *) die "Unknown command: wearsic server $2 — run 'wearsic' for the list" ;;
+    esac ;;
+  ""|help|-h|--help) usage ;;
+  *) die "Unknown command: wearsic $1 — run 'wearsic' for the list" ;;
+esac

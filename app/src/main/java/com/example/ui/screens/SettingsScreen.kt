@@ -62,6 +62,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.example.BuildConfig
 import com.example.network.model.ConnectionTestState
 import com.example.ui.components.WearsicScreenHeader
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicError
 import com.example.ui.theme.WearsicLavenderContainer
@@ -76,6 +77,8 @@ import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
 
+import com.example.ui.util.wearsicClickable
+import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
 
 @Composable
@@ -106,12 +109,13 @@ fun SettingsScreen(
         scrollState = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         ScalingLazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -121,7 +125,7 @@ fun SettingsScreen(
             item {
                 WearsicScreenHeader(
                     title = "Settings",
-                    subtitle = "Server & Storage"
+                    subtitle = "Server & Storage",
                 )
             }
 
@@ -251,7 +255,7 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .clip(CircleShape)
                                 .background(WearsicVibrantLavender)
-                                .clickable { onTestConnection(serverUrl) }
+                                .wearsicClickable { onTestConnection(serverUrl) }
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .testTag("settings_test_connection"),
                             contentAlignment = Alignment.Center
@@ -302,7 +306,7 @@ fun SettingsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicSuccess, CircleShape)
-                                .clickable { onTestConnection(serverUrl) }
+                                .wearsicClickable { onTestConnection(serverUrl) }
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .testTag("settings_test_connection_success"),
                             contentAlignment = Alignment.Center
@@ -331,7 +335,7 @@ fun SettingsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicError, CircleShape)
-                                .clickable { onTestConnection(serverUrl) }
+                                .wearsicClickable { onTestConnection(serverUrl) }
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .testTag("settings_test_connection_error"),
                             contentAlignment = Alignment.Center
@@ -407,7 +411,7 @@ fun SettingsScreen(
                         .clip(CircleShape)
                         .background(WearsicSurface)
                         .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
-                        .clickable(onClick = onOpenStorage)
+                        .wearsicClickable(onClick = onOpenStorage)
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                     contentAlignment = Alignment.CenterStart
                 ) {
@@ -477,7 +481,7 @@ fun SettingsScreen(
                             .clip(CircleShape)
                             .background(WearsicError.copy(alpha = 0.2f))
                             .border(1.dp, WearsicError, CircleShape)
-                            .clickable {
+                            .wearsicClickable {
                                 onClearDownloads()
                                 showClearDownloadsConfirm = false
                                 downloadsClearedMessage = "Downloads Cleared"
@@ -561,7 +565,7 @@ private fun SettingsPillItem(
             .clip(CircleShape)
             .background(WearsicSurface)
             .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
-            .clickable(onClick = onClick)
+            .wearsicClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp)
             .testTag(testTag)
     ) {

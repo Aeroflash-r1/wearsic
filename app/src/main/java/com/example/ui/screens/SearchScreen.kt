@@ -69,6 +69,7 @@ import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.components.WearsicSongRow
 import com.example.ui.components.WearsicSongRowActionButton
 import com.example.ui.components.WearsicSongRowPlayButton
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
@@ -84,6 +85,8 @@ import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.viewmodel.SearchUiState
 
+import com.example.ui.util.wearsicClickable
+import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
 
 @Composable
@@ -122,12 +125,13 @@ fun SearchScreen(
         scrollState = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         ScalingLazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -137,7 +141,7 @@ fun SearchScreen(
             item {
                 WearsicScreenHeader(
                     title = "Search",
-                    subtitle = "Stream Catalog"
+                    subtitle = "Stream Catalog",
                 )
             }
 
@@ -218,8 +222,7 @@ fun SearchScreen(
                                 tint = WearsicTextSecondary,
                                 modifier = Modifier
                                     .size(16.dp)
-                                    .clip(CircleShape)
-                            .clickable {
+                                    .clip(CircleShape)                                    .wearsicClickable {
                                 onSearchTextChanged("")
                             }
                                     .testTag("search_clear_button")
@@ -231,15 +234,14 @@ fun SearchScreen(
 
             // Live Suggestions (while typing)
             if (searchState.suggestions.isNotEmpty() && typedQuery.isNotBlank()) {
-                items(searchState.suggestions.size) { index ->
-                    val suggestion = searchState.suggestions[index]
+                items(searchState.suggestions, key = { it }) { suggestion ->
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
-                            .clickable {
+                            .wearsicClickable {
                                 keyboardController?.hide()
                                 onQuerySelected(suggestion)
                             }

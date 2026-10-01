@@ -31,7 +31,22 @@ import java.util.Locale
  */
 object StartupDiagnostics {
 
-    private const val MAX_JOURNAL_LINES = 200
+    private const val MAX_JOURNAL_LINES = 80
+
+    /** How long the ANR watchdog stays armed after process start. */
+    private const val WATCHDOG_WINDOW_MS = 60_000L
+
+    /**
+     * All journal writes go through this single daemon thread. The journal is
+     * written from the MAIN thread during cold start (Application.onCreate,
+     * Activity.onCreate, ViewModel init, first frame), so doing the disk I/O
+     * inline used to block the very code path the splash screen waits on —
+     * one of the direct causes of "stuck on the opening screen".
+     */
+    private val writeExecutor: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "Wearsic-Diagnostics").apply { isDaemon = true }
+        }
 
     @Volatile
     private var appStartRealtimeMs = 0L
@@ -58,9 +73,16 @@ object StartupDiagnostics {
         startMainThreadWatchdog(context)
     }
 
-    /** Called once the first composition of the UI has been committed. */
+    /**
+     * Called once the first composition of the UI has been committed.
+     *
+     * Written SYNCHRONOUSLY (it happens exactly once, and it is the single
+     * line recovery-mode detection depends on): if the process were killed
+     * immediately after the first frame with this queued, the next launch
+     * would wrongly believe the previous start died.
+     */
     fun markUiReady(context: Context) {
-        append(context, "ui-ready +${elapsedMs()}ms")
+        append(context, "ui-ready +${elapsedMs()}ms", synchronous = true)
     }
 
     /** Appends a phase marker (thread-safe, cheap). */
@@ -128,14 +150,38 @@ object StartupDiagnostics {
     private fun diagnosticsDir(context: Context): File =
         File(context.filesDir, "wearsic_diagnostics").apply { if (!exists()) mkdirs() }
 
-    private fun append(context: Context, line: String) {
+    /** Non-blocking by default: queues [line] for the diagnostics thread. */
+    private fun append(context: Context, line: String, synchronous: Boolean = false) {
+        val appContext = context.applicationContext
+        if (synchronous) {
+            writeLine(appContext, line)
+            return
+        }
+        try {
+            writeExecutor.execute { writeLine(appContext, line) }
+        } catch (_: Exception) {
+            // Diagnostics must never take the app down.
+        }
+    }
+
+    /**
+     * Append-only write (never rewrites the file in the common case) so the
+     * cost stays O(1) instead of O(journal). Compacts only when it grows past
+     * a small bound.
+     */
+    private fun writeLine(context: Context, line: String) {
         try {
             synchronized(this) {
-                val dir = diagnosticsDir(context)
-                val file = File(dir, "startup.log")
-                val existing = if (file.exists()) file.readText() else ""
-                val all = (existing + line + "\n").lines().filter { it.isNotBlank() }
-                file.writeText(all.takeLast(MAX_JOURNAL_LINES).joinToString("\n") + "\n")
+                val file = File(diagnosticsDir(context), "startup.log")
+                file.appendText(line + "\n")
+                if (file.length() > 16 * 1024) {
+                    val kept = file.readText()
+                        .lines()
+                        .filter { it.isNotBlank() }
+                        .takeLast(MAX_JOURNAL_LINES)
+                        .joinToString("\n")
+                    file.writeText(kept + "\n")
+                }
             }
         } catch (_: Exception) {
             // Diagnostics must never take the app down.
@@ -169,9 +215,13 @@ object StartupDiagnostics {
         val mainLooper = android.os.Looper.getMainLooper()
         val mainHandler = android.os.Handler(mainLooper)
         val thread = Thread({
-            while (true) {
+            // Bounded: the watchdog only needs to cover cold start. Leaving it
+            // pinging the main looper forever woke the CPU every 2s for the
+            // whole session — measurable battery drain for no benefit.
+            val deadline = System.currentTimeMillis() + WATCHDOG_WINDOW_MS
+            while (System.currentTimeMillis() < deadline) {
                 try {
-                    Thread.sleep(2000L)
+                    Thread.sleep(3000L)
                     val latch = java.util.concurrent.CountDownLatch(1)
                     mainHandler.post { latch.countDown() }
                     if (!latch.await(6L, java.util.concurrent.TimeUnit.SECONDS)) {

@@ -34,7 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.foundation.lazy.itemsIndexed
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
@@ -47,6 +47,7 @@ import com.example.ui.components.WearsicEmptyState
 import com.example.ui.components.WearsicLibraryTrackRow
 import com.example.ui.components.WearsicLoadingState
 import com.example.ui.components.WearsicScreenHeader
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicLavenderContainer
 import com.example.ui.theme.WearsicSurface
@@ -58,6 +59,7 @@ import com.example.ui.theme.WearsicTheme
 import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.viewmodel.PlaylistDetailUiState
 
+import com.example.ui.util.wearsicEntrance
 import com.example.ui.util.wearsicRotaryScroll
 
 @Composable
@@ -86,12 +88,13 @@ fun PlaylistDetailScreen(
         scrollState = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(WearsicBlack)
+            .background(WearsicAppBackground)
     ) {
         ScalingLazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
             contentPadding = PaddingValues(horizontal = 22.dp, vertical = 30.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -100,7 +103,7 @@ fun PlaylistDetailScreen(
             item {
                 WearsicScreenHeader(
                     title = playlistName,
-                    subtitle = "${detailState.tracks.size} Tracks"
+                    subtitle = "${detailState.tracks.size} Tracks",
                 )
             }
 
@@ -120,8 +123,7 @@ fun PlaylistDetailScreen(
                 }
             }
 
-            items(detailState.tracks.size) { index ->
-                val track = detailState.tracks[index]
+            itemsIndexed(detailState.tracks, key = { _, track -> track.id }) { index, track ->
                 WearsicLibraryTrackRow(
                     track = track,
                     onPlay = { onPlayTrack(detailState.tracks, index) },

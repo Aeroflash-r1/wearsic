@@ -22,7 +22,34 @@ it is detected via `/health` checks every 30 s and killed + restarted, and
 
 ---
 
-## 1. Install Termux
+## ⚡ Quick start — one line (recommended)
+
+Install **Termux from F-Droid** (https://f-droid.org/en/packages/com.termux/),
+open it, and paste this single line:
+
+```bash
+pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/Aeroflash-r1/wearsic/main/wearsic-server/install.sh | bash
+```
+
+That one line does everything: installs Java + unzip, downloads the newest
+server release, sets it up in `~/wearsic-server`, **generates a secure API
+key for you** (no inventing or typing a secret by hand), keeps any existing
+database and API key, wires up **auto-start on reboot**, and starts the
+self-healing supervisor. At the end it prints the two things your watch
+needs — the **Server URL** and the **API key**. The installer is also bundled
+inside the release ZIP, so you can re-run it any time with `bash install.sh`.
+
+When it says *"server started"*, skip ahead to:
+
+- **Section 4** — your API key (already set; just copy it to the watch —
+  re-show it any time with `wearsic server url`),
+- **Section 5** — connect your watch.
+
+> Want to see every step instead? Follow the manual walkthrough from Section 1.
+
+---
+
+## 1. Install Termux (manual walkthrough)
 
 - Install **Termux from F-Droid** (the Play Store version is outdated/broken):
   https://f-droid.org/en/packages/com.termux/
@@ -51,11 +78,12 @@ ZIP_URL=$(curl -s https://api.github.com/repos/Aeroflash-r1/wearsic/releases/lat
 curl -L -o ~/wearsic-server-termux.zip "$ZIP_URL"
 ```
 
-Or, if you already know the release tag (e.g. `v1.5.0`):
+Or, if you already know the latest release tag (e.g. `v1.1.0` — it must
+match the newest release, which is why Option A is easier):
 
 ```bash
 curl -L -o ~/wearsic-server-termux.zip \
-  "https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-termux-v1.0.0.zip"
+  "https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-termux-v1.1.0.zip"
 ```
 
 ### Option B — copy from somewhere else
@@ -129,19 +157,27 @@ You should get JSON with a `"results"` array.
 
 ---
 
-## 4. Make it private (API key) 🔐
+## 4. Your API key 🔐
 
 Without a key, anyone who can reach the server URL can use it. One shared
 secret protects everything.
 
-### Step 1 — pick a secret key
-
-Invent one, e.g. `my-secret-wearsic-2026`. Longer = better. Avoid spaces.
-
-### Step 2 — save it in the server config
+**The one-line installer already generated a key for you** — 8 short
+characters (no confusing `0/O`, `1/l/I`), so it is typeable on the
+watch keyboard. It was printed at the end of the install and saved in
+`~/wearsic-server/.env`. To see it any time:
 
 ```bash
-echo "WEARSIC_API_KEY=my-secret-wearsic-2026" >> ~/wearsic-server/.env
+wearsic server api key
+# or: wearsic server url
+```
+
+Want your own key instead (longer = better, especially for public
+URLs)? Set one and restart:
+
+```bash
+wearsic server api key my-secret-wearsic-2026
+wearsic server restart
 ```
 
 ### Step 3 — restart the server
@@ -152,6 +188,9 @@ then start again:
 ```bash
 cd ~/wearsic-server && ./run-termux.sh
 ```
+
+(Only needed if you changed the key yourself — the installer's key is
+already live.)
 
 ### Step 4 — verify it is locked
 
@@ -194,29 +233,82 @@ The app now sends it (`X-Wearsic-Key` header) automatically with every request.
 4. Watch → **Settings → Server URL** → `http://100.x.y.z:8080`
 - Private, encrypted, works over any network. API key optional but recommended.
 
-### C. Public HTTPS via Cloudflare Tunnel / Tailscale Funnel
+### C. Public HTTPS — Tailscale Funnel in Termux (stable URL)
 
-Funnel is **not supported by the Android Tailscale app**, so use either:
-- **Cloudflare Tunnel** (`cloudflared`) pointed at `http://localhost:8080`, or
-- **Tailscale Funnel from a PC/Linux box**: run the server (or an ssh/socat
-  relay to the phone) there, then `tailscale funnel --bg 8080`.
+The official Tailscale **app** doesn't expose Funnel on Android, but
+the `tailscaled` **daemon** runs inside Termux (userspace networking —
+no root, no `/dev/net/tun`) and **Funnel works through it**. The URL
+is stable — `https://<phone-name>.<tailnet>.ts.net` — so you set it
+on the watch once and it keeps working on any network:
 
-Then watch → **Settings → Server URL** → `https://your-name.example.ts.net`.
-⚠️ A public URL **must** have an API key set (Section 4).
+```bash
+wearsic server funnel
+```
+
+That command does all three steps:
+
+1. Installs the Termux `tailscaled` build (community project
+   [bropines/tailscale-termux-cli](https://github.com/bropines/tailscale-termux-cli))
+   if it's missing,
+2. runs `tailscale up` — open the printed link in a browser to log in,
+3. runs `tailscale funnel 8080` and prints the public URL.
+
+**First time only:** enable HTTPS certificates for your tailnet at
+https://login.tailscale.com/admin/dns → **HTTPS Certificates** → Enable
+(Funnel needs them; the command tells you if it's missing).
+
+Put the printed `https://…` URL in the watch's **Settings → Server
+URL**. The watch needs **no Tailscale app at all** — it just hits the
+public URL.
+
+⚠️ Funnel exposes the server to the whole internet — an API key
+(Section 4) is **mandatory** (the command refuses to run without
+one). Keep the Termux session open, or install Termux:Boot + set
+battery unrestricted so `tailscaled` survives reboots.
+
+The community build reports itself as a CLI client and will be
+retired once upstream Tailscale 1.103 ships the Android fixes —
+until then it is the working option.
+
+**Fallback — Cloudflare Tunnel** (no account needed, but the URL
+changes on every restart):
+
+```bash
+pkg install -y cloudflared
+cloudflared tunnel --url http://localhost:8080
+```
+
+That prints a `https://<random>.trycloudflare.com` URL. (`wearsic
+server public` prints both recipes any time.)
+
+*Prefer private instead? Section 5-B (Tailscale VPN) needs no public
+endpoint at all — but both devices need the Tailscale app.*
 
 ---
 
-## 6. Daily-use commands cheat sheet
+## 6. Daily-use commands — `wearsic`
+
+The installer puts a `wearsic` command on your PATH. Everything
+you need, no paths to remember:
 
 | Action | Command |
 |---|---|
-| Start server | `cd ~/wearsic-server && ./run-termux.sh` |
-| Stop server | `Ctrl+C` in the server session |
-| Force kill | `pkill -f wearsic-server` |
-| Health check | `curl http://127.0.0.1:8080/health` |
-| Live logs | `tail -f ~/wearsic-server/wearsic-server.log` |
-| Your WiFi IP | `ifconfig wlan0 \| grep inet` |
+| Start server | `wearsic server start` |
+| Stop server | `wearsic server stop` |
+| Restart | `wearsic server restart` |
+| Is it running? | `wearsic server status` |
+| Live logs | `wearsic server logs` |
+| Health JSON | `wearsic server health` |
+| **Server URL + API key** | `wearsic server url` |
+| Your WiFi IP | `wearsic server ip` |
+| Show / change API key | `wearsic server api key [new]` |
+| Set YouTube cookie | `wearsic server cookies [str]` |
+| **Public URL (Tailscale Funnel, stable)** | `wearsic server funnel` |
+| Public URL recipes | `wearsic server public` |
 | Free disk space | `df -h ~` |
+
+(The raw supervisor also still works: `cd ~/wearsic-server &&
+./run-termux.sh` runs it in the foreground; `Ctrl+C` stops it.)
 
 Where your data lives:
 - `~/wearsic-server/wearsic.db` — favorites & playlists (**back this up!**)

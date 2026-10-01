@@ -19,6 +19,7 @@ import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.SdStorage
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,6 +37,7 @@ import com.example.ui.theme.WearsicTextPrimary
 import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.theme.WearsicViolet
+import com.example.ui.util.wearsicClickable
 
 /**
  * Local-music storage, mathematically consistent with the one-file-per-track
@@ -64,7 +66,7 @@ fun StorageStatsContent(
         item {
             WearsicScreenHeader(
                 title = "Storage",
-                subtitle = "Total local music • %.1f MB".format(totalMb)
+                subtitle = "Total local music • %.1f MB".format(totalMb),
             )
         }
 
@@ -164,7 +166,7 @@ private fun ActionRow(
             .clip(CircleShape)
             .background(Color.White.copy(alpha = 0.06f))
             .border(1.dp, WearsicGlassBorder, CircleShape)
-            .clickable(onClick = onClick)
+            .wearsicClickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

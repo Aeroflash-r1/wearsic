@@ -5,8 +5,13 @@ Standalone Ktor + NewPipe Extractor backend for the Wearsic Wear OS app. This pr
 ## Requirements
 
 - Java 17
-- Termux packages: `pkg install openjdk-17 git`
-- A Cloudflare Tunnel pointed at the server port
+- Termux packages: `pkg install openjdk-17 unzip curl`
+- `ffmpeg` (the launcher installs it on first start; needed only to transcode rare Opus/WebM-only songs)
+
+No tunnel is required: the watch connects over WiFi, a Tailscale
+private network, or a public HTTPS endpoint (Tailscale Funnel via
+`wearsic server funnel`). See [`../TERMUX_SERVER_GUIDE.md`](../TERMUX_SERVER_GUIDE.md)
+for every connection option and the one-line installer.
 
 ## Build and run
 
@@ -80,6 +85,9 @@ The server defends itself against the two failure classes that actually kill mus
    - with it off: a loud log line tells you exactly what to do instead.
 
 Check engine status any time: `curl http://localhost:8080/health | jq .extraction,.canaryHealthy,.update`
+
+Also authenticated when `WEARSIC_API_KEY` is set:
+
 - `GET /api/search/albums?q=` — album/playlist search (maximum 10 results;
   album `id` is a full playlist URL, feed it to `/api/playlist?url=`)
 - `GET /api/config/youtube-cookie` — returns `{"hasCookie": true|false}`
@@ -98,12 +106,16 @@ Stream extraction is resilient:
 - The **iOS Innertube client is tried first** (it is the one that actually works against YouTube's bot wall), falling back to the default client. Because the client choice is a process-global NewPipeExtractor setting, all extractions are serialized behind a mutex — correctness over concurrency, at no practical cost for a personal server.
 - NewPipe failures map to clean JSON errors instead of empty 500 responses: `404` when a video is unavailable, `503` for bot/ReCaptcha challenges (with a hint to configure the YouTube cookie), and `502` for other extraction failures.
 
-## Cloudflare Tunnel
+## Public access (HTTPS)
 
-Keep the tunnel URL out of source code. In the watch app Settings screen, enter the public HTTPS URL, for example:
+The watch app already sends `X-Wearsic-Key` automatically once the key
+is entered in **Settings → API Key** — nothing to extend. For a public
+HTTPS URL, the stable option is Tailscale Funnel from Termux:
 
-```text
-https://your-tunnel.trycloudflare.com
+```bash
+wearsic server funnel     # prints https://<phone-name>.<tailnet>.ts.net
 ```
 
-If you set `WEARSIC_API_KEY`, the Android client must also be extended to send `X-Wearsic-Key` on all `/api` calls.
+A Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:8080`)
+also works but its URL changes on every restart. All options, including
+the no-tunnel ones, are in [`../TERMUX_SERVER_GUIDE.md`](../TERMUX_SERVER_GUIDE.md).

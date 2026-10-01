@@ -62,6 +62,7 @@ import com.example.ui.components.WearsicSecondaryPillButton
 import com.example.ui.components.WearsicSettingsActionPill
 import com.example.ui.components.WearsicSongRow
 import com.example.ui.theme.WearsicAppBackground
+import com.example.ui.theme.wearsicListContentPadding
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicGlassFill
 import com.example.ui.theme.WearsicGlassBorder
@@ -107,7 +108,7 @@ fun LibraryScreen(
                 .wearsicEntrance()
                 .testTag("library_lazy_column")
                 .wearsicRotaryScroll(listState),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
+            contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

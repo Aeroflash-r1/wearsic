@@ -45,6 +45,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.example.ui.theme.WearsicDimens
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
 import com.example.ui.theme.WearsicLavenderContainer
@@ -232,16 +233,11 @@ fun WearsicSongRowActionButton(
         label = "songRowActionPress"
     )
 
+    // 44dp touch box around a smaller visual disc: comfortable one-finger
+    // tapping on the watch without crowding the row's text width.
     Box(
         modifier = modifier
-            .size(visualSize)
-            .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
-            }
-            .clip(CircleShape)
-            .background(background)
-            .border(1.dp, borderColor, CircleShape)
+            .size(WearsicDimens.TouchTarget)
             .clickable(interactionSource = interaction, indication = null) {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onClick()
@@ -249,12 +245,25 @@ fun WearsicSongRowActionButton(
             .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(15.dp)
-        )
+        Box(
+            modifier = Modifier
+                .size(visualSize)
+                .graphicsLayer {
+                    scaleX = pressScale
+                    scaleY = pressScale
+                }
+                .clip(CircleShape)
+                .background(background)
+                .border(1.dp, borderColor, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = tint,
+                modifier = Modifier.size(15.dp)
+            )
+        }
     }
 }
 
@@ -275,15 +284,10 @@ fun WearsicSongRowPlayButton(
         label = "songRowPlayPress"
     )
 
+    // Same 44dp touch box as the other row actions.
     Box(
         modifier = modifier
-            .size(size)
-            .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
-            }
-            .clip(CircleShape)
-            .background(WearsicVibrantLavender)
+            .size(WearsicDimens.TouchTarget)
             .clickable(interactionSource = interaction, indication = null) {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onClick()
@@ -291,11 +295,23 @@ fun WearsicSongRowPlayButton(
             .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = Icons.Rounded.PlayArrow,
-            contentDescription = "Play",
-            tint = WearsicTextPrimaryDark,
-            modifier = Modifier.size(17.dp)
-        )
+        Box(
+            modifier = Modifier
+                .size(size)
+                .graphicsLayer {
+                    scaleX = pressScale
+                    scaleY = pressScale
+                }
+                .clip(CircleShape)
+                .background(WearsicVibrantLavender),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.PlayArrow,
+                contentDescription = "Play",
+                tint = WearsicTextPrimaryDark,
+                modifier = Modifier.size(17.dp)
+            )
+        }
     }
 }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -52,6 +53,7 @@ import com.example.ui.components.WearsicCircularIconButton
 import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.theme.WearsicAccentSky
 import com.example.ui.theme.WearsicAppBackground
+import com.example.ui.theme.wearsicListContentPadding
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
 import com.example.ui.theme.WearsicTextMuted
@@ -111,7 +113,7 @@ fun VolumeScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
+            contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -286,7 +288,7 @@ private fun DevicePill(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp)
+            .heightIn(min = 50.dp)
             .clip(CircleShape)
             .background(fill)
             .border(

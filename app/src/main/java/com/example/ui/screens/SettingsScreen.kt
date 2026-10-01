@@ -63,6 +63,7 @@ import com.example.BuildConfig
 import com.example.network.model.ConnectionTestState
 import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.theme.WearsicAppBackground
+import com.example.ui.theme.wearsicListContentPadding
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicError
 import com.example.ui.theme.WearsicLavenderContainer
@@ -117,7 +118,7 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
+            contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

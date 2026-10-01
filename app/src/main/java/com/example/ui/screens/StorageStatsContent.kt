@@ -6,7 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,16 +27,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material3.ScreenScaffold
 import com.example.ui.components.WearsicScreenHeader
+import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicTextMuted
 import com.example.ui.theme.WearsicTextPrimary
 import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.theme.WearsicViolet
+import com.example.ui.theme.wearsicListContentPadding
 import com.example.ui.util.wearsicClickable
+import com.example.ui.util.wearsicEntrance
+import com.example.ui.util.wearsicRotaryScroll
 
 /**
  * Local-music storage, mathematically consistent with the one-file-per-track
@@ -55,65 +60,77 @@ fun StorageStatsContent(
     modifier: Modifier = Modifier
 ) {
     val totalMb = autoMb + manualMb
+    val listState = rememberScalingLazyListState()
 
-    ScalingLazyColumn(
-        state = rememberScalingLazyListState(),
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+    ScreenScaffold(
+        scrollState = listState,
+        modifier = modifier
+            .fillMaxSize()
+            .background(WearsicAppBackground)
     ) {
-        item {
-            WearsicScreenHeader(
-                title = "Storage",
-                subtitle = "Total local music • %.1f MB".format(totalMb),
-            )
-        }
-
-        item {
-            StatRow(
-                label = "Auto-saved songs",
-                detail = "$autoCount songs • %.1f MB".format(autoMb),
-                mb = autoMb,
-                totalMb = totalMb,
-                color = WearsicVibrantLavender
-            )
-        }
-        item {
-            StatRow(
-                label = "Manual downloads",
-                detail = "$manualCount songs • %.1f MB".format(manualMb),
-                mb = manualMb,
-                totalMb = totalMb,
-                color = WearsicViolet
-            )
-        }
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Total local music", color = WearsicTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Text("%.1f MB".format(totalMb), color = WearsicVibrantLavender, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        ScalingLazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .wearsicEntrance()
+                .wearsicRotaryScroll(listState),
+            contentPadding = wearsicListContentPadding(it),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            item {
+                WearsicScreenHeader(
+                    title = "Storage",
+                    subtitle = "Total local music • %.1f MB".format(totalMb),
+                )
             }
-        }
 
-        item {
-            ActionRow(
-                icon = Icons.Rounded.Delete,
-                label = "Clear auto-saved ($autoCount)",
-                onClick = onClearAutoCached
-            )
-        }
-        item {
-            Text(
-                text = "Manual downloads are kept until you remove them.",
-                color = WearsicTextMuted,
-                fontSize = 9.sp,
-                modifier = Modifier.padding(horizontal = 8.dp)
-            )
+            item {
+                StatRow(
+                    label = "Auto-saved songs",
+                    detail = "$autoCount songs • %.1f MB".format(autoMb),
+                    mb = autoMb,
+                    totalMb = totalMb,
+                    color = WearsicVibrantLavender
+                )
+            }
+            item {
+                StatRow(
+                    label = "Manual downloads",
+                    detail = "$manualCount songs • %.1f MB".format(manualMb),
+                    mb = manualMb,
+                    totalMb = totalMb,
+                    color = WearsicViolet
+                )
+            }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Total local music", color = WearsicTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("%.1f MB".format(totalMb), color = WearsicVibrantLavender, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            item {
+                ActionRow(
+                    icon = Icons.Rounded.Delete,
+                    label = "Clear auto-saved ($autoCount)",
+                    onClick = onClearAutoCached
+                )
+            }
+            item {
+                Text(
+                    text = "Manual downloads are kept until you remove them.",
+                    color = WearsicTextMuted,
+                    fontSize = 9.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+            }
         }
     }
 }

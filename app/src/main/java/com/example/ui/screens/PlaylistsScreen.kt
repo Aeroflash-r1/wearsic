@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,6 +55,8 @@ import com.example.ui.components.WearsicSecondaryPillButton
 import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.components.WearsicSongRow
 import com.example.ui.theme.WearsicAppBackground
+import com.example.ui.theme.WearsicDimens
+import com.example.ui.theme.wearsicListContentPadding
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicError
 import com.example.ui.theme.WearsicSurface
@@ -100,7 +103,7 @@ fun PlaylistsScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
+            contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -195,6 +198,7 @@ fun PlaylistsScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = WearsicDimens.TouchTarget)
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.35f))
                             .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.4f), CircleShape)
@@ -222,6 +226,7 @@ fun PlaylistsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Box(
                             modifier = Modifier
+                                .heightIn(min = WearsicDimens.TouchTarget)
                                 .clip(CircleShape)
                                 .background(WearsicVibrantLavender)
                                 .wearsicClickable {
@@ -232,17 +237,20 @@ fun PlaylistsScreen(
                                         showCreateDialog = false
                                     }
                                 }
-                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text("Create", color = WearsicTextPrimaryDark, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         Box(
                             modifier = Modifier
+                                .heightIn(min = WearsicDimens.TouchTarget)
                                 .clip(CircleShape)
                                 .background(WearsicGlassFill)
                                 .border(1.dp, WearsicGlassBorder, CircleShape)
                                 .wearsicClickable { showCreateDialog = false; newPlaylistName = "" }
-                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text("Cancel", color = WearsicTextPrimary, fontSize = 12.sp)
                         }
@@ -274,12 +282,15 @@ fun PlaylistsScreen(
                         color = WearsicTextPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Box(
                             modifier = Modifier
+                                .heightIn(min = WearsicDimens.TouchTarget)
                                 .clip(CircleShape)
                                 .background(WearsicError.copy(alpha = 0.25f))
                                 .border(1.dp, WearsicError, CircleShape)
@@ -287,17 +298,20 @@ fun PlaylistsScreen(
                                     onRemovePlaylist(pl.id)
                                     hideCandidate = null
                                 }
-                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text("Remove", color = WearsicError, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         Box(
                             modifier = Modifier
+                                .heightIn(min = WearsicDimens.TouchTarget)
                                 .clip(CircleShape)
                                 .background(WearsicGlassFill)
                                 .border(1.dp, WearsicGlassBorder, CircleShape)
                                 .wearsicClickable { hideCandidate = null }
-                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text("Cancel", color = WearsicTextPrimary, fontSize = 12.sp)
                         }

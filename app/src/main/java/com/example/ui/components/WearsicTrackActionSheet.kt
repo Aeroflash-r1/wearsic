@@ -6,14 +6,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -45,6 +49,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import com.example.model.Playlist
 import com.example.model.Track
+import com.example.ui.theme.WearsicDimens
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
 import com.example.ui.theme.WearsicTextPrimary
@@ -82,13 +87,23 @@ fun WearsicTrackActionSheet(
             .clickable(onClick = onDismiss)
             .testTag("track_action_sheet")
     ) {
+        // The sheet is HEIGHT-CAPPED and scrollable: on a 44mm round display
+        // an unbounded menu pushes its last actions below the curved edge
+        // where they can never be tapped. Centering keeps it in the circular
+        // safe area at any font scale.
+        BoxWithConstraints(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 12.dp)
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
+                .heightIn(max = maxHeight * 0.84f)
                 .clip(CircleShape)
                 .background(WearsicGlassFill)
                 .border(1.dp, WearsicGlassBorder, CircleShape)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 10.dp)
                 // Consume taps on the sheet body so they never reach the scrim.
                 .clickable(
@@ -174,6 +189,7 @@ fun WearsicTrackActionSheet(
                 }
             }
         }
+        }
     }
 }
 
@@ -186,9 +202,12 @@ private fun SheetAction(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Comfortable one-finger touch height on the 44mm display; grows
+            // with font scale instead of clipping larger text.
+            .heightIn(min = WearsicDimens.SheetRowMinHeight)
             .clip(CircleShape)
             .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 7.dp),
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(

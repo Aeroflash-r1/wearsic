@@ -47,6 +47,7 @@ import com.example.ui.components.WearsicLibraryTrackRow
 import com.example.ui.components.WearsicLoadingState
 import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.theme.WearsicAppBackground
+import com.example.ui.theme.wearsicListContentPadding
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
@@ -84,7 +85,7 @@ fun ArtistsScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
+            contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

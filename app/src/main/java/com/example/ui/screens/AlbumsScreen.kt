@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -57,10 +58,12 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import com.example.model.Album
 import com.example.ui.components.WearsicSongRow
+import com.example.ui.theme.WearsicDimens
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
 import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.theme.WearsicAppBackground
+import com.example.ui.theme.wearsicListContentPadding
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicError
 import com.example.ui.theme.WearsicTextMuted
@@ -115,7 +118,7 @@ fun AlbumsScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
+            contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -131,7 +134,7 @@ fun AlbumsScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(38.dp)
+                        .heightIn(min = WearsicDimens.TouchTarget)
                         .clip(CircleShape)
                         .background(if (isFocused) WearsicVibrantLavender.copy(alpha = 0.12f) else WearsicGlassFill)
                         .border(

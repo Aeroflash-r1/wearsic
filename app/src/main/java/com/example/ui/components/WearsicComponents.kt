@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -87,7 +88,9 @@ fun WearsicPrimaryPillButton(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(52.dp)
+            // Minimum height (not fixed): the pill grows with font scale
+            // instead of clipping larger accessibility text.
+            .heightIn(min = 52.dp)
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
@@ -190,7 +193,7 @@ fun WearsicSecondaryPillButton(
 
     Box(
         modifier = modifier
-            .height(48.dp)
+            .heightIn(min = 48.dp)
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
@@ -393,7 +396,11 @@ fun WearsicScreenHeader(
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
-            letterSpacing = (-0.4).sp
+            letterSpacing = (-0.4).sp,
+            // Long dynamic titles (playlist names…) wrap to two lines max,
+            // then ellipsize — a header must never push the list off-screen.
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
         )
         if (subtitle != null) {
             Text(
@@ -402,6 +409,8 @@ fun WearsicScreenHeader(
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Normal,
                 textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 4.dp)
             )
         }

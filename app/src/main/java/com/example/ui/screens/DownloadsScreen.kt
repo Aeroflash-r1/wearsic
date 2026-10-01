@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -59,6 +60,8 @@ import com.example.ui.components.WearsicSongRow
 import com.example.ui.components.WearsicSongRowActionButton
 import com.example.ui.components.WearsicSongRowPlayButton
 import com.example.ui.theme.WearsicAppBackground
+import com.example.ui.theme.WearsicDimens
+import com.example.ui.theme.wearsicListContentPadding
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicError
 import com.example.ui.theme.WearsicLavenderContainer
@@ -102,7 +105,7 @@ fun DownloadsScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 18.dp),
+            contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -173,6 +176,7 @@ fun DownloadsScreen(
                                     onClearAllDownloads()
                                     showClearAllConfirmation = false
                                 }
+                                .heightIn(min = WearsicDimens.TouchTarget)
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .testTag("confirm_clear_all_downloads"),
                             contentAlignment = Alignment.Center
@@ -192,6 +196,7 @@ fun DownloadsScreen(
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
                                 .wearsicClickable { showClearAllConfirmation = true }
+                                .heightIn(min = WearsicDimens.TouchTarget)
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .testTag("clear_all_downloads_button"),
                             contentAlignment = Alignment.Center

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -71,6 +72,7 @@ import coil.request.ImageRequest
 import com.example.model.PlaybackUiState
 import com.example.model.Track
 import com.example.ui.theme.WearsicBlack
+import com.example.ui.theme.WearsicDimens
 import com.example.ui.theme.WearsicSurface
 import com.example.ui.theme.WearsicSurfaceBorderSubtle
 import com.example.ui.theme.WearsicVibrantLavender
@@ -147,7 +149,9 @@ fun PlayerScreen(
                 // Fit the whole control stack INSIDE the round display on a
                 // 44mm watch (~170-190dp of usable height): the artwork
                 // thumbnail only appears when there is room for it.
-                val showArtwork = maxHeight >= 182.dp && !track.artworkUrl.isNullOrBlank()
+                // Artwork is the first thing to go when the viewport is tight:
+            // controls and text always keep their room on smaller round faces.
+            val showArtwork = maxHeight >= 190.dp && !track.artworkUrl.isNullOrBlank()
 
                 Column(
                     modifier = Modifier
@@ -260,7 +264,7 @@ fun PlayerScreen(
                             testTag = "player_more_button"
                         )
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                 }
             }
         }
@@ -463,22 +467,30 @@ private fun FlatPill(
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(15.dp)
+    // 44dp-tall touch box around the compact visual pill: secondary controls
+    // stay comfortably tappable without competing with Play/Pause.
     Box(
         modifier = modifier
-            .size(width = 46.dp, height = 30.dp)
-            .clip(shape)
-            .background(Color.White.copy(alpha = 0.10f))
-            .border(1.dp, Color.White.copy(alpha = 0.10f), shape)
+            .size(width = 46.dp, height = WearsicDimens.TouchTarget)
             .wearsicClickable(pressedScale = 0.92f, onClick = onClick)
             .testTag(testTag),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = Color.White.copy(alpha = 0.92f),
-            modifier = Modifier.size(17.dp)
-        )
+        Box(
+            modifier = Modifier
+                .size(width = 46.dp, height = 30.dp)
+                .clip(shape)
+                .background(Color.White.copy(alpha = 0.10f))
+                .border(1.dp, Color.White.copy(alpha = 0.10f), shape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = Color.White.copy(alpha = 0.92f),
+                modifier = Modifier.size(17.dp)
+            )
+        }
     }
 }
 
@@ -506,7 +518,7 @@ private fun MoreSheet(
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
+                .padding(start = 10.dp, end = 10.dp, bottom = 16.dp)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(24.dp))
                 .background(WearsicSurface)
@@ -554,7 +566,7 @@ private fun MoreSheetRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(46.dp)
+            .heightIn(min = 46.dp)
             .clip(RoundedCornerShape(16.dp))
             .wearsicClickable(enabled = enabled, pressedScale = 0.98f, onClick = onClick)
             .testTag(testTag)

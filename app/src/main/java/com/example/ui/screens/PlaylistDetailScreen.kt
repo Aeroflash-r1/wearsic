@@ -48,6 +48,7 @@ import com.example.ui.components.WearsicLibraryTrackRow
 import com.example.ui.components.WearsicLoadingState
 import com.example.ui.components.WearsicScreenHeader
 import com.example.ui.theme.WearsicAppBackground
+import com.example.ui.theme.wearsicListContentPadding
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicLavenderContainer
 import com.example.ui.theme.WearsicSurface
@@ -96,7 +97,7 @@ fun PlaylistDetailScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = PaddingValues(horizontal = 22.dp, vertical = 30.dp),
+            contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

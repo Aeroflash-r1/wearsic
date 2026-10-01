@@ -134,6 +134,13 @@ class ApiIntegrationTest {
     }
 
     @Test
+    fun `api accepts bearer token`() = withServer(apiKey = "secret") {
+        val resp = client.get("/api/favorites") { header(HttpHeaders.Authorization, "Bearer secret") }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        assertEquals("[]", resp.bodyAsText())
+    }
+
+    @Test
     fun `open server works without any key`() = withServer(apiKey = null) {
         val resp = client.get("/api/favorites")
         assertEquals(HttpStatusCode.OK, resp.status)

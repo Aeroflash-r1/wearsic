@@ -8,6 +8,7 @@ import coil.memory.MemoryCache
 import com.example.cache.WearsicCache
 import com.example.cache.WearsicResponseCache
 import com.example.di.AppContainer
+import kotlinx.coroutines.runBlocking
 
 class WearsicApp : Application(), ImageLoaderFactory {
     val container: AppContainer by lazy { AppContainer(applicationContext) }
@@ -66,8 +67,10 @@ class WearsicApp : Application(), ImageLoaderFactory {
                 // interceptor before any background request can be issued.
                 // Wear OS may recreate the process without recreating the
                 // Settings screen, so DataStore is the source of truth here.
-                val savedApiKey = container.preferencesRepository.getApiKey()
-                container.musicRepository.refreshApiKeyWith(savedApiKey)
+                runBlocking {
+                    val savedApiKey = container.preferencesRepository.getApiKey()
+                    container.musicRepository.refreshApiKeyWith(savedApiKey)
+                }
 
                 container.preferencesRepository
                 container.musicRepository

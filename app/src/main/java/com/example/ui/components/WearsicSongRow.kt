@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -56,6 +57,7 @@ import com.example.ui.theme.WearsicTextPrimaryDark
 import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.util.WearsicMotion
+import com.example.ui.util.wearsicEntrance
 
 /**
  * The canonical song card used across every list (search, queue, downloads,
@@ -95,13 +97,16 @@ fun WearsicSongRow(
     Box(
         modifier = modifier
             .fillMaxWidth()
+            // One-shot settle-in: rows fade + rise once when they appear, so
+            // lists feel alive — cost is a single 180ms tween per row, never
+            // a continuous animation.
+            .wearsicEntrance()
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .clip(CircleShape)
+            .clip(RoundedCornerShape(22.dp))
             .background(WearsicGlassFill)
-            .border(1.dp, WearsicGlassBorder, CircleShape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag(testTag)
@@ -143,7 +148,12 @@ fun WearsicSongRow(
     }
 }
 
-/** 40dp circular artwork (or lavender music-note placeholder) with hairline ring. */
+/**
+ * 40dp ROUNDED-SQUARE artwork (or lavender music-note placeholder) with a
+ * hairline ring. Rounded squares — not circles — are the album-art language
+ * of every serious music app (Spotify, Apple Music, YTM); circles read as a
+ * generic template and crop away the album cover's own composition.
+ */
 @Composable
 fun WearsicSongRowArtwork(
     artworkUrl: String?,
@@ -152,7 +162,8 @@ fun WearsicSongRowArtwork(
     size: Dp = 40.dp,
 ) {
     val context = LocalContext.current
-    val ring = Modifier.border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
+    val shape = RoundedCornerShape(11.dp)
+    val ring = Modifier.border(1.dp, WearsicSurfaceBorderSubtle, shape)
     if (!artworkUrl.isNullOrBlank()) {
         // Built once per URL: a fresh ImageRequest on every row recomposition
         // (rows redraw during a press and on list updates) makes Coil restart
@@ -172,14 +183,14 @@ fun WearsicSongRowArtwork(
             contentScale = ContentScale.Crop,
             modifier = modifier
                 .size(size)
-                .clip(CircleShape)
+                .clip(shape)
                 .then(ring)
         )
     } else {
         Box(
             modifier = modifier
                 .size(size)
-                .clip(CircleShape)
+                .clip(shape)
                 .background(WearsicLavenderContainer)
                 .then(ring),
             contentAlignment = Alignment.Center

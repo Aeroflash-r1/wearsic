@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Album
@@ -273,11 +274,11 @@ private fun NowPlayingMiniCard(
             ) {
                 // Real album art (or the music-note chip when there is none).
                 val artModifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .then(
-                        if (isPlaying) Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
-                        else Modifier.border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
+                        if (isPlaying) Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                        else Modifier.border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(12.dp))
                     )
                 if (!artworkUrl.isNullOrBlank()) {
                     val artRequest = remember(artworkUrl) {
@@ -308,17 +309,31 @@ private fun NowPlayingMiniCard(
                     }
                 }
                 Spacer(modifier = Modifier.width(10.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
+                    // Production touch: a tiny uppercase kicker labels the
+                    // hero while music is actually playing.
+                    if (isPlaying) {
+                        Text(
+                            text = "NOW PLAYING",
+                            color = WearsicTextPrimaryDark.copy(alpha = 0.65f),
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.2.sp,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.height(1.dp))
+                    }
                     Text(
                         text = title,
                         color = if (isPlaying) WearsicTextPrimaryDark else WearsicTextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.2).sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = if (isPlaying) "$artist • Now Playing" else artist,
+                        text = artist,
                         color = if (isPlaying) {
                             WearsicTextPrimaryDark.copy(alpha = 0.75f)
                         } else {

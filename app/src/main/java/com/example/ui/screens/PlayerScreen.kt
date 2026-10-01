@@ -72,6 +72,8 @@ import com.example.model.PlaybackUiState
 import com.example.model.Track
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicSurface
+import com.example.ui.theme.WearsicSurfaceBorderSubtle
+import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.theme.WearsicSurfaceBorder
 import com.example.ui.theme.WearsicTextMuted
 import com.example.ui.theme.WearsicTheme
@@ -145,7 +147,7 @@ fun PlayerScreen(
                 // Fit the whole control stack INSIDE the round display on a
                 // 44mm watch (~170-190dp of usable height): the artwork
                 // thumbnail only appears when there is room for it.
-                val showArtwork = maxHeight >= 186.dp && !track.artworkUrl.isNullOrBlank()
+                val showArtwork = maxHeight >= 182.dp && !track.artworkUrl.isNullOrBlank()
 
                 Column(
                     modifier = Modifier
@@ -177,8 +179,9 @@ fun PlayerScreen(
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .size(42.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(13.dp))
+                                .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(13.dp))
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                     }
@@ -187,8 +190,9 @@ fun PlayerScreen(
                     Text(
                         text = if (hasTrack) track.title else "Nothing playing",
                         color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-0.3).sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center
@@ -410,8 +414,11 @@ private fun PlayButton(
                 )
                 val sweep = progress.value * 360f
                 if (sweep > 0.5f) {
+                    // The one piece of brand colour on the screen: the
+                    // signature lavender sweeps around the play disc —
+                    // instantly recognizable as Wearsic, costs one arc.
                     drawArc(
-                        color = Color.White.copy(alpha = 0.85f),
+                        color = WearsicVibrantLavender,
                         startAngle = -90f,
                         sweepAngle = sweep,
                         useCenter = false,

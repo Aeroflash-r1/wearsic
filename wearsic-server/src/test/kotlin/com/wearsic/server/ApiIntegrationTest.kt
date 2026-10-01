@@ -43,6 +43,7 @@ class ApiIntegrationTest {
 
     private fun withServer(
         apiKey: String? = null,
+        healthMeter: ExtractionHealthMeter? = null,
         block: suspend ApplicationTestBuilder.() -> Unit,
     ) = testApplication {
         val dbFile = Files.createTempFile("wearsic-test", ".db").toFile().apply { deleteOnExit() }
@@ -63,10 +64,41 @@ class ApiIntegrationTest {
 
         application {
             // module() installs ContentNegotiation itself — do not duplicate it here.
-            module(gateway, database, audioProxy, apiKey, orchestrator, transcoder)
+            module(gateway, database, audioProxy, apiKey, orchestrator, transcoder, healthMeter)
         }
         block()
     }
+
+    // ---------------- Readiness ----------------
+
+    @Test
+    fun `ready endpoint is public and contains no secrets`() = withServer(apiKey = "secret") {
+        val resp = client.get("/ready")
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val body = resp.bodyAsText()
+        assertTrue(body.contains("\"ready\":true"), body)
+        assertTrue(body.contains("\"database\":true"), body)
+        assertTrue(body.contains("\"extractor\":true"), body)
+        assertTrue(body.contains("\"engineVersion\":"), body)
+        // The API key must never appear in any observability output.
+        assertTrue(!body.contains("secret"), body)
+    }
+
+    @Test
+    fun `ready endpoint does not require the api key`() = withServer(apiKey = "secret") {
+        // Monitoring probes (like /health) stay usable without auth.
+        assertEquals(HttpStatusCode.OK, client.get("/ready").status)
+    }
+
+    @Test
+    fun `health exposes extraction timestamps and never leaks the key`() =
+        withServer(apiKey = "secret", healthMeter = ExtractionHealthMeter().apply { recordSuccess() }) {
+            val body = client.get("/health").bodyAsText()
+            assertTrue(body.contains("\"lastSuccessAtMillis\":"), body)
+            assertTrue(body.contains("\"lastFailureAtMillis\":"), body)
+            assertTrue(body.contains("\"extraction\":{"), body)
+            assertTrue(!body.contains("secret"), body)
+        }
 
     // ---------------- Health ----------------
 

@@ -96,6 +96,22 @@ class Database(dbPath: String) {
         }
     }
 
+    /**
+     * Cheap liveness probe for /ready: a single indexed SELECT against the
+     * open connection. True when the database can answer queries at all.
+     * (Reads a missing key — never writes, never touches user data.)
+     */
+    fun ping(): Boolean = try {
+        synchronized(lock) {
+            conn.prepareStatement("SELECT 1").use { ps ->
+                ps.executeQuery().use { rs -> rs.next() }
+            }
+        }
+        true
+    } catch (_: Exception) {
+        false
+    }
+
     // ---------------- Settings (persisted YouTube cookie etc.) ----------------
 
     fun getSetting(key: String): String? = synchronized(lock) {

@@ -183,6 +183,8 @@ fun Application.module(
     }
 
     routing {
+        // /health = LIVENESS ("is the process alive?"). Public, cheap,
+        // secret-free. /ready answers "can it serve music right now?".
         get("/health") {
             val extraction = healthMeter?.let {
                 ExtractionHealthDto(
@@ -191,6 +193,8 @@ fun Application.module(
                     failureRatePercent = it.failureRatePercent(),
                     consecutiveFailures = it.consecutiveFailures(),
                     lastError = it.lastError,
+                    lastSuccessAtMillis = it.lastSuccessAtMillis,
+                    lastFailureAtMillis = it.lastFailureAtMillis,
                 )
             }
             val update = engineUpdater?.let {
@@ -200,6 +204,8 @@ fun Application.module(
                     lastCheckAtMillis = it.lastCheckAtMillis,
                     lastError = it.lastCheckError,
                     stagedVersion = it.stagedState()?.version,
+                    updateAttempt = it.currentAttemptCount(),
+                    rollbackReason = it.rollbackInfo()?.reason,
                 )
             }
             call.respond(
@@ -208,6 +214,28 @@ fun Application.module(
                     extraction = extraction,
                     canaryHealthy = canary?.lastProbeHealthy,
                     update = update,
+                )
+            )
+        }
+
+        // /ready = READINESS ("can Wearsic serve music right now?"). The
+        // deeper counterpart to /health, used by `wearsic doctor` and
+        // monitoring. Deliberately cheap (one indexed DB probe, in-memory
+        // counters — no network, no extraction) and exposes NO secrets.
+        get("/ready") {
+            val databaseOk = database.ping()
+            // Same threshold as the self-heal watchdog: a sustained
+            // consecutive-failure streak means the extraction engine is
+            // broken and an update is (or should be) in flight.
+            val extractorOk = healthMeter == null ||
+                healthMeter.consecutiveFailures() < SelfHealOrchestrator.FAILURE_TRIGGER
+            val transcoderOk = transcoder.available
+            call.respond(
+                ReadyResponse(
+                    ready = databaseOk && extractorOk,
+                    database = databaseOk,
+                    extractor = extractorOk,
+                    transcoder = transcoderOk,
                 )
             )
         }

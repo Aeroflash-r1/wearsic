@@ -49,7 +49,12 @@ pids_for() {  # $1 = pattern
 }
 
 supervisor_running() { [ -n "$(pids_for "$RUN")" ]; }
-server_running()     { [ -n "$(pids_for "$DEST/bin/wearsic-server")" ]; }
+# The launcher script exec()s into the JVM, so the process command line is
+# the java main class, not the script path — match BOTH.
+server_running() {
+  [ -n "$(pids_for "com.wearsic.server.ApplicationKt")" ] \
+    || [ -n "$(pids_for "$DEST/bin/wearsic-server")" ]
+}
 
 health_ok() {
   curl -sf -m 5 "http://127.0.0.1:$(port)/health" >/dev/null 2>&1
@@ -146,16 +151,18 @@ cmd_stop() {
   for pid in $pids; do kill "$pid" 2>/dev/null; done   # supervisor's trap kills the JVM
   sleep 2
   # Belt and braces: the JVM itself, in case the supervisor was already dead.
-  pids="$(pids_for "$DEST/bin/wearsic-server")"
+  pids="$(pids_for "com.wearsic.server.ApplicationKt"; pids_for "$DEST/bin/wearsic-server")"
   for pid in $pids; do kill "$pid" 2>/dev/null; done
   sleep 1
-  pids="$(pids_for "$DEST/bin/wearsic-server")"
+  pids="$(pids_for "com.wearsic.server.ApplicationKt"; pids_for "$DEST/bin/wearsic-server")"
   for pid in $pids; do kill -9 "$pid" 2>/dev/null; done
   say "stopped."
 }
 
 cmd_restart() { cmd_stop; cmd_start; }
 
+# Exit codes (documented in usage + README):
+#   0 = running and healthy   1 = error   3 = not running   4 = running but unhealthy
 cmd_status() {
   installed
   local P; P="$(port)"
@@ -164,10 +171,13 @@ cmd_status() {
     curl -sf -m 5 "http://127.0.0.1:$P/health" \
       | sed 's/^{"status":"ok"//' 2>/dev/null || true
     say ""
+    return 0
   elif supervisor_running; then
     say "supervisor running, server NOT healthy — try: wearsic server logs"
+    return 4
   else
     say "not running — start with: wearsic server start"
+    return 3
   fi
 }
 
@@ -214,7 +224,9 @@ cmd_cookies() {
   cookie="${1:-}"
   if [ -z "$cookie" ]; then
     printf 'Paste the YouTube cookie string (SID=...; HSID=...): '
-    read -r cookie || return 1
+    # -s: never echo the credential to the terminal.
+    read -rs cookie || return 1
+    printf '\n'
   fi
   [ -n "$cookie" ] || die "Empty cookie."
   port_="$(port)"
@@ -252,6 +264,10 @@ cmd_funnel() {
     die "Funnel exposes the server to the internet — set an API key first:"
     die "  wearsic server api key <your-key>"
   fi
+  # Never expose a dead or half-started server.
+  if ! health_ok; then
+    die "Server is not running/healthy — start it first: wearsic server start"
+  fi
   say "Tailscale Funnel — a STABLE public HTTPS URL for the server."
   say "Runs the tailscaled daemon inside Termux (userspace networking:"
   say "no root, no /dev/net/tun). The official Android app cannot do this."
@@ -283,6 +299,12 @@ cmd_funnel() {
 
 cmd_public() {
   installed
+  # Public exposure without authentication is refused outright — same rule
+  # as `wearsic server funnel`. No key is ever invented or changed here.
+  if [ -z "$(api_key)" ]; then
+    die "Public exposure REQUIRES an API key — the server would otherwise be open to the internet."
+    die "Set one first (you choose the value):  wearsic server api key <your-key>"
+  fi
   say "Public URL options (watch works on any network, no VPN app on the watch):"
   say ""
   say "1) Tailscale Funnel — STABLE url, recommended:"
@@ -297,7 +319,156 @@ cmd_public() {
   say "A public URL MUST have an API key: wearsic server api key <your-key>"
 }
 
+# /ready in one line: can the server serve music RIGHT NOW?
+cmd_ready() {
+  installed
+  curl -sf -m 5 "http://127.0.0.1:$(port)/ready" \
+    || die "No /ready response — is the server running and not an old engine? (wearsic server start)"
+  say ""
+}
+
+# Helper: one doctor row (name, symbol, detail).
+doctor_line() { printf '  %-16s %s %s\n' "$1" "$2" "${3:-}"; }
+
+# End-to-end environment diagnostics. Prints only the PRESENCE of the API
+# key, never its value; never prints cookies or other secrets.
+# Exit codes: 0 = READY, 1 = problems found.
+cmd_doctor() {
+  local fails=0 warns=0
+  say "Wearsic Doctor"
+  say "────────────────────────"
+
+  if command -v java >/dev/null 2>&1; then
+    doctor_line "Java" "✓" "$(java -version 2>&1 | head -1 | tr -d '"' | cut -c1-40)"
+  else
+    doctor_line "Java" "✗" "missing — pkg install -y openjdk-17"; fails=$((fails+1))
+  fi
+
+  if command -v ffmpeg >/dev/null 2>&1; then
+    doctor_line "ffmpeg" "✓" ""
+  else
+    doctor_line "ffmpeg" "✗" "missing — rare Opus/WebM songs will 503 (pkg install ffmpeg)"; warns=$((warns+1))
+  fi
+
+  if [ -x "$DEST/bin/wearsic-server" ] && [ -f "$DEST/run-termux.sh" ]; then
+    doctor_line "Server install" "✓" "$DEST"
+  else
+    doctor_line "Server install" "✗" "not installed"; fails=$((fails+1))
+  fi
+
+  if supervisor_running; then
+    doctor_line "Supervisor" "✓" ""
+  else
+    doctor_line "Supervisor" "✗" "not running — wearsic server start"; fails=$((fails+1))
+  fi
+  if server_running; then
+    doctor_line "Server process" "✓" ""
+  else
+    doctor_line "Server process" "✗" "not running"; fails=$((fails+1))
+  fi
+  doctor_line "Port $(port)" "✓" ""
+
+  if [ -f "$DEST/wearsic.db" ]; then
+    doctor_line "Database" "✓" "wearsic.db"
+  else
+    doctor_line "Database" "—" "not created yet (appears on first start)"; warns=$((warns+1))
+  fi
+
+  # API key: presence only — the value is never printed.
+  if [ -n "$(api_key)" ]; then
+    doctor_line "API key" "✓" "set"
+  else
+    doctor_line "API key" "✗" "NOT set — server is OPEN (fine on LAN, never public)"; warns=$((warns+1))
+  fi
+
+  local P health ready_body
+  P="$(port)"
+  health="$(curl -sf -m 5 "http://127.0.0.1:$P/health" 2>/dev/null || true)"
+  if [ -n "$health" ]; then
+    doctor_line "Health" "✓" "ok"
+  else
+    doctor_line "Health" "✗" "no response"; fails=$((fails+1))
+  fi
+
+  ready_body="$(curl -sf -m 5 "http://127.0.0.1:$P/ready" 2>/dev/null || true)"
+  if printf '%s' "$ready_body" | grep -q '"ready":true'; then
+    doctor_line "Readiness" "✓" "ready"
+  elif [ -n "$ready_body" ]; then
+    doctor_line "Readiness" "✗" "not ready — inspect /ready"; fails=$((fails+1))
+  elif [ -n "$health" ]; then
+    doctor_line "Readiness" "—" "no /ready (engine older than 1.4.0)"; warns=$((warns+1))
+  else
+    doctor_line "Readiness" "✗" "no response"; fails=$((fails+1))
+  fi
+
+  if [ -n "$health" ]; then
+    local ver consec canary
+    ver="$(printf '%s' "$health" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+    consec="$(printf '%s' "$health" | sed -n 's/.*"consecutiveFailures":\([0-9]*\).*/\1/p')"
+    canary="$(printf '%s' "$health" | sed -n 's/.*"canaryHealthy":\(true\|false\|null\).*/\1/p')"
+    doctor_line "Engine version" "✓" "v${ver:-unknown}"
+    if [ -n "$consec" ] && [ "$consec" -ge 6 ] 2>/dev/null; then
+      doctor_line "Extractor" "✗" "$consec consecutive failures — engine broken? self-heal should be staging an update"; fails=$((fails+1))
+    else
+      doctor_line "Extractor" "✓" "consecutive failures: ${consec:-0}"
+    fi
+    if [ "$canary" = "true" ]; then
+      doctor_line "Canary" "✓" "healthy"
+    elif [ -n "$canary" ]; then
+      doctor_line "Canary" "—" "$canary"
+    fi
+  fi
+
+  local ip; ip="$(lan_ip)"
+  if [ -n "$ip" ]; then
+    doctor_line "LAN network" "✓" "$ip"
+  else
+    doctor_line "LAN network" "✗" "no WiFi IP"; fails=$((fails+1))
+  fi
+
+  local avail; avail="$(df -k "$DEST" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "$avail" ] && [ "$avail" -lt 102400 ] 2>/dev/null; then
+    doctor_line "Storage" "✗" "only ${avail}KB free"; warns=$((warns+1))
+  else
+    doctor_line "Storage" "✓" "$(( ${avail:-0} / 1024 ))MB free"
+  fi
+
+  if [ -n "${PREFIX:-}" ] && [ -d "${PREFIX:-/nonexistent}/bin" ]; then
+    doctor_line "Termux" "✓" ""
+  else
+    doctor_line "Termux" "—" "not Termux"; warns=$((warns+1))
+  fi
+
+  # Tailscale / Funnel: only ever reported ACTIVE when confirmed.
+  if command -v tailscale >/dev/null 2>&1; then
+    if tailscale status >/dev/null 2>&1; then
+      doctor_line "Tailscale" "✓" "connected"
+    else
+      doctor_line "Tailscale" "—" "installed, not connected"; warns=$((warns+1))
+    fi
+    if tailscale funnel status 2>/dev/null | grep -qi 'https://'; then
+      doctor_line "Funnel" "✓" "active"
+    else
+      doctor_line "Funnel" "—" "not active"
+    fi
+  else
+    doctor_line "Tailscale" "—" "not installed"
+    doctor_line "Funnel" "—" "not installed"
+  fi
+
+  say "────────────────────────"
+  if [ "$fails" -eq 0 ]; then
+    say "Result: READY"
+    return 0
+  fi
+  say "Result: NOT READY ($fails problem(s), $warns warning(s))"
+  return 1
+}
+
 usage() {
+  say "Wearsic doctor — check the whole setup:"
+  say "  wearsic doctor                 environment diagnostics (exit 0 = READY)"
+  say ""
   say "Wearsic server commands:"
   say "  wearsic server start        start the server"
   say "  wearsic server stop         stop the server"
@@ -305,6 +476,8 @@ usage() {
   say "  wearsic server status       running? healthy? which version?"
   say "  wearsic server logs         live logs"
   say "  wearsic server health       raw /health JSON"
+  say "  wearsic server ready        raw /ready JSON (can it serve music?)"
+  say "  wearsic server status       exit codes: 0 healthy, 3 stopped, 4 unhealthy"
   say "  wearsic server url          Server URL + API key for the watch"
   say "  wearsic server ip           this phone's WiFi IP"
   say "  wearsic server api key [new]   show / change the API key"
@@ -323,6 +496,7 @@ case "${1:-}" in
       status)  cmd_status ;;
       logs)    cmd_logs ;;
       health)  cmd_health ;;
+      ready)   cmd_ready ;;
       url)     cmd_url ;;
       ip)      cmd_ip ;;
       api)
@@ -336,6 +510,7 @@ case "${1:-}" in
       "") usage; exit 2 ;;
       *) die "Unknown command: wearsic server $2 — run 'wearsic' for the list" ;;
     esac ;;
+  doctor)  cmd_doctor ;;
   ""|help|-h|--help) usage ;;
   *) die "Unknown command: wearsic $1 — run 'wearsic' for the list" ;;
 esac

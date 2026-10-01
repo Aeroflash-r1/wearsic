@@ -37,8 +37,15 @@ chmod +x ~/wearsic-server.sh
 
 That's the entire setup. The install extracts the full server into
 `~/wearsic-server`, **generates a secure API key** (no inventing a secret by
-hand), and puts the one `wearsic` command on your PATH. From then on it's a
-single command for everything:
+hand), and puts the one `wearsic` command on your PATH. If anything ever
+looks wrong, one command checks the whole setup (Java, ffmpeg, server,
+database, API key, health, readiness, network, Tailscale/Funnel, extractor):
+
+```bash
+wearsic doctor        # prints a ✓/✗/— report — exit 0 means READY
+```
+
+From then on it's a single command for everything:
 
 ```bash
 wearsic server start     # start (self-healing supervisor)
@@ -388,6 +395,11 @@ curl -s http://127.0.0.1:8080/health
 | Symptom | Fix |
 |---|---|
 | `Missing wearsic-server binary` | You're not inside `~/wearsic-server`; re-extract the zip fully (`bin/` and `lib/` must sit next to `run-termux.sh`) |
+| Something is wrong and I don't know what | Run **`wearsic doctor`** — it checks Java, ffmpeg, install, process, port, database, API key, health, readiness, network, storage, Termux, Tailscale/Funnel and the extractor, and exits 0 only when READY |
+| `wearsic server status` says "not running" | Expected exit code **3** (0 = healthy, 4 = running but unhealthy) — scripts can branch on it |
+| Auto-update refuses a new version | Releases without a published `.zip.sha256` are never auto-installed (authenticity). Update manually with the zip + installer; from the first checksummed release on, auto-update resumes |
+| Server updated and now won't start | The supervisor auto-rolls back to the previous engine (see `wearsic-state/update-history.log`). A version that keeps failing is staged at most 3 times, then a manual update is required |
+| YouTube cookie safety | The cookie is never logged and never returned by the API (`hasCookie` only). It is stored in `wearsic.db`/`.env` — Termux offers no OS secure storage, so the phone's lock screen + user account are the security boundary |
 | `Permission denied` on start | `chmod +x run-termux.sh bin/wearsic-server` |
 | Search returns nothing / errors | Engine self-healing usually fixes this alone: after repeated failures the server probes a canary video, and if the engine is truly broken it downloads + stages the newest release and applies it on restart (on by default). Manual fix: `bash run-termux.sh` restart after downloading the latest ZIP |
 | `Sign in to confirm you're not a bot` errors | Set a YouTube cookie: see `wearsic-server/README.md` → `WEARSIC_YOUTUBE_COOKIE` env var, or POST it to `/api/config/youtube-cookie` |

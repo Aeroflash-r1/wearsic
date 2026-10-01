@@ -76,7 +76,9 @@ The ZIP is self-contained: `run-termux.sh` sits next to `bin/` and `lib/` and la
 
 Public:
 
-- `GET /health`
+- `GET /health` — liveness: is the process alive (version, transcoder, extraction/update status)
+- `GET /ready` — readiness: can it serve music right now (`{"ready","database","extractor","transcoder","engineVersion"}`;
+  no secrets, cheap — safe for monitoring probes)
 
 Authenticated when `WEARSIC_API_KEY` is set:
 
@@ -96,10 +98,42 @@ The server defends itself against the two failure classes that actually kill mus
 
 1. **Runtime rot** (expired CDN URLs, one dead video, stalled sockets): ranged proxying, dead-URL re-resolution (403/404/410 → fresh extraction → retry once), iOS→default InnerTube client fallback, per-request timeouts, and the supervisor's crash/hang restart loop.
 2. **Engine rot** (YouTube changes their site and breaks NewPipeExtractor): every extraction is counted. After 6 consecutive failures the server probes a canary video ("Me at the zoo" — effectively permanent). If the canary also fails, the engine is declared broken:
-   - with `WEARSIC_AUTO_UPDATE` on (default): the newest newer GitHub release ZIP is downloaded, integrity-verified (central-directory walk; truncated downloads are rejected), zip-slip-checked, staged into `wearsic-state/staging/`, and the process exits so `run-termux.sh` applies it atomically on restart (previous build kept as `.bak`).
+   - with `WEARSIC_AUTO_UPDATE` on (default): a newer GitHub release is downloaded, **SHA-256-verified against the release's published `.zip.sha256`**, integrity-checked (central-directory walk — truncated downloads rejected), strictly extracted (zip-slip, duplicate and unexpected-file protection), staged into `wearsic-state/staging/`, and the process exits so `run-termux.sh` swaps it in transactionally on restart.
    - with it off: a loud log line tells you exactly what to do instead.
 
 Check engine status any time: `curl http://localhost:8080/health | jq .extraction,.canaryHealthy,.update`
+
+## Updates, authenticity and rollback
+
+Auto-update is designed to be safe to run unattended on a phone:
+
+- **Authenticity**: every release publishes `wearsic-server-termux-<tag>.zip`
+  **and** `wearsic-server-termux-<tag>.zip.sha256`. The updater verifies the
+  downloaded bytes against that checksum (streamed SHA-256) BEFORE staging —
+  and **refuses to install any release that ships no checksum at all**.
+  Modified, truncated, unsigned or malformed packages are rejected before
+  anything on disk is touched. (Signed manifests are not implemented; the
+  published checksum is the current authenticity guarantee.)
+- **Compatibility**: servers running older releases keep running normally.
+  They simply never auto-install a release without a `.sha256` asset; update
+  manually with the zip + installer until you are on a release that publishes
+  checksums. Nothing is bricked by upgrading.
+- **Crash-safe apply** (`run-termux.sh`): the new engine is copied in full to
+  `bin.new`/`lib.new` first, then swapped in by directory renames
+  (`bin.prev`/`lib.prev` keep the previous build). An interruption at any
+  point is detected at the next start: the supervisor either finishes the
+  swap or restores the previous known-good engine — it never boots a
+  partially copied engine.
+- **Rollback**: if a replaced engine never passes startup/health validation,
+  the supervisor restores the previous build (at most once per hour — no
+  rollback/restart storms) and records why in `wearsic-state/rollback.json`
+  (surfaced as `update.rollbackReason` in `/health`).
+- **Loop protection**: each target version may be staged at most
+  **3 times** (`wearsic-state/update-attempts.json`, survives cleanup).
+  After that auto-update refuses and asks for a manual update — a
+  stage → apply → rollback cycle can never run forever.
+- **Audit trail**: applies and rollbacks are appended to
+  `wearsic-state/update-history.log`.
 
 Also authenticated when `WEARSIC_API_KEY` is set:
 
@@ -107,6 +141,15 @@ Also authenticated when `WEARSIC_API_KEY` is set:
   album `id` is a full playlist URL, feed it to `/api/playlist?url=`)
 - `GET /api/config/youtube-cookie` — returns `{"hasCookie": true|false}`
 - `POST /api/config/youtube-cookie` — body `{"cookie": "SID=...; HSID=..."}`; saves the cookie in SQLite and applies it to every YouTube request immediately. Send `{"cookie":""}` to clear it.
+
+**Cookie handling**: the cookie is a Google authentication credential. It is
+never written to logs, never returned by any endpoint (only `hasCookie`
+true/false), and never included in `/health`, `/ready` or `wearsic` output.
+Storage limitation: on Termux there is no OS secure-storage API available to
+this architecture, so the cookie lives in `wearsic.db` (settings table) or
+the `WEARSIC_YOUTUBE_COOKIE` environment variable — the same trust level as
+the phone's user account. Protect the phone accordingly; clear the cookie
+with `wearsic server cookies` + empty value or `POST {"cookie":""}`.
 
 The server caches search results and resolved stream targets in small bounded in-memory caches (stream targets expire after 1 hour — CDN URLs expire upstream). Search goes to YouTube Music first (official titles/artists with directly playable videoIds); when YTM is unreachable the NewPipeExtractor YouTube search is used as fallback. Legacy surrogate → YouTube video matches from pre-1.5 builds are additionally persisted in SQLite (bounded to 2000 rows, 30-day staleness), so old saved favorites keep replaying after upgrade. SQLite uses WAL mode with `synchronous=NORMAL` for good performance on a phone.
 
@@ -130,6 +173,12 @@ HTTPS URL, the stable option is Tailscale Funnel from Termux:
 ```bash
 wearsic server funnel     # prints https://<phone-name>.<tailnet>.ts.net
 ```
+
+Public exposure REQUIRES an API key: `wearsic server funnel` and
+`wearsic server public` refuse to run without one (and `funnel` also refuses
+to expose a server that is not running and healthy). No key is ever invented
+or changed automatically — set one yourself with `wearsic server api key
+<your-key>`.
 
 A Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:8080`)
 also works but its URL changes on every restart. All options, including

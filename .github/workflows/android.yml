@@ -142,6 +142,10 @@ jobs:
           cp wearsic-server/.env.example "$STAGE/"
           cp wearsic-server/README.md "$STAGE/"
           (cd dist && zip -qr "wearsic-server-termux-${GITHUB_REF_NAME}.zip" wearsic-server)
+          # Authenticity: publish the zip's SHA-256 alongside it. The server's
+          # auto-updater REFUSES to install any release without this file.
+          (cd dist && sha256sum "wearsic-server-termux-${GITHUB_REF_NAME}.zip" \
+            > "wearsic-server-termux-${GITHUB_REF_NAME}.zip.sha256")
           # Single-file server bundle: ONE download containing everything
           # (engine + launcher + CLI), installed and managed with one command.
           bash wearsic-server/package-single-file.sh \
@@ -152,6 +156,8 @@ jobs:
       - name: Verify packaged server (boot + /health version)
         run: |
           VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
+          # The published checksum must actually match the published zip.
+          (cd dist && sha256sum -c "wearsic-server-termux-${GITHUB_REF_NAME}.zip.sha256")
           cd dist/wearsic-server
           PORT=18099 WEARSIC_DB_PATH=/tmp/verify.db nohup ./bin/wearsic-server > /tmp/verify.log 2>&1 &
           SERVER_PID=$!
@@ -196,4 +202,5 @@ jobs:
             --generate-notes \
             "dist/Wearsic-${GITHUB_REF_NAME}.apk" \
             "dist/wearsic-server-termux-${GITHUB_REF_NAME}.zip" \
+            "dist/wearsic-server-termux-${GITHUB_REF_NAME}.zip.sha256" \
             "dist/wearsic-server-${GITHUB_REF_NAME}.sh"

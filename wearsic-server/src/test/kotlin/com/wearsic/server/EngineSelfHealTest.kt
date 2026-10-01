@@ -156,11 +156,16 @@ class EngineSelfHealTest {
     // ---------------- Staging pipeline (real flow, local HTTP) ----------------
 
     /** Boots a tiny local HTTP server; returns (port, closer). */
-    private fun serve(releasesJson: String? = null, zipBytes: ByteArray? = null): Pair<Int, AutoCloseable> {
+    private fun serve(
+        releasesJson: String? = null,
+        zipBytes: ByteArray? = null,
+        sha256Text: String? = null,
+    ): Pair<Int, AutoCloseable> {
         val server = embeddedServer(ServerCIO, port = 0, host = "127.0.0.1") {
             routing {
                 get("/releases") { call.respondText(releasesJson!!, ContentType.Application.Json) }
                 get("/engine.zip") { call.respondBytes(zipBytes!!, ContentType.parse("application/zip")) }
+                get("/engine.zip.sha256") { call.respondText(sha256Text!!, ContentType.Text.Plain) }
             }
         }.start(wait = false)
         val port = runBlocking { server.resolvedConnectors().first().port }
@@ -169,10 +174,12 @@ class EngineSelfHealTest {
 
     @Test
     fun `checkForUpdate picks the newest newer release`(@TempDir tmp: File) = runTest {
+        // Releases now carry their published .zip.sha256 checksum assets —
+        // without one, auto-update refuses to even offer the release.
         val releasesJson = """
         [
-          {"tag_name":"v1.6.0","assets":[{"name":"wearsic-server-termux-v1.6.0.zip","browser_download_url":"http://x/1.6.0.zip"}]},
-          {"tag_name":"v1.8.1","assets":[{"name":"wearsic-server-termux-v1.8.1.zip","browser_download_url":"http://x/1.8.1.zip"}]},
+          {"tag_name":"v1.6.0","assets":[{"name":"wearsic-server-termux-v1.6.0.zip","browser_download_url":"http://x/1.6.0.zip"},{"name":"wearsic-server-termux-v1.6.0.zip.sha256","browser_download_url":"http://x/1.6.0.zip.sha256"}]},
+          {"tag_name":"v1.8.1","assets":[{"name":"wearsic-server-termux-v1.8.1.zip","browser_download_url":"http://x/1.8.1.zip"},{"name":"wearsic-server-termux-v1.8.1.zip.sha256","browser_download_url":"http://x/1.8.1.zip.sha256"}]},
           {"tag_name":"v1.9.0","assets":[{"name":"Wearsic-v1.9.0.apk","browser_download_url":"http://x/nope"}]}
         ]
         """.trimIndent()
@@ -189,6 +196,7 @@ class EngineSelfHealTest {
             assertNotNull(update)
             assertEquals("1.8.1", update!!.version)
             assertEquals("http://x/1.8.1.zip", update.zipUrl)
+            assertEquals("http://x/1.8.1.zip.sha256", update.sha256Url)
             assertEquals("1.8.1", updater.latestKnownVersion)
             assertNull(updater.lastCheckError)
         } finally {
@@ -229,14 +237,21 @@ class EngineSelfHealTest {
             zos.putNextEntry(ZipEntry("wearsic-server/lib/wearsic-server-1.8.0.jar"))
             zos.write("jarbytes".toByteArray())
             zos.closeEntry()
+            zos.putNextEntry(ZipEntry("wearsic-server/run-termux.sh"))
+            zos.write("#!/bin/sh\n".toByteArray())
+            zos.closeEntry()
         }
         val goodBytes = goodZip.readBytes()
+        val goodSha = EngineUpdater.sha256Of(goodZip)
         // Corrupt variant: chop the tail (central directory gone).
         val badBytes = goodBytes.copyOfRange(0, goodBytes.size - 60)
+        val badZip = File(tmp, "bad.zip").apply { writeBytes(badBytes) }
+        val badSha = EngineUpdater.sha256Of(badZip)
 
-        val (port, closer) = serve(zipBytes = goodBytes)
-        // Second server for the corrupt payload.
-        val (port2, closer2) = serve(zipBytes = badBytes)
+        val (port, closer) = serve(zipBytes = goodBytes, sha256Text = "$goodSha  good.zip")
+        // Second server: the corrupt payload with ITS OWN (valid) checksum —
+        // so this exercises the structural verification, not the checksum.
+        val (port2, closer2) = serve(zipBytes = badBytes, sha256Text = "$badSha  bad.zip")
         try {
             val updater = EngineUpdater(
                 client = HttpClient(CIO),
@@ -247,18 +262,25 @@ class EngineSelfHealTest {
             )
 
             // Corrupt download must be rejected and stage nothing.
-            assertNull(updater.downloadAndStage(RemoteUpdate("1.8.0", "http://127.0.0.1:$port2/engine.zip")))
+            assertNull(
+                updater.downloadAndStage(
+                    RemoteUpdate("1.8.0", "http://127.0.0.1:$port2/engine.zip", "http://127.0.0.1:$port2/engine.zip.sha256")
+                )
+            )
             assertFalse(updater.hasStagedUpdate())
             assertNotNull(updater.lastCheckError)
 
             // Good download stages and writes the supervisor state file.
-            val staged = updater.downloadAndStage(RemoteUpdate("1.8.0", "http://127.0.0.1:$port/engine.zip"))
+            val staged = updater.downloadAndStage(
+                RemoteUpdate("1.8.0", "http://127.0.0.1:$port/engine.zip", "http://127.0.0.1:$port/engine.zip.sha256")
+            )
             assertEquals("1.8.0", staged)
             assertTrue(updater.hasStagedUpdate())
             val state = updater.stagedState()
             assertEquals("1.8.0", state!!.version)
             assertEquals("1.7.0", state.previousVersion)
             assertEquals("staged", state.status)
+            assertEquals(goodSha, state.sha256)
             assertTrue(File(updater.stageDir, "wearsic-server/bin/wearsic-server").isFile)
         } finally {
             closer.close()

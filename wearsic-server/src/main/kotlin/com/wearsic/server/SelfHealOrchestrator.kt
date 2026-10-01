@@ -36,8 +36,12 @@ class SelfHealOrchestrator(
     private val restartAction: () -> Unit = ::scheduleProcessExit,
 ) {
     companion object {
-        /** Consecutive failed extractions before the canary decides. */
-        private const val FAILURE_TRIGGER = 6
+        /**
+         * Consecutive failed extractions before the canary decides. Public
+         * because /ready uses the SAME threshold to report "extractor not
+         * ready" — one definition of "engine broken", not two.
+         */
+        const val FAILURE_TRIGGER = 6
 
         /** Minimum gap between engine-broken restart attempts. */
         private const val RETRY_AFTER_RESTART_MS = 10 * 60 * 1000L

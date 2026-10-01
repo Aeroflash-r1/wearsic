@@ -60,6 +60,11 @@ data class ExtractionHealthDto(
     val failureRatePercent: Int = 0,
     val consecutiveFailures: Int = 0,
     val lastError: String? = null,
+    // Failure-classification context: WHEN each outcome last happened, so
+    // "YouTube broke the engine" (recent failures, long-run successes) can be
+    // told apart from "never extracted anything" and from transient outages.
+    val lastSuccessAtMillis: Long = 0,
+    val lastFailureAtMillis: Long = 0,
 )
 
 @Serializable
@@ -71,6 +76,24 @@ data class UpdateStatusDto(
     val lastCheckAtMillis: Long = 0,
     val lastError: String? = null,
     val stagedVersion: String? = null,
+    // Update/rollback loop visibility: how many times the current target has
+    // been staged, and why the supervisor last rolled back (if it ever did).
+    val updateAttempt: Int = 0,
+    val rollbackReason: String? = null,
+)
+
+/**
+ * Readiness ("can Wearsic currently serve music right now?") — the deeper
+ * counterpart to /health ("is the process alive?"). Deliberately cheap:
+ * no network, no extraction, no secrets.
+ */
+@Serializable
+data class ReadyResponse(
+    val ready: Boolean,
+    val database: Boolean,
+    val extractor: Boolean,
+    val transcoder: Boolean,
+    val engineVersion: String = ServerVersion.VERSION,
 )
 
 @Serializable

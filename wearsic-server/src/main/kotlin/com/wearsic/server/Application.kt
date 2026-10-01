@@ -246,7 +246,18 @@ fun Application.module(
             // timing cannot leak the key byte-by-byte.
             intercept(ApplicationCallPipeline.Plugins) {
                 if (apiKey != null) {
+                    // Primary contract is X-Wearsic-Key. Also accept a
+                    // standard Bearer token so generic HTTP clients and media
+                    // stacks can authenticate without custom-header support.
+                    // Never log or echo the credential.
                     val provided = call.request.headers["X-Wearsic-Key"]
+                        ?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                        ?: call.request.headers["Authorization"]
+                            ?.trim()
+                            ?.removePrefix("Bearer ")
+                            ?.trim()
+                            ?.takeIf { it.isNotEmpty() }
                     val providedBytes = provided?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
                     val ok = MessageDigest.isEqual(providedBytes, apiKey.toByteArray(Charsets.UTF_8))
                     if (!ok) {

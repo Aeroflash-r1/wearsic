@@ -68,11 +68,13 @@ open it, and paste this single line:
 pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/Aeroflash-r1/wearsic/main/install.sh | bash
 ```
 
-That one line does everything: installs Java + unzip, downloads the newest
-server release, sets it up in `~/wearsic-server`, **generates a secure API
-key for you** (no inventing or typing a secret by hand), keeps any existing
-database and API key, wires up **auto-start on reboot**, and starts the
-self-healing supervisor. At the end it prints the two things your watch
+That one line does everything: detects Termux/ARM64, installs Java +
+curl + unzip, downloads the newest server release, **verifies its published
+SHA-256**, sets it up in `~/wearsic-server` (staged, with automatic
+rollback), **generates a secure API key for you** (no inventing or typing a
+secret by hand), keeps any existing database and API key, wires up
+**auto-start on reboot**, starts the self-healing supervisor and
+health-checks it. At the end it prints the two things your watch
 needs — the **Server URL** and the **API key**. The installer is also bundled
 inside the release ZIP, so you can re-run it any time with `bash install.sh`.
 
@@ -115,12 +117,12 @@ ZIP_URL=$(curl -s https://api.github.com/repos/Aeroflash-r1/wearsic/releases/lat
 curl -L -o ~/wearsic-server-termux.zip "$ZIP_URL"
 ```
 
-Or, if you already know the latest release tag (e.g. `v1.1.0` — it must
+Or, if you already know the latest release tag (e.g. `v1.5.0` — it must
 match the newest release, which is why Option A is easier):
 
 ```bash
 curl -L -o ~/wearsic-server-termux.zip \
-  "https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-termux-v1.1.0.zip"
+  "https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-termux-v1.5.0.zip"
 ```
 
 ### Option B — copy from somewhere else
@@ -178,7 +180,7 @@ curl http://127.0.0.1:8080/health
 Expected response:
 
 ```json
-{"status":"ok","version":"1.1.0","serverName":"Wearsic Engine","transcoderAvailable":true}
+{"status":"ok","version":"1.5.0","serverName":"Wearsic Engine","transcoderAvailable":true}
 ```
 
 (The exact `version` value depends on the release you installed — it always
@@ -316,7 +318,7 @@ cloudflared tunnel --url http://localhost:8080
 ```
 
 That prints a `https://<random>.trycloudflare.com` URL. (`wearsic
-server public` prints both recipes any time.)
+public` prints both recipes any time.)
 
 *Prefer private instead? Section 5-B (Tailscale VPN) needs no public
 endpoint at all — but both devices need the Tailscale app.*
@@ -336,6 +338,8 @@ you need, no paths to remember:
 | Is it running? | `wearsic status` |
 | Live logs | `wearsic logs` |
 | Health JSON | `wearsic health` |
+| Can it serve music? | `wearsic ready` |
+| Engine version | `wearsic version` |
 | **Server URL + API key** | `wearsic url` |
 | Your WiFi IP | `wearsic ip` |
 | Show / change API key | `wearsic api-key [new]` |
@@ -344,11 +348,10 @@ you need, no paths to remember:
 | Set YouTube cookie | `wearsic cookies [str]` |
 | **Public URL (Tailscale Funnel, stable)** | `wearsic funnel` |
 | Public URL recipes | `wearsic public` |
-
-(The classic nested form still works: `wearsic server start` etc.)
 | Free disk space | `df -h ~` |
 
-(The raw supervisor also still works: `cd ~/wearsic-server &&
+(The classic nested form still works: `wearsic server start` etc.
+The raw supervisor also still works: `cd ~/wearsic-server &&
 ./run-termux.sh` runs it in the foreground; `Ctrl+C` stops it.)
 
 Where your data lives:
@@ -372,13 +375,14 @@ inside the server. The server now heals itself:
    discarded), and stages it.
 3. The server exits; the supervisor applies the update and boots the new
    engine automatically. Your favorites and playlists are untouched (they live
-   in `wearsic.db`), and the previous build is kept as `bin.bak`/`lib.bak`.
+   in `wearsic.db`), and the previous build is kept as `bin.prev`/`lib.prev`.
 
-Rollback if a new build misbehaves:
+Rollback if a new build misbehaves (normally `wearsic update` does this
+automatically when the new engine fails its health check):
 ```bash
 cd ~/wearsic-server
 mv bin bin.new && mv lib lib.new
-mv bin.bak bin && mv lib.bak lib
+mv bin.prev bin && mv lib.prev lib
 bash run-termux.sh
 ```
 
@@ -401,7 +405,7 @@ curl -s http://127.0.0.1:8080/health
 | `Missing wearsic-server binary` | You're not inside `~/wearsic-server`; re-extract the zip fully (`bin/` and `lib/` must sit next to `run-termux.sh`) |
 | Something is wrong and I don't know what | Run **`wearsic doctor`** — it checks Java, ffmpeg, install, process, port, database, API key, health, readiness, network, storage, Termux, Tailscale/Funnel and the extractor, and exits 0 only when READY |
 | `wearsic status` says "not running" | Expected exit code **3** (0 = healthy, 4 = running but unhealthy) — scripts can branch on it |
-| Auto-update refuses a new version | Releases without a published `.zip.sha256` are never auto-installed (authenticity). Update manually with the zip + installer; from the first checksummed release on, auto-update resumes |
+| Auto-update refuses a new version | Releases without a published `.zip.sha256` are never auto-installed (authenticity). Releases since v1.4.0 all publish checksums — update manually with `wearsic update` or the installer |
 | Server updated and now won't start | The supervisor auto-rolls back to the previous engine (see `wearsic-state/update-history.log`). A version that keeps failing is staged at most 3 times, then a manual update is required |
 | YouTube cookie safety | The cookie is never logged and never returned by the API (`hasCookie` only). It is stored in `wearsic.db`/`.env` — Termux offers no OS secure storage, so the phone's lock screen + user account are the security boundary |
 | `Permission denied` on start | `chmod +x run-termux.sh bin/wearsic-server` |

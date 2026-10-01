@@ -48,7 +48,7 @@ X-Wearsic-Key: <key>
 ```json
 {
   "status": "ok",
-  "version": "1.1.0",
+  "version": "1.5.0",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -63,6 +63,29 @@ with the Gradle build/JAR name); `transcoderAvailable` is informational and
 reports whether ffmpeg was found for Opus/WebM→AAC transcoding;
 `extraction`/`canaryHealthy`/`update` expose the self-healing engine
 state (see `wearsic-server/README.md`).
+
+### 1-b. Readiness
+
+- **GET** `/ready` — "can Wearsic serve music right now?" The deeper
+  counterpart to `/health` (used by `wearsic doctor` and monitoring).
+  Deliberately cheap (one indexed DB probe, in-memory counters) and
+  exposes no secrets.
+- **Response** `200 OK`:
+
+```json
+{
+  "ready": true,
+  "database": true,
+  "extractor": true,
+  "transcoder": true,
+  "engineVersion": "1.5.0"
+}
+```
+
+`ready` is `database && extractor`; `transcoder` is informational (ffmpeg
+presence — missing only affects rare Opus/WebM-only songs). On engines
+older than v1.4.0 the route does not exist (404) — treat that as "unknown",
+not "not ready".
 
 ### 2. Music Search
 
@@ -141,6 +164,14 @@ Note: album `id` is a full playlist URL, not a bare id.
   - Special case: `videoId == "*"` deletes the entire playlist (FK cascade).
     This is how the app's "remove playlist" works. Implemented directly in
     `Database.deletePlaylistTrack`.
+
+### 10. YouTube Cookie Config (bot-challenge workaround)
+
+- **GET** `/api/config/youtube-cookie` → `{ "hasCookie": true|false }`
+  — presence only; the cookie value is **never** returned or logged.
+- **POST** `/api/config/youtube-cookie` with `{ "cookie": "SID=...; HSID=..." }`
+  → `{ "hasCookie": true|false }`. Persists the cookie (`settings` table);
+  empty string clears it. Same endpoint the `wearsic cookies` CLI uses.
 
 ---
 

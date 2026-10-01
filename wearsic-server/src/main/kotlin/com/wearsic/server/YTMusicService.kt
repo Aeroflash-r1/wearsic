@@ -170,7 +170,10 @@ class YTMusicService(
         // anywhere in the tree is a candidate song row.
         val out = mutableListOf<YtmTrack>()
         collectSongRenderers(root, out, limit)
-        return out
+        // The same song can appear in several shelves of one response; a
+        // duplicate row must never displace a second distinct song from the
+        // (limited) result page.
+        return out.distinctBy { it.videoId }
     }
 
     private fun collectSongRenderers(
@@ -213,9 +216,18 @@ class YTMusicService(
             ?.mapNotNull { it.asObject() } ?: emptyList()
         val title = titleRuns.firstOrNull()?.getString("text")
             ?.takeIf { it.isNotBlank() } ?: return null
-        var videoId = titleRuns.firstOrNull()
-            ?.getObject("navigationEndpoint")
-            ?.getObject("watchEndpoint")?.getString("videoId")
+        val titleNav = titleRuns.firstOrNull()?.getObject("navigationEndpoint")
+        val titleVideoId = titleNav?.getObject("watchEndpoint")?.getString("videoId")
+        // Album / artist / playlist CARD rows link their title to a BROWSE
+        // page, not a watch page. Their thumbnail overlay play button points
+        // at SOME OTHER video (an album's first track, a radio seed, …), and
+        // trusting that fallback id used to leak into search results as a
+        // "song" whose tap played the WRONG track. A row whose title is not a
+        // playable song is never a song result.
+        if (titleVideoId.isNullOrBlank() && titleNav?.getObject("browseEndpoint") != null) {
+            return null
+        }
+        var videoId = titleVideoId
         if (videoId.isNullOrBlank()) {
             videoId = renderer.getObject("overlay")
                 ?.getObject("musicItemThumbnailOverlayRenderer")

@@ -250,6 +250,13 @@ class YoutubeGateway(
                     )
                 }
                 .take(MAX_RESULTS)
+                // YouTube's album search is name-fuzzy: "Thriller Michael
+                // Jackson" happily returns same-named albums by unrelated
+                // artists. Rank by how well each result matches the query's
+                // name AND publisher tokens so the right album from the
+                // right artist leads, and matching-but-wrong-artist junk is
+                // trimmed (see rankAlbums).
+                .let { rankAlbums(key, it) }
         }
             .onSuccess { healthMeter?.recordSuccess() }
             .onFailure { healthMeter?.recordFailure("albums: ${it.message}") }
@@ -453,7 +460,61 @@ internal fun extractVideoId(url: String?): String? {
     return null
 }
 
-/** Picks a reasonably sized thumbnail from NewPipeExtractor's Image list. */
+/**
+ * Picks the SHARPEST thumbnail from NewPipeExtractor's Image list (the
+ * largest one). The old min-height pick grabbed the 60px icon, which the
+ * watch then displayed upscaled — the single biggest source of the
+ * "blurry, cheap" artwork look.
+ */
 internal fun bestThumbnailUrl(thumbnails: List<Image>?): String? =
-    thumbnails?.minByOrNull { it.height.takeIf { h -> h > 0 } ?: Int.MAX_VALUE }?.url
+    thumbnails?.maxByOrNull { it.height.takeIf { h -> h > 0 } ?: 0 }?.url
         ?: thumbnails?.firstOrNull()?.url
+
+/** Splits [text] into lowercase alphanumeric tokens ("AC/DC — Live!" -> ac dc live). */
+private fun queryTokens(text: String): Set<String> =
+    text.lowercase()
+        .split(Regex("[^a-z0-9]+"))
+        .filter { it.isNotBlank() }
+        .toSet()
+
+/**
+ * Album search relevance ranking.
+ *
+ * YouTube's "music_albums" search is name-fuzzy and happily returns
+ * same-named albums by completely different artists/publishers. Ranking:
+ *
+ *  1. If ANY result contains every query token across name + uploader
+ *     (e.g. "Thriller Michael Jackson"), those fully-matching albums are the
+ *     answer set — the wrong-artist namesakes are dropped entirely.
+ *  2. Otherwise fall back to partial scoring (name matches weigh more than
+ *     uploader matches, exact normalized name match leads) and trim results
+ *     that share no token at all with the query.
+ *  3. If NOTHING matches the query (fuzzy/other-script queries), keep the
+ *     original order — never nuke the result page over an imperfect query.
+ */
+internal fun rankAlbums(query: String, albums: List<AlbumDto>): List<AlbumDto> {
+    val qTokens = queryTokens(query)
+    if (albums.isEmpty() || qTokens.isEmpty()) return albums
+
+    fun nameTokensOf(a: AlbumDto) = queryTokens(a.name)
+    fun uploaderTokensOf(a: AlbumDto) = queryTokens(a.uploader)
+    fun scoreOf(a: AlbumDto): Int {
+        val name = nameTokensOf(a)
+        val uploader = uploaderTokensOf(a)
+        var score = qTokens.count { it in name } * 2 + qTokens.count { it in uploader }
+        if (name == qTokens) score += 4 // exact normalized album-name match
+        return score
+    }
+
+    val fullyMatching = albums.filter { a ->
+        val all = nameTokensOf(a) + uploaderTokensOf(a)
+        qTokens.all { it in all }
+    }
+    val pool = if (fullyMatching.isNotEmpty()) fullyMatching else albums
+    val best = pool.maxOf { scoreOf(it) }
+    if (best <= 0) return albums
+
+    return pool
+        .filter { scoreOf(it) > 0 }
+        .sortedByDescending { scoreOf(it) } // stable: ties keep search order
+}

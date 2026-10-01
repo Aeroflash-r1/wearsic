@@ -27,6 +27,21 @@ PORT=8080 WEARSIC_DB_PATH="$PWD/wearsic.db" ./run-termux.sh
 
 `run-termux.sh` finds the fresh source build at `build/install/wearsic-server/bin/wearsic-server` automatically. See `SETUP.md` for details.
 
+### From the single-file bundle (`wearsic-server-v<version>.sh`) — simplest
+
+One download contains the ENTIRE server (engine + launcher + CLI):
+
+```bash
+pkg install -y openjdk-17
+chmod +x wearsic-server-v*.sh
+./wearsic-server-v*.sh install     # extracts to ~/wearsic-server, generates an API key
+wearsic server start               # one command from here on
+```
+
+`wearsic server start|stop|restart|status|logs|health|url|ip` manages
+everything. Re-running `install` upgrades in place and keeps `wearsic.db` +
+`.env`. `./wearsic-server-v*.sh uninstall` removes it.
+
 ### From the ready-made Termux ZIP (`wearsic-server-termux-v<version>.zip`)
 
 1. Install Termux packages: `pkg install openjdk-17 unzip`

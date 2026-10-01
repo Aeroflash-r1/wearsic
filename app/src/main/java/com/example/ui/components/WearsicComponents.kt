@@ -25,10 +25,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -36,9 +32,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,9 +44,6 @@ import androidx.wear.compose.material3.Text
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicGlassBorder
 import com.example.ui.theme.WearsicGlassFill
-import com.example.ui.theme.WearsicGradientEnd
-import com.example.ui.theme.WearsicGradientMid
-import com.example.ui.theme.WearsicGradientStart
 import com.example.ui.theme.WearsicLavenderContainer
 import com.example.ui.theme.WearsicSurface
 import com.example.ui.theme.WearsicSurfaceBorder
@@ -65,9 +55,7 @@ import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicTextWhite60
 import com.example.ui.theme.WearsicTextWhite80
 import com.example.ui.theme.WearsicVibrantLavender
-import com.example.ui.theme.WearsicViolet
 import com.example.ui.util.WearsicMotion
-import com.example.ui.util.rememberSpringIn
 import com.example.ui.util.wearsicEntrance
 
 /**
@@ -104,20 +92,10 @@ fun WearsicPrimaryPillButton(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .shadow(3.dp, CircleShape)
             .clip(CircleShape)
+            // Flat fill — no sheen gradients, no drop shadows. Depth fakery
+            // reads as "cheap" on a small OLED and costs overdraw.
             .background(backgroundColor)
-            // Depth sheen: a light top edge and a faint dark base make the pill
-            // read as a physical, raised surface instead of a flat rectangle.
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color.White.copy(alpha = 0.18f),
-                        Color.Transparent,
-                        Color.Black.copy(alpha = 0.10f)
-                    )
-                )
-            )
             .clickable(interactionSource = interaction, indication = null) {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onClick()
@@ -217,14 +195,8 @@ fun WearsicSecondaryPillButton(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .shadow(2.dp, CircleShape)
             .clip(CircleShape)
             .background(WearsicGlassFill)
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color.White.copy(alpha = 0.12f), Color.Transparent, Color.Black.copy(alpha = 0.12f))
-                )
-            )
             .border(1.dp, WearsicGlassBorder, CircleShape)
             .clickable(interactionSource = interaction, indication = null) {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -388,11 +360,6 @@ fun WearsicGlassPanel(
         modifier = modifier
             .clip(shape)
             .background(WearsicGlassFill)
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color.White.copy(alpha = 0.10f), Color.White.copy(alpha = 0.02f))
-                )
-            )
             .border(1.dp, WearsicGlassBorder, shape),
         contentAlignment = Alignment.Center,
         content = content
@@ -402,10 +369,10 @@ fun WearsicGlassPanel(
 /**
  * Screen title header styled for round Wear OS displays.
  *
- * The signature Wearsic purple lives here: a soft lavender→violet
- * glow behind the title and the little gradient accent bar drawn in
- * beneath it. The title itself stays plain white text — readable on
- * every screen — with the purple gradient carrying the identity.
+ * Deliberately plain and confident: bold white title, muted secondary line.
+ * No gradient glyphs, no glow washes, no accent bars — decorative depth
+ * fakery reads as "template" and costs battery on OLED. Typography and
+ * spacing carry the identity.
  */
 @Composable
 fun WearsicScreenHeader(
@@ -420,97 +387,33 @@ fun WearsicScreenHeader(
             .wearsicEntrance(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Soft radial glow behind the title — the signature
-        // lavender→violet wash, drawn with drawWithCache so it adds
-        // depth without taking up any layout height and without
-        // re-allocating the brush on every frame.
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.drawWithCache {
-                // Built once per layout (drawWithCache only reruns when the
-                // size changes), so the glow is not re-allocated on every
-                // frame the header is drawn during scrolling or the title's
-                // entrance animation.
-                val radius = size.maxDimension * 1.8f
-                val glowCenter = Offset(size.width / 2f, size.height / 2f)
-                val glow = Brush.radialGradient(
-                    colors = listOf(
-                        WearsicVibrantLavender.copy(alpha = 0.26f),
-                        WearsicViolet.copy(alpha = 0.12f),
-                        Color.Transparent
-                    ),
-                    center = glowCenter,
-                    radius = radius
-                )
-                onDrawBehind {
-                    drawCircle(brush = glow, radius = radius, center = glowCenter)
-                }
-            }
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = title,
-                    color = WearsicTextPrimary,
-                    fontSize = 23.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    letterSpacing = (-0.5).sp
-                )
-            }
-        }
-        // Signature gradient accent bar under every screen title,
-        // drawn in on entry: the app's own lavender→mid-violet→
-        // deep-violet gradient, the same one used by hero cards
-        // and primary pills.
-        val barWidth = rememberSpringIn(to = 30f, delayMillis = 40)
-        Box(
-            modifier = Modifier
-                .padding(top = 6.dp)
-                .width(barWidth.dp)
-                .height(3.dp)
-                .clip(CircleShape)
-                .background(SignatureGradient)
+        Text(
+            text = title,
+            color = WearsicTextPrimary,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            letterSpacing = (-0.4).sp
         )
         if (subtitle != null) {
-            // The subheading carries the signature gradient purple —
-            // lavender → mid-violet → deep violet painted into the
-            // glyphs themselves, never a flat solid fill.
-            val gradientSubtitle = remember(subtitle) { wearsicGradientText(subtitle) }
             Text(
-                text = gradientSubtitle,
+                text = subtitle,
+                color = WearsicTextWhite60,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Normal,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 6.dp)
+                modifier = Modifier.padding(top = 4.dp)
             )
         }
     }
 }
 
 /**
- * The app's signature gradient purple (lavender → mid-violet → deep violet)
- * as a horizontal brush. Immutable and top-level, so every screen title,
- * accent bar and section heading shares one instance instead of allocating a
- * new brush on each composition.
- */
-private val SignatureGradient: Brush =
-    Brush.horizontalGradient(listOf(WearsicGradientStart, WearsicGradientMid, WearsicGradientEnd))
-
-/** Wraps [text] in a span painted with the signature gradient purple. */
-private fun wearsicGradientText(text: String): AnnotatedString =
-    buildAnnotatedString {
-        pushStyle(SpanStyle(brush = SignatureGradient))
-        append(text)
-        pop()
-    }
-
-/**
  * Section subheading used inside lists (e.g. "Recently Played").
  *
- * Reads as the app's own: a small icon plus the section label painted
- * in the signature gradient purple — the same lavender → mid-violet →
- * deep violet gradient as the screen-title accent bar — with optional
- * trailing content (a count, a "See all", …) in muted white.
+ * Quiet by design: a small muted icon plus an uppercase, letter-spaced label
+ * in secondary white — the way production music apps separate sections
+ * without shouting. Optional trailing content (a count, a "See all", …).
  */
 @Composable
 fun WearsicSectionTitle(
@@ -530,16 +433,17 @@ fun WearsicSectionTitle(
             Icon(
                 imageVector = icon,
                 contentDescription = iconContentDescription,
-                tint = WearsicVibrantLavender,
-                modifier = Modifier.size(14.dp)
+                tint = WearsicTextWhite60,
+                modifier = Modifier.size(12.dp)
             )
             Spacer(modifier = Modifier.width(6.dp))
         }
-        val gradientLabel = remember(label) { wearsicGradientText(label) }
         Text(
-            text = gradientLabel,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold
+            text = label.uppercase(),
+            color = WearsicTextWhite60,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.2.sp
         )
         if (trailing != null) {
             Spacer(modifier = Modifier.weight(1f))

@@ -28,3 +28,4 @@ KEYSTORE_BASE64.txt
 *.db
 *.db-shm
 *.db-wal
+/dist

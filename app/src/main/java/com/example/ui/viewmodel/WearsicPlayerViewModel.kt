@@ -495,6 +495,12 @@ class WearsicPlayerViewModel(
 
     private fun warmUpStream(nextTrack: Track) {
         if (!nextTrack.mediaUri.startsWith("http")) return
+        // The playback state flow re-emits every ~2s while playing; without
+        // this guard every emission re-fired a Range request to /api/stream —
+        // 30 req/min of pure noise that burned the server's stream rate limit
+        // (the real request for the NEXT track then got throttled) and made
+        // the watch's radio work for nothing. Warm each target at most once.
+        if (nextTrack.id == lastWarmUpTrackId) return
         if (!isNetworkAvailable()) {
             lastWarmUpTrackId = nextTrack.id
             return

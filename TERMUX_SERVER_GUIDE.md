@@ -22,7 +22,37 @@ it is detected via `/health` checks every 30 s and killed + restarted, and
 
 ---
 
-## ⚡ Quick start — one line (recommended)
+## ⚡ Quick start — one file (recommended)
+
+Install **Termux from F-Droid** (https://f-droid.org/en/packages/com.termux/),
+then download the single server file from the GitHub Release
+(`wearsic-server-<tag>.sh` — the WHOLE server is inside that one file) and:
+
+```bash
+pkg install -y openjdk-17
+cp ~/storage/downloads/wearsic-server-*.sh ~/wearsic-server.sh   # after termux-setup-storage
+chmod +x ~/wearsic-server.sh
+~/wearsic-server.sh install
+```
+
+That's the entire setup. The install extracts the full server into
+`~/wearsic-server`, **generates a secure API key** (no inventing a secret by
+hand), and puts the one `wearsic` command on your PATH. From then on it's a
+single command for everything:
+
+```bash
+wearsic server start     # start (self-healing supervisor)
+wearsic server status    # running? healthy? which version?
+wearsic server url       # Server URL + API key for the watch
+wearsic server stop      # stop
+```
+
+(The downloaded file forwards to the same place — `~/wearsic-server.sh
+start` works too.) Re-running `install` later upgrades in place and keeps
+your database and API key. When it says *"server started"*, skip ahead to
+**Section 5** — connect your watch.
+
+## ⚡ Quick start — one line (alternative)
 
 Install **Termux from F-Droid** (https://f-droid.org/en/packages/com.termux/),
 open it, and paste this single line:
@@ -39,7 +69,7 @@ self-healing supervisor. At the end it prints the two things your watch
 needs — the **Server URL** and the **API key**. The installer is also bundled
 inside the release ZIP, so you can re-run it any time with `bash install.sh`.
 
-When it says *"server started"*, skip ahead to:
+When the one-liner says *"server started"*, skip ahead to:
 
 - **Section 4** — your API key (already set; just copy it to the watch —
   re-show it any time with `wearsic server url`),

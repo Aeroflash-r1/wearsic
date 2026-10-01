@@ -68,6 +68,28 @@ class YTMusicServiceTest {
 
 
     @Test
+    fun `parseSearchResponse drops album card rows that would play the wrong track`() {
+        // "Rumours" is an ALBUM card row: its title links to a browse page and
+        // its overlay play button points at the album's first video
+        // (ALBUMFIRST1). Neither that row nor its leaked videoId may surface
+        // as a playable song — tapping it used to play the WRONG track.
+        val tracks = service.parseSearchResponse(CARD_AND_DUPLICATE_FIXTURE, 10)
+        assertEquals(listOf("NZ3Ck43m_ZY", "H7UMRkp7m80"), tracks.map { it.videoId })
+        assertTrue(tracks.none { it.title == "Rumours" })
+        assertTrue(tracks.none { it.videoId == "ALBUMFIRST1" })
+    }
+
+    @Test
+    fun `parseSearchResponse dedupes the same song across shelves`() {
+        // The fixture repeats "Weather With You" (same videoId) in a second
+        // shelf; it must appear exactly once and must not consume a second
+        // slot of the limited result page.
+        val tracks = service.parseSearchResponse(CARD_AND_DUPLICATE_FIXTURE, 10)
+        assertEquals(2, tracks.size)
+        assertEquals(1, service.parseSearchResponse(CARD_AND_DUPLICATE_FIXTURE, 2).size)
+    }
+
+    @Test
     fun `parseSearchResponse respects limit and tolerates garbage`() {
         assertEquals(1, service.parseSearchResponse(SEARCH_FIXTURE, 1).size)
         assertEquals(0, service.parseSearchResponse("not json", 10).size)
@@ -76,6 +98,13 @@ class YTMusicServiceTest {
     }
 
     companion object {
+        private const val SONG_ROW_1 = """{"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Weather With You", "navigationEndpoint": {"watchEndpoint": {"videoId": "NZ3Ck43m_ZY"}}}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Crowded House"}, {"text": " \u2022 "}, {"text": "3:45"}]}}}], "playlistItemData": {"videoId": "NZ3Ck43m_ZY"}}}"""
+        private const val SONG_ROW_2 = """{"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Dont Dream Its Over", "navigationEndpoint": {"watchEndpoint": {"videoId": "H7UMRkp7m80"}}}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Crowded House"}, {"text": " \u2022 "}, {"text": "3:57"}]}}}]}}"""
+        private const val ALBUM_CARD_ROW = """{"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Rumours", "navigationEndpoint": {"browseEndpoint": {"browseId": "MPREb_album"}}}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Fleetwood Mac"}, {"text": " \u2022 "}, {"text": "1977"}]}}}], "overlay": {"musicItemThumbnailOverlayRenderer": {"content": {"musicPlayButtonRenderer": {"playNavigationEndpoint": {"watchEndpoint": {"videoId": "ALBUMFIRST1"}}}}}}, "playlistItemData": {"videoId": "ALBUMFIRST1"}}}"""
+
+        private val CARD_AND_DUPLICATE_FIXTURE =
+            """{"contents": {"sectionListRenderer": {"contents": [{"musicShelfRenderer": {"contents": [$ALBUM_CARD_ROW, $SONG_ROW_1]}}, {"musicShelfRenderer": {"contents": [$SONG_ROW_1, $SONG_ROW_2]}}]}}}"""
+
         private const val SEARCH_FIXTURE = """
 {"contents": {"tabbedSearchResultsRenderer": {"tabs": [{"tabRenderer": {"content": {"sectionListRenderer": {"contents": [{"musicShelfRenderer": {"title": {"runs": [{"text": "Songs"}]}, "contents": [{"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Weather With You", "navigationEndpoint": {"watchEndpoint": {"videoId": "NZ3Ck43m_ZY"}}}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Crowded House"}, {"text": " • "}, {"text": "Woodface", "navigationEndpoint": {"browseEndpoint": {"browseId": "MPREb_x", "browseEndpointContextSupportedConfigs": {"browseEndpointContextMusicConfig": {"pageType": "MUSIC_PAGE_TYPE_ALBUM"}}}}}, {"text": " • "}, {"text": "3:45"}]}}}], "thumbnail": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": [{"url": "https://example.com/w60-h60.jpg", "width": 60}, {"url": "https://example.com/w120-h120.jpg", "width": 120}]}}}, "playlistItemData": {"videoId": "NZ3Ck43m_ZY"}}}, {"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "NoId Song"}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Nobody"}, {"text": " • "}, {"text": "Single"}]}}}]}}, {"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Dont Dream Its Over", "navigationEndpoint": {"watchEndpoint": {"videoId": "H7UMRkp7m80"}}}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Crowded House"}, {"text": " • "}, {"text": "3:57"}]}}}]}}]}}]}}}}]}}}
 """

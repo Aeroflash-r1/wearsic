@@ -77,6 +77,17 @@ class MetadataSearchOrchestrator(
         return youtube.search(query)
     }
 
+    /**
+     * Warms the stream cache for already-known videoIds (album/playlist open,
+     * radio results): by the time the user reads the list and taps, the first
+     * tracks resolve instantly instead of queueing a cold extraction.
+     */
+    fun prefetchVideoIds(videoIds: List<String>) {
+        val ids = videoIds.filter { it.isNotBlank() && !it.startsWith(LEGACY_IT_PREFIX) }
+        if (ids.isEmpty()) return
+        prefetch(ids.map { YtmTrack(videoId = it) })
+    }
+
     private var prefetchJob: Job? = null
 
     /**

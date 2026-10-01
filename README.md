@@ -178,10 +178,12 @@ The Wearsic watch application is a **lightweight streaming client**. To protect 
 1. **test** — app Robolectric tests **plus** `:wearsic-server:test` (a broken
    server cannot merge silently while Android tests pass).
 2. **build-debug** — unsigned debug APK uploaded as a workflow artifact.
-3. **release** *(tag pushes only, `v*`)* — signed release APK **and** a fresh
-   source-built server ZIP (`wearsic-server-termux-<tag>.zip`) attached to a
-   GitHub Release; the packaged server is booted and its `/health` version is
-   verified before publishing.
+3. **release** *(tag pushes only, `v*`)* — signed release APK **and** the
+   server in two shapes, both attached to the GitHub Release and verified by
+   booting + checking `/health` before publishing:
+   `wearsic-server-<tag>.sh` (**single file** — the whole server inside one
+   download, installed and managed with one `wearsic` command) and the
+   source-built ZIP (`wearsic-server-termux-<tag>.zip`).
 
 One-time setup for releases — add these repository **secrets**:
 

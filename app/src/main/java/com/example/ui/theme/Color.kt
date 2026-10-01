@@ -1,6 +1,5 @@
 package com.example.ui.theme
 
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.wear.compose.material3.ColorScheme
 
@@ -8,16 +7,13 @@ import androidx.wear.compose.material3.ColorScheme
 val WearsicBlack = Color(0xFF000000)
 
 /**
- * Shared app backdrop: a very subtle violet-tinted vertical gradient instead
- * of flat black, so every screen gains a little depth without stealing
- * attention from the content. Applied by every screen's ScreenScaffold.
+ * Shared app backdrop: PURE BLACK on purpose. The watch has an OLED panel —
+ * black pixels are switched off, so a black backdrop is measurably kinder to
+ * battery and thermals than any tinted/gradient background, and it is what
+ * production music apps on Wear OS ship. Applied by every screen's
+ * ScreenScaffold.
  */
-val WearsicAppBackground = Brush.verticalGradient(
-    0.00f to Color(0xFF17142A),
-    0.35f to Color(0xFF0C0A16),
-    0.70f to Color(0xFF08070F),
-    1.00f to Color(0xFF050408)
-)
+val WearsicAppBackground: Color = WearsicBlack
 val WearsicCanvasDark = Color(0xFF0A0A0A)
 val WearsicSurface = Color(0xFF1C1B1F)
 val WearsicSurfaceActive = Color(0xFF2C2B2F)
@@ -37,11 +33,6 @@ val WearsicLavenderContainer = Color(0xFF382959)
 val WearsicSurfaceRaised = Color(0xFF26242B)
 val WearsicGlow = Color(0x33D0BCFF)          // lavender 20%
 val WearsicGlowWarm = Color(0x2E8A5CF6)      // violet 18%
-
-// Signature gradient stops (used by titles, hero cards and primary pills).
-val WearsicGradientStart = Color(0xFFD9C8FF)
-val WearsicGradientMid = Color(0xFFB69CFF)
-val WearsicGradientEnd = Color(0xFF8A5CF6)
 
 // Per-screen accents. Each screen's header medallion + glow uses one of these
 // so the screens read as distinct places instead of one identical list.

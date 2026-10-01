@@ -290,7 +290,11 @@ fun Application.module(
                     call.respond(HttpStatusCode.NotFound, ErrorResponse("Could not match '$requestedId' to a playable source"))
                     return@get
                 }
-                call.respond(RelatedResponse(gateway.related(realVideoId)))
+                val related = gateway.related(realVideoId)
+                // Radio plays its top results back-to-back: warm the first few
+                // streams so the hand-off between songs is instant.
+                searchOrchestrator.prefetchVideoIds(related.take(2).map { it.videoId })
+                call.respond(RelatedResponse(related))
             }
 
             get("/search/albums") {
@@ -308,6 +312,11 @@ fun Application.module(
                 if (result == null) {
                     call.respond(HttpStatusCode.NotFound, ErrorResponse("Could not resolve playlist"))
                 } else {
+                    // Albums/playlists are played top-down: warm the first
+                    // tracks' streams while the watch renders the list, so
+                    // the tap on track 1 hits a hot cache instead of queueing
+                    // a cold extraction (the single biggest play-latency win).
+                    searchOrchestrator.prefetchVideoIds(result.tracks.take(2).map { it.videoId })
                     call.respond(result)
                 }
             }

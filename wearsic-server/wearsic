@@ -117,7 +117,9 @@ cmd_start() {
     say "Supervisor is running — waiting for the server to come up…"
   else
     say "Starting the server (leave WiFi on; battery unrestricted for Termux)…"
-    ( cd "$DEST" && nohup "$RUN" >/dev/null 2>&1 & )
+    # bash explicitly so the launcher starts on any system (its shebang
+    # points at the Termux bash path); identical behavior on Termux.
+    ( cd "$DEST" && nohup bash "$RUN" >/dev/null 2>&1 & )
   fi
   # Wait up to ~30s for /health (the supervisor installs ffmpeg on
   # first start, which can take a while).

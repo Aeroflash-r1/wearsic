@@ -129,10 +129,12 @@ jobs:
         run: |
           mkdir -p dist
           # Signed release APK built moments ago in this same job.
-          cp app/build/outputs/apk/release/app-release.apk "dist/Wearsic-${GITHUB_REF_NAME}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/Wearsic-${RELEASE_REF}.apk"
           # Server installDist output built moments ago in this same job.
           VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
-          echo "Packaging server version $VERSION"
+          RELEASE_REF="${GITHUB_REF_NAME}"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
+          echo "Packaging server version $VERSION as $RELEASE_REF"
           STAGE="dist/wearsic-server"
           mkdir -p "$STAGE"
           cp -r wearsic-server/build/install/wearsic-server/bin "$STAGE/"
@@ -144,23 +146,25 @@ jobs:
           cp wearsic-server/wearsic "$STAGE/"
           cp wearsic-server/.env.example "$STAGE/"
           cp wearsic-server/README.md "$STAGE/"
-          (cd dist && zip -qr "wearsic-server-termux-${GITHUB_REF_NAME}.zip" wearsic-server)
+          (cd dist && zip -qr "wearsic-server-termux-${RELEASE_REF}.zip" wearsic-server)
           # Authenticity: publish the zip's SHA-256 alongside it. The server's
           # auto-updater REFUSES to install any release without this file.
-          (cd dist && sha256sum "wearsic-server-termux-${GITHUB_REF_NAME}.zip" \
-            > "wearsic-server-termux-${GITHUB_REF_NAME}.zip.sha256")
+          (cd dist && sha256sum "wearsic-server-termux-${RELEASE_REF}.zip" \
+            > "wearsic-server-termux-${RELEASE_REF}.zip.sha256")
           # Single-file server bundle: ONE download containing everything
           # (engine + launcher + CLI), installed and managed with one command.
           bash wearsic-server/package-single-file.sh \
             wearsic-server/build/install/wearsic-server \
-            "dist/wearsic-server-${GITHUB_REF_NAME}.sh"
+            "dist/wearsic-server-${RELEASE_REF}.sh"
           ls -la dist/
 
       - name: Verify packaged server (boot + /health version)
         run: |
           VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
+          RELEASE_REF="${GITHUB_REF_NAME}"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
           # The published checksum must actually match the published zip.
-          (cd dist && sha256sum -c "wearsic-server-termux-${GITHUB_REF_NAME}.zip.sha256")
+          (cd dist && sha256sum -c "wearsic-server-termux-${RELEASE_REF}.zip.sha256")
           cd dist/wearsic-server
           PORT=18099 WEARSIC_DB_PATH=/tmp/verify.db nohup ./bin/wearsic-server > /tmp/verify.log 2>&1 &
           SERVER_PID=$!
@@ -177,7 +181,7 @@ jobs:
       - name: Verify single-file bundle (self-extract + boot + /health)
         run: |
           VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
-          BUNDLE="dist/wearsic-server-${GITHUB_REF_NAME}.sh"
+          BUNDLE="dist/wearsic-server-${RELEASE_REF}.sh"
           rm -rf /tmp/bundle-home && mkdir -p /tmp/bundle-home
           HOME=/tmp/bundle-home WEARSIC_DIR=/tmp/bundle-home/wearsic-server bash "$BUNDLE" install
           test -x /tmp/bundle-home/wearsic-server/bin/wearsic-server
@@ -199,18 +203,26 @@ jobs:
       - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Wearsic-release-${{ github.ref_name }}-${{ github.sha }}
-          path: dist/Wearsic-${{ github.ref_name }}.apk
+          name: Wearsic-release-${{ github.sha }}
+          path: dist/Wearsic-v*.apk
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "Wearsic $GITHUB_REF_NAME" \
+          VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
+          RELEASE_REF="$GITHUB_REF_NAME"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
+          if gh release view "$RELEASE_REF" >/dev/null 2>&1; then
+            echo "Release $RELEASE_REF already exists; nothing to publish."
+            exit 0
+          fi
+          gh release create "$RELEASE_REF" \
+            --target "$GITHUB_SHA" \
+            --title "Wearsic $RELEASE_REF" \
             --generate-notes \
-            "dist/Wearsic-${GITHUB_REF_NAME}.apk" \
-            "dist/wearsic-server-termux-${GITHUB_REF_NAME}.zip" \
-            "dist/wearsic-server-termux-${GITHUB_REF_NAME}.zip.sha256" \
-            "dist/wearsic-server-${GITHUB_REF_NAME}.sh"
+            "dist/Wearsic-${RELEASE_REF}.apk" \
+            "dist/wearsic-server-termux-${RELEASE_REF}.zip" \
+            "dist/wearsic-server-termux-${RELEASE_REF}.zip.sha256" \
+            "dist/wearsic-server-${RELEASE_REF}.sh"

@@ -181,6 +181,8 @@ jobs:
       - name: Verify single-file bundle (self-extract + boot + /health)
         run: |
           VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
+          RELEASE_REF="${GITHUB_REF_NAME}"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
           BUNDLE="dist/wearsic-server-${RELEASE_REF}.sh"
           rm -rf /tmp/bundle-home && mkdir -p /tmp/bundle-home
           HOME=/tmp/bundle-home WEARSIC_DIR=/tmp/bundle-home/wearsic-server bash "$BUNDLE" install

@@ -301,12 +301,26 @@ cmd_funnel() {
       || die "tailscaled install failed — see https://github.com/bropines/tailscale-termux-cli"
   fi
   # 2. Ensure the Termux tailscaled daemon is actually running.
-  # Termux restarts stop the userspace daemon even though the tailscale
-  # package remains installed. Recover it automatically so "wearsic funnel"
-  # is a one-command operation after a phone/Termux restart.
+  #
+  # The community package normally installs a termux-services service at
+  # $PREFIX/var/service/tailscaled. Some Termux installs can report a
+  # successful package install while that service directory is missing (for
+  # example after a package-manager/service initialization race). Do not make
+  # Funnel depend on runit in that case: tailscaled-start is the package's
+  # supported direct-start helper and works without a service directory.
+  local tailscale_started=0
   if command -v sv >/dev/null 2>&1 && [ -x "$PREFIX/var/service/tailscaled/run" ]; then
     sv up tailscaled >/dev/null 2>&1 || true
   fi
+
+  # If the service is unavailable, fall back to the package's own launcher.
+  # This also handles a fresh install where termux-services has not yet
+  # created/registered the service directory.
+  if ! tailscale status >/dev/null 2>&1 && command -v tailscaled-start >/dev/null 2>&1; then
+    say "Termux service is unavailable — starting tailscaled directly…"
+    tailscaled-start >/dev/null 2>&1 || true
+  fi
+
   local daemon_ok=0
   local attempt
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
@@ -316,7 +330,7 @@ cmd_funnel() {
     fi
     sleep 1
   done
-  [ "$daemon_ok" -eq 1 ] || die "Tailscale daemon is not running. Try: sv up tailscaled"
+  [ "$daemon_ok" -eq 1 ] || die "Tailscale daemon is not running. Try: tailscaled-start"
   # 3. logged in?
   if ! tailscale status >/dev/null 2>&1; then
     say "Logging in to Tailscale — open the printed link in a browser:"

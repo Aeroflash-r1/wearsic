@@ -20,6 +20,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Brush
+import com.example.ui.theme.WearsicAccentSky
+import com.example.ui.theme.WearsicAccentMint
+import com.example.ui.theme.WearsicAccentPeach
+import com.example.ui.theme.WearsicAccentRose
+import com.example.ui.theme.WearsicAccentAmber
+import com.example.ui.theme.WearsicSurfaceRaised
+import com.example.ui.theme.WearsicDimens
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -96,11 +105,9 @@ fun WearsicPrimaryPillButton(
                 scaleY = pressScale
             }
             .clip(CircleShape)
-            // Flat fill — no sheen gradients, no drop shadows. Depth fakery
-            // reads as "cheap" on a small OLED and costs overdraw.
-            .background(backgroundColor)
+            .background(Brush.linearGradient(listOf(backgroundColor, backgroundColor.copy(alpha = 0.86f))))
             .clickable(interactionSource = interaction, indication = null) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
             .padding(horizontal = 16.dp),
@@ -198,11 +205,11 @@ fun WearsicSecondaryPillButton(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .clip(CircleShape)
-            .background(WearsicGlassFill)
-            .border(1.dp, WearsicGlassBorder, CircleShape)
+            .clip(RoundedCornerShape(20.dp))
+            .background(WearsicSurfaceRaised)
+            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(20.dp))
             .clickable(interactionSource = interaction, indication = null) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
             .padding(horizontal = 14.dp)
@@ -254,6 +261,7 @@ fun WearsicSettingsActionPill(
 
     Box(
         modifier = modifier
+            .heightIn(min = WearsicDimens.TouchTarget)
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
@@ -262,7 +270,7 @@ fun WearsicSettingsActionPill(
             .background(WearsicSurface)
             .border(1.dp, WearsicSurfaceBorder, CircleShape)
             .clickable(interactionSource = interaction, indication = null) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
             .padding(horizontal = 18.dp, vertical = 9.dp)
@@ -321,7 +329,7 @@ fun WearsicCircularIconButton(
         modifier = modifier
             .size(if (size < 48.dp) 48.dp else size)
             .clickable(interactionSource = interaction, indication = null) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
             .testTag(testTag),
@@ -372,28 +380,30 @@ fun WearsicGlassPanel(
 /**
  * Screen title header styled for round Wear OS displays.
  *
- * Deliberately plain and confident: bold white title, muted secondary line.
- * No gradient glyphs, no glow washes, no accent bars — decorative depth
- * fakery reads as "template" and costs battery on OLED. Typography and
- * spacing carry the identity.
+ * A small section-colored marker and generous type establish hierarchy.
+ * The surrounding canvas stays OLED black; decoration is local to content.
  */
 @Composable
 fun WearsicScreenHeader(
     title: String,
     modifier: Modifier = Modifier,
-    subtitle: String? = null
+    subtitle: String? = null,
+    accentColor: Color = wearsicSectionAccent(title)
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = 6.dp, bottom = 6.dp)
-            .wearsicEntrance(),
+            .padding(top = 6.dp, bottom = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Box(
+            Modifier.width(22.dp).height(3.dp).clip(CircleShape).background(accentColor)
+        )
+        Spacer(Modifier.height(6.dp))
         Text(
             text = title,
             color = WearsicTextPrimary,
-            fontSize = 22.sp,
+            fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
             letterSpacing = (-0.4).sp,
@@ -452,10 +462,13 @@ fun WearsicSectionTitle(
             color = WearsicTextWhite60,
             fontSize = 10.sp,
             fontWeight = FontWeight.SemiBold,
-            letterSpacing = 1.2.sp
+            letterSpacing = 0.6.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
         )
         if (trailing != null) {
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.width(6.dp))
             trailing()
         }
     }
@@ -483,9 +496,10 @@ fun WearsicEmptyState(
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(WearsicLavenderContainer),
+                .size(48.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(WearsicLavenderContainer)
+                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -512,6 +526,15 @@ fun WearsicEmptyState(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
         )
     }
+}
+
+private fun wearsicSectionAccent(title: String): Color = when (title) {
+    "Search", "Albums" -> WearsicAccentSky
+    "Downloads", "Storage" -> WearsicAccentMint
+    "Favorites" -> WearsicAccentRose
+    "Artists" -> WearsicAccentPeach
+    "Queue", "Audio Output" -> WearsicAccentAmber
+    else -> WearsicVibrantLavender
 }
 
 /**

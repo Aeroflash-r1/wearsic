@@ -19,6 +19,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.example.ui.theme.WearsicSurfaceRaised
+import com.example.ui.theme.WearsicVibrantLavender
+import com.example.ui.util.wearsicEntrance
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -100,9 +104,10 @@ fun WearsicTrackActionSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = maxHeight * 0.84f)
-                .clip(CircleShape)
-                .background(WearsicGlassFill)
-                .border(1.dp, WearsicGlassBorder, CircleShape)
+                .wearsicEntrance(riseDp = 12f)
+                .clip(RoundedCornerShape(26.dp))
+                .background(WearsicSurfaceRaised)
+                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(26.dp))
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 10.dp)
                 // Consume taps on the sheet body so they never reach the scrim.
@@ -227,4 +232,4 @@ private fun SheetAction(
     }
 }
 
-private val WearsicVibrantLavenderCompat = Color(0xFFD0BCFF)
+private val WearsicVibrantLavenderCompat = WearsicVibrantLavender

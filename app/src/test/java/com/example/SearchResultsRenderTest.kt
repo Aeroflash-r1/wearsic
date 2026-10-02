@@ -6,6 +6,11 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
+import org.junit.Assert.assertEquals
 import com.example.model.Track
 import com.example.ui.screens.SearchScreen
 import com.example.ui.theme.WearsicTheme
@@ -123,8 +128,26 @@ class SearchResultsRenderTest {
         // confirms result rows render without crashing.
         composeTestRule.onNodeWithTag("search_track_Zkqhiil2kSo").assertExists()
         composeTestRule.onNodeWithText("Kesariya").assertExists()
+        composeTestRule.onNode(hasScrollAction()).performScrollToIndex(4)
         composeTestRule.onNodeWithTag("search_track_Z0VbANbyH2o").assertExists()
         composeTestRule.onNodeWithText("Tum Hi Ho").assertExists()
+    }
+
+    @Test
+    fun searchRow_longPressOpensActions_withoutPlaying() {
+        var playCount = 0
+        composeTestRule.setContent {
+            WearsicTheme {
+                SearchScreen(
+                    searchState = SearchUiState(query = "music", results = sampleResults.take(1), hasSearched = true),
+                    onQuerySelected = {},
+                    onTrackSelected = { playCount++ }
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("search_track_Zkqhiil2kSo").performTouchInput { longClick() }
+        composeTestRule.onNodeWithTag("track_action_sheet").assertExists()
+        assertEquals(0, playCount)
     }
 
     @Test

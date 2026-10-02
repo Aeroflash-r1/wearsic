@@ -95,6 +95,31 @@ class SingleFlightTest {
         assertEquals("b", second, "a completed operation must not be reused on the next call")
     }
 
+    @Test
+    fun `parallel candidates never execute losing computations`() = kotlinx.coroutines.runBlocking {
+        val sf = SingleFlight<String, Int>()
+        val executions = java.util.concurrent.atomic.AtomicInteger()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val started = java.util.concurrent.CountDownLatch(32)
+        val jobs = (1..32).map {
+            async(kotlinx.coroutines.Dispatchers.Default) {
+                started.countDown()
+                sf.run("shared") {
+                    executions.incrementAndGet()
+                    release.await()
+                    42
+                }
+            }
+        }
+        assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        // Keep the winner alive while all racing callers join it.
+        delay(100)
+        release.complete(Unit)
+        assertTrue(jobs.awaitAll().all { it == 42 })
+        assertEquals(1, executions.get())
+        assertEquals(0, sf.size)
+    }
+
     private suspend fun awaitCancellation(): Nothing =
         kotlinx.coroutines.awaitCancellation()
 }

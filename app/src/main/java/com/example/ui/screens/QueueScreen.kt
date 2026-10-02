@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.example.ui.theme.WearsicSurfaceRaised
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.MusicNote
@@ -130,7 +132,7 @@ fun QueueScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
                             .background(
                                 if (shuffleEnabled) WearsicVibrantLavender.copy(alpha = 0.25f)
@@ -146,7 +148,7 @@ fun QueueScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Shuffle,
-                            contentDescription = "Shuffle",
+                            contentDescription = if (shuffleEnabled) "Shuffle on" else "Shuffle off",
                             tint = if (shuffleEnabled) WearsicVibrantLavender else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
@@ -154,11 +156,14 @@ fun QueueScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
-                            .wearsicClickable(onClick = onStartRadio),
+                            .wearsicClickable(
+                                enabled = radioState !is com.example.ui.viewmodel.LibraryViewModel.RadioState.Loading,
+                                onClick = onStartRadio
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         if (radioState is com.example.ui.viewmodel.LibraryViewModel.RadioState.Loading) {
@@ -175,7 +180,7 @@ fun QueueScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
                             .background(
                                 if (repeatMode != 0) WearsicVibrantLavender.copy(alpha = 0.25f)
@@ -195,7 +200,7 @@ fun QueueScreen(
                             } else {
                                 androidx.compose.material.icons.Icons.Rounded.Repeat
                             },
-                            contentDescription = if (repeatMode == 1) "Repeat One" else "Repeat All",
+                            contentDescription = when (repeatMode) { 1 -> "Repeat One"; 2 -> "Repeat All"; else -> "Repeat off" },
                             tint = if (repeatMode != 0) WearsicVibrantLavender else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
@@ -299,9 +304,9 @@ private fun QueueCurrentCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(CircleShape)
-            .background(WearsicVibrantLavender)
-            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), CircleShape)
+            .clip(RoundedCornerShape(22.dp))
+            .background(WearsicSurfaceRaised)
+            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), RoundedCornerShape(22.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag("queue_current_track")
     ) {
@@ -317,8 +322,8 @@ private fun QueueCurrentCard(
                 // Real album art (or the music-note chip when there is none).
                 val art = Modifier
                     .size(40.dp)
-                    .clip(CircleShape)
-                    .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
+                    .clip(RoundedCornerShape(11.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(11.dp))
                 if (!track.artworkUrl.isNullOrBlank()) {
                     val artRequest = remember(track.artworkUrl) {
                         ImageRequest.Builder(context)
@@ -340,7 +345,7 @@ private fun QueueCurrentCard(
                         Icon(
                             imageVector = Icons.Rounded.MusicNote,
                             contentDescription = null,
-                            tint = WearsicTextPrimaryDark,
+                            tint = WearsicVibrantLavender,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -351,7 +356,7 @@ private fun QueueCurrentCard(
                 Column {
                     Text(
                         text = track.title.ifBlank { "No Active Track" },
-                        color = WearsicTextPrimaryDark,
+                        color = WearsicTextPrimary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,
@@ -359,7 +364,7 @@ private fun QueueCurrentCard(
                     )
                     Text(
                         text = if (isPlaying) "Now Playing" else "Paused",
-                        color = if (isPlaying) WearsicTextPrimaryDark else WearsicTextPrimaryDark.copy(alpha = 0.7f),
+                        color = if (isPlaying) WearsicVibrantLavender else WearsicTextMuted,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1

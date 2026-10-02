@@ -624,10 +624,16 @@ cmd_doctor() {
   fi
 
   ready_body="$(curl -sf -m 5 "http://127.0.0.1:$P/ready" 2>/dev/null || true)"
-  if printf '%s' "$ready_body" | grep -q '"ready":true'; then
+  if printf '%s' "$ready_body" | grep -q '"ready"[[:space:]]*:[[:space:]]*true'; then
     doctor_line "Readiness" "✓" "ready"
   elif [ -n "$ready_body" ]; then
-    doctor_line "Readiness" "✗" "not ready — inspect /ready"; fails=$((fails+1))
+    doctor_line "Readiness" "✗" "not ready"; fails=$((fails+1))
+    if printf '%s' "$ready_body" | grep -q '"database"[[:space:]]*:[[:space:]]*false'; then
+      doctor_line "Database probe" "✗" "check free storage and database permissions"
+    fi
+    if printf '%s' "$ready_body" | grep -q '"extractor"[[:space:]]*:[[:space:]]*false'; then
+      doctor_line "Music engine" "✗" "run wearsic update; inspect wearsic logs for upstream challenges"
+    fi
   elif [ -n "$health" ]; then
     doctor_line "Readiness" "—" "no /ready (engine older than 1.4.0)"; warns=$((warns+1))
   else
@@ -640,6 +646,12 @@ cmd_doctor() {
     consec="$(printf '%s' "$health" | sed -n 's/.*"consecutiveFailures":\([0-9]*\).*/\1/p')"
     canary="$(printf '%s' "$health" | sed -n 's/.*"canaryHealthy":\(true\|false\|null\).*/\1/p')"
     doctor_line "Engine version" "✓" "v${ver:-unknown}"
+    if printf '%s' "$health" | grep -q '"transcoderAvailable"[[:space:]]*:[[:space:]]*false'; then
+      doctor_line "Audio conversion" "—" "unavailable — pkg install -y ffmpeg"; warns=$((warns+1))
+    fi
+    if printf '%s' "$health" | grep -q '"status"[[:space:]]*:[[:space:]]*"staged"'; then
+      doctor_line "Engine update" "—" "staged — applies on next restart"
+    fi
     if [ -n "$consec" ] && [ "$consec" -ge 6 ] 2>/dev/null; then
       doctor_line "Extractor" "✗" "$consec consecutive failures — engine broken? self-heal should be staging an update"; fails=$((fails+1))
     else
@@ -691,10 +703,12 @@ cmd_doctor() {
 
   say "────────────────────────"
   if [ "$fails" -eq 0 ]; then
-    say "Result: READY"
+    say "Result: READY ($warns warning(s))"
+    say "Next: wearsic url — connect your watch; wearsic logs — inspect playback issues"
     return 0
   fi
   say "Result: NOT READY ($fails problem(s), $warns warning(s))"
+  say "Next: resolve the ✗ items above, then run wearsic doctor again"
   return 1
 }
 

@@ -151,6 +151,10 @@ the `WEARSIC_YOUTUBE_COOKIE` environment variable — the same trust level as
 the phone's user account. Protect the phone accordingly; clear the cookie
 with `wearsic cookies` + empty value or `POST {"cookie":""}`.
 
+Search requests normalize whitespace, reject queries over 200 characters, coalesce concurrent requests, and filter duplicate/blank video IDs before returning results. Metadata exceptions fall back to YouTube search; coroutine cancellation is propagated rather than mistaken for an upstream failure. Stream warmup is capped to two unique candidates in one active batch, and a new search does not cancel a warmup that foreground playback may be awaiting. Single-flight computations start lazily only after winning registration, preventing duplicate network/extraction work on parallel dispatchers.
+
+`wearsic doctor` reports readiness-specific database/extractor remedies, missing audio conversion, staged engine updates, warning totals, and the next useful management command without exposing credentials.
+
 The server caches search results and resolved stream targets in small bounded in-memory caches (stream targets expire after 1 hour — CDN URLs expire upstream). Search goes to YouTube Music first (official titles/artists with directly playable videoIds); when YTM is unreachable the NewPipeExtractor YouTube search is used as fallback. Legacy surrogate → YouTube video matches from pre-1.5 builds are additionally persisted in SQLite (bounded to 2000 rows, 30-day staleness), so old saved favorites keep replaying after upgrade. SQLite uses WAL mode with `synchronous=NORMAL` for good performance on a phone.
 
 ## Errors and rate limiting

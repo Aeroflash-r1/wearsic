@@ -31,10 +31,8 @@ fun WearsicLibraryTrackRow(
         artist = track.artist,
         artworkUrl = track.artworkUrl,
         onClick = onPlay,
-        modifier = modifier
-            // combinedClickable wires the declared onLongPress (action sheet)
-            // so callers relying on long-press actually get it.
-            .combinedClickable(onClick = onPlay, onLongClick = onLongPress),
+        modifier = modifier,
+        onLongClick = onLongPress,
         testTag = "${testTagPrefix}_${track.id}",
         trailing = if (onMore != null) {
             {

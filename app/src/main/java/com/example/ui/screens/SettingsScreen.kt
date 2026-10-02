@@ -62,6 +62,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.example.BuildConfig
 import com.example.network.model.ConnectionTestState
 import com.example.ui.components.WearsicScreenHeader
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.example.ui.theme.WearsicSurfaceRaised
 import com.example.ui.theme.WearsicAppBackground
 import com.example.ui.theme.wearsicListContentPadding
 import com.example.ui.theme.WearsicBlack
@@ -563,9 +565,9 @@ private fun SettingsPillItem(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(CircleShape)
-            .background(WearsicSurface)
-            .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
+            .clip(RoundedCornerShape(20.dp))
+            .background(WearsicSurfaceRaised)
+            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(20.dp))
             .wearsicClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp)
             .testTag(testTag)

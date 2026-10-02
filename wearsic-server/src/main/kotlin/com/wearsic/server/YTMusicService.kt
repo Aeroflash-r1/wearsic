@@ -136,7 +136,8 @@ class YTMusicService(
             parseSearchResponse(raw, limit)
                 .filter { it.title != null && it.artist != null }
         }.onFailure { e ->
-            System.err.println("YTMUSIC search failed for '$query': $e")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            System.err.println("YTMUSIC search failed: ${e.javaClass.simpleName}")
         }.getOrDefault(emptyList())
         // Only cache usable results: a transient YTM failure must not serve
         // an empty page for the next 5 minutes (the NewPipe fallback would

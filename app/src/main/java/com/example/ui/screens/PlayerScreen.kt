@@ -1,10 +1,12 @@
 package com.example.ui.screens
 
+import android.graphics.drawable.BitmapDrawable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -35,15 +37,21 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -55,19 +63,23 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
-import androidx.compose.ui.tooling.preview.Preview
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.model.PlaybackUiState
@@ -75,37 +87,44 @@ import com.example.model.Track
 import com.example.ui.theme.WearsicBlack
 import com.example.ui.theme.WearsicDimens
 import com.example.ui.theme.WearsicSurfaceBorder
-import com.example.ui.theme.WearsicSurfaceBorderSubtle
-import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.theme.WearsicTextMuted
 import com.example.ui.theme.WearsicTheme
+import com.example.ui.theme.wearsicListContentPadding
+import com.example.ui.util.ArtworkColors
+import com.example.ui.util.extractArtworkColors
 import com.example.ui.util.wearsicClickable
+import com.example.ui.util.wearsicEntrance
+import com.example.ui.util.wearsicRotaryScroll
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * NOW PLAYING — a Wear OS-native media screen built as SCREEN + SUB-SCREEN.
+ * NOW PLAYING — composed for a ROUND Wear OS face (Galaxy Watch7 44mm).
  *
- * Design rules (all deliberate):
- *   · The ALBUM ARTWORK IS THE BACKGROUND of the whole screen (cropped,
- *     full-bleed) under a fixed dark scrim gradient, so every track owns the
- *     display while white text stays readable. With no artwork the screen is
- *     pure black (OLED pixels off). No blur — the scrim is one gradient, and
- *     the artwork decodes once at 256px.
- *   · SCREENS, NOT SCROLLING: the player is a 2-page HorizontalPager.
- *     Page 0 "Now Playing" holds everything that matters — title, artist and
- *     the complete transport — ALWAYS fully visible, never scrolled to.
- *     Page 1 "Actions" is the sub-screen with favourite / download / queue /
- *     audio output. Swipe horizontally (or tap the page dots) to move
- *     between them — exactly how Wear OS apps separate screens.
- *   · NO continuous animation — nothing animates while the user just
- *     listens; the progress ring interpolates only between 2s position ticks
- *     and redraws in the DRAW phase (zero recomposition).
- *   · neutral monochrome transport (white play, quiet grey skips) with the
- *     one brand accent: the signature lavender progress sweep around the
- *     play disc.
- *   · transport sizing adapts to the available width, so the skip buttons
- *     can never be pushed off a 44mm round display.
+ * Layout rules that only make sense on a circle:
+ *   · The widest part of the display is its MIDDLE, so the album art disc —
+ *     not the title and not the transport — owns the centre. Title, artist and
+ *     elapsed time then sit in the readable mid-band below it, and the compact
+ *     transport hugs the lower third where the remaining chord is still wide
+ *     enough for it. Nothing important is placed in the clipped top or the
+ *     curved bottom edge.
+ *   · Everything is measured from the space actually available
+ *     ([BoxWithConstraints]) and switches to a compact scale on short
+ *     viewports, so the composition can never clip or push a control off-face.
+ *   · The backdrop is still the artwork (immersive), darkened behind the disc
+ *     with a fixed scrim plus a cheap radial tint — no blur shaders, which the
+ *     watch's SoC cannot afford.
+ *   · Playback progress is a ring AROUND the disc, which suits a circular
+ *     screen far better than a ring around the play button, and is drawn in
+ *     the draw phase only: the 2 s position sweep never recomposes the screen.
+ *   · Actions live on a swipeable second page (Wearsic sub-screen), reachable
+ *     by swipe or by the one tappable page indicator.
  *
- * The rotary bezel scrubs seek on the Now Playing page.
+ * Motion is deliberate and finite: a track change plays one short entrance
+ * (art scales up, text rises, staggered), the play/pause glyph pops in on
+ * every change, and nothing animates while you simply listen. The rotary
+ * bezel scrubs seek on the Now Playing page.
  */
 @Composable
 fun PlayerScreen(
@@ -127,6 +146,8 @@ fun PlayerScreen(
     val track = playbackState.currentTrack
     val hasTrack = track.id.isNotBlank()
     val haptic = LocalHapticFeedback.current
+    var artworkColors by remember(track.artworkUrl) { mutableStateOf(ArtworkColors.Default) }
+    val scope = rememberCoroutineScope()
 
     val progressTarget = if (playbackState.durationMs > 0L) {
         (playbackState.currentPositionMs.toFloat() / playbackState.durationMs).coerceIn(0f, 1f)
@@ -134,23 +155,25 @@ fun PlayerScreen(
         0f
     }
 
-    // The position tracker emits one tick every 2s; a linear tween of the same
-    // length turns those discrete steps into a continuously sweeping ring.
-    // Held as a State and read inside the draw phase, so the interpolation
-    // redraws only the play button instead of recomposing the player.
-    val animatedProgress = animateFloatAsState(
-        targetValue = progressTarget,
-        animationSpec = tween(durationMillis = 2000, easing = LinearEasing),
-        label = "playerProgress"
-    )
+    // Discrete 2 s position ticks are turned into a continuous sweep by a
+    // linear tween of the same length. Held as State + read in the draw phase.
+    val animatedProgress = key(track.id) {
+        animateFloatAsState(
+            targetValue = progressTarget,
+            animationSpec = tween(
+                durationMillis = if (playbackState.isPlaying && !playbackState.isBuffering) 2000 else 0,
+                easing = LinearEasing
+            ),
+            label = "playerProgress"
+        )
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
 
         // ── The artwork IS the background ────────────────────────────────
-        ArtworkBackdrop(artworkUrl = track.artworkUrl)
+        ArtworkBackdrop(artworkUrl = track.artworkUrl, onColors = { artworkColors = it })
 
         ScreenScaffold(modifier = Modifier.fillMaxSize()) { contentPadding: PaddingValues ->
-            // Two screens side by side: 0 = Now Playing, 1 = Actions.
             val pagerState = rememberPagerState(pageCount = { 2 })
 
             Box(
@@ -169,15 +192,18 @@ fun PlayerScreen(
                             isPlaying = playbackState.isPlaying,
                             isBuffering = playbackState.isBuffering,
                             progress = animatedProgress,
+                            positionMs = playbackState.currentPositionMs,
+                            durationMs = playbackState.durationMs,
                             onTogglePlayPause = onTogglePlayPause,
                             onSkipPrevious = onSkipPrevious,
                             onSkipNext = onSkipNext,
                             onSeekForward = onSeekForward,
                             onSeekBack = onSeekBack,
-                            haptic = haptic
+                            haptic = haptic,
+                            colors = artworkColors,
+                            active = pagerState.currentPage == 0
                         )
                         else -> ActionsPage(
-                            track = track,
                             hasTrack = hasTrack,
                             isFavorite = track.isFavorite,
                             isDownloaded = isDownloaded,
@@ -186,16 +212,25 @@ fun PlayerScreen(
                             onToggleFavorite = onToggleFavorite,
                             onDownloadTrack = { onDownloadTrack(track) },
                             onNavigateToQueue = onNavigateToQueue,
-                            onNavigateToVolume = onNavigateToVolume
+                            onNavigateToVolume = onNavigateToVolume,
+                            active = pagerState.currentPage == 1
                         )
                     }
                 }
 
-                // Page dots — the standard Wear hint that a sub-screen exists.
+                // One generous touch target for the sub-screen, not two tiny dots.
                 Row(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 2.dp),
+                        .heightIn(min = WearsicDimens.TouchTarget)
+                        .semantics {
+                            contentDescription =
+                                if (pagerState.currentPage == 0) "Show player actions" else "Show now playing"
+                        }
+                        .wearsicClickable {
+                            scope.launch { pagerState.animateScrollToPage(1 - pagerState.currentPage) }
+                        }
+                        .testTag("player_page_switch"),
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -203,11 +238,10 @@ fun PlayerScreen(
                         val active = pagerState.currentPage == index
                         Box(
                             modifier = Modifier
-                                .size(width = if (active) 12.dp else 5.dp, height = 5.dp)
+                                .size(width = if (active) 11.dp else 5.dp, height = 4.dp)
                                 .clip(CircleShape)
                                 .background(
-                                    if (active) WearsicVibrantLavender
-                                    else Color.White.copy(alpha = 0.35f)
+                                    if (active) artworkColors.accent else Color.White.copy(alpha = 0.32f)
                                 )
                         )
                     }
@@ -218,7 +252,7 @@ fun PlayerScreen(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Screen 0 — Now Playing (title + full transport, nothing scrolls)
+// Page 0 — Now Playing: artwork disc, metadata, transport (never scrolls)
 // ─────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -228,90 +262,236 @@ private fun NowPlayingPage(
     isPlaying: Boolean,
     isBuffering: Boolean,
     progress: State<Float>,
+    positionMs: Long,
+    durationMs: Long,
     onTogglePlayPause: () -> Unit,
     onSkipPrevious: () -> Unit,
     onSkipNext: () -> Unit,
     onSeekForward: () -> Unit,
     onSeekBack: () -> Unit,
-    haptic: androidx.compose.ui.hapticfeedback.HapticFeedback
+    haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
+    colors: ArtworkColors,
+    active: Boolean
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp)
-            .onRotaryScrollEvent { event ->
-                if (event.verticalScrollPixels == 0f) {
-                    false
-                } else {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    if (event.verticalScrollPixels > 0f) onSeekForward() else onSeekBack()
-                    true
-                }
-            },
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(modifier = Modifier.height(6.dp))
+    val focusRequester = remember { FocusRequester() }
+    // Rotary seek needs focus. The pager may not have attached this page's
+    // focus node on the very first frame, so retry across a couple of frames
+    // instead of throwing (the same defensive pattern as wearsicRotaryScroll).
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
+        repeat(3) {
+            try {
+                focusRequester.requestFocus()
+                return@LaunchedEffect
+            } catch (_: IllegalStateException) {
+                withFrameNanos { }
+            }
+        }
+    }
 
-        // ── Metadata (top of screen — transport keeps the bottom) ───────
-        Text(
-            text = if (hasTrack) track.title else "Nothing playing",
-            color = Color.White,
-            fontSize = 17.sp,
-            fontWeight = FontWeight.ExtraBold,
-            letterSpacing = (-0.3).sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(2.dp))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        // Short viewports (a clipped scrim, or a smaller round face) get a
+        // tighter scale instead of a clipped control.
+        val compact = maxHeight < 236.dp
+        val discSize: Dp = (maxWidth * 0.36f).coerceIn(if (compact) 56.dp else 64.dp, if (compact) 72.dp else 92.dp)
+        val playSize: Dp = if (compact) 48.dp else (maxWidth * 0.26f).coerceIn(50.dp, 60.dp)
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp)
+                .focusRequester(focusRequester)
+                .onRotaryScrollEvent { event ->
+                    if (!active || !hasTrack || event.verticalScrollPixels == 0f) {
+                        false
+                    } else {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (event.verticalScrollPixels > 0f) onSeekForward() else onSeekBack()
+                        true
+                    }
+                }
+                .focusable(),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (!hasTrack) {
+            // Weighted top space keeps the artwork slightly above centre —
+            // the composition reads as a disc with text beneath it.
+            Spacer(modifier = Modifier.weight(0.7f))
+
+            key(track.id) {
+            ArtworkDisc(
+                artworkUrl = track.artworkUrl,
+                hasTrack = hasTrack,
+                progress = progress,
+                colors = colors,
+                size = discSize,
+                // One-shot entrance, replayed only when the track changes:
+                // `key` recreates the composable (and its entrance state) per
+                // track instead of replaying on every recomposition.
+                modifier = Modifier.wearsicEntrance(fromScale = 0.90f, riseDp = 10f)
+            )
+            }
+
+            Spacer(modifier = Modifier.height(if (compact) 4.dp else 8.dp))
+
+            Text(
+                text = if (hasTrack) track.title else "Nothing playing",
+                color = Color.White,
+                fontSize = if (compact) 14.sp else 15.sp,
+                lineHeight = if (compact) 16.sp else 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-0.2).sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.wearsicEntrance(delayMillis = 50, fromScale = 0.98f, riseDp = 6f)
+            )
+
+            Text(
+                text = when {
+                    !hasTrack -> "Pick a song from Library"
+                    else -> "${track.artist} · ${formatTime(positionMs)} / ${formatTime(durationMs)}"
+                },
+                color = Color.White.copy(alpha = 0.70f),
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .padding(top = 3.dp)
+                    .wearsicEntrance(delayMillis = 90, fromScale = 0.98f, riseDp = 6f)
+            )
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            TransportRow(
+                isPlaying = isPlaying,
+                isBuffering = isBuffering,
+                progress = progress,
+                playSize = playSize,
+                onTogglePlayPause = onTogglePlayPause,
+                onSkipPrevious = onSkipPrevious,
+                onSkipNext = onSkipNext,
+                colors = colors,
+                enabled = hasTrack
+            )
+
+            // Room for the overlaid page indicator in the safe area.
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * The album art as a circular focal point, wrapped by the playback progress
+ * ring and a soft radial accent tint. One draw pass for ring + tint; the
+ * animated progress is read in the DRAW phase only, so ticking never
+ * recomposes the player.
+ */
+@Composable
+private fun ArtworkDisc(
+    artworkUrl: String?,
+    hasTrack: Boolean,
+    progress: State<Float>,
+    colors: ArtworkColors,
+    size: Dp,
+    modifier: Modifier = Modifier
+) {
+    val ringStroke = 3f
+    val context = LocalContext.current
+    val request = remember(context, artworkUrl) {
+        ImageRequest.Builder(context)
+            .data(artworkUrl)
+            .size(160)
+            .crossfade(200)
+            .build()
+    }
+
+    Box(
+        modifier = modifier.size(size + ringStroke.dp * 2),
+        contentAlignment = Alignment.Center
+    ) {
+        // Radial accent halo behind the disc — depth without a blur shader.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        listOf(colors.accent.copy(alpha = 0.22f), Color.Transparent)
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .size(size + ringStroke.dp * 2)
+                .drawBehind {
+                    val stroke = Stroke(width = ringStroke.dp.toPx(), cap = StrokeCap.Round)
+                    val inset = ringStroke.dp.toPx()
+                    val arcSize = androidx.compose.ui.geometry.Size(
+                        this.size.width - 2 * inset,
+                        this.size.height - 2 * inset
+                    )
+                    val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+                    drawArc(
+                        color = Color.White.copy(alpha = 0.14f),
+                        startAngle = -90f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = stroke
+                    )
+                    val sweep = if (hasTrack) progress.value * 360f else 0f
+                    if (sweep > 0.5f) {
+                        drawArc(
+                            color = colors.accent,
+                            startAngle = -90f,
+                            sweepAngle = sweep,
+                            useCenter = false,
+                            topLeft = topLeft,
+                            size = arcSize,
+                            style = stroke
+                        )
+                    }
+                }
+        )
+        if (!artworkUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = request,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(size)
+                    .clip(CircleShape)
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(size)
+                    .clip(CircleShape)
+                    .background(colors.accent.copy(alpha = 0.18f))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     imageVector = Icons.Rounded.MusicNote,
                     contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.size(12.dp)
+                    tint = Color.White.copy(alpha = 0.75f),
+                    modifier = Modifier.size(size * 0.34f)
                 )
-                Spacer(modifier = Modifier.width(4.dp))
             }
-            Text(
-                text = if (hasTrack) track.artist else "Pick a song from Library",
-                color = Color.White.copy(alpha = 0.72f),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center
-            )
         }
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        // ── Transport (adaptive: always fits the round face) ─────────────
-        TransportRow(
-            isPlaying = isPlaying,
-            isBuffering = isBuffering,
-            progress = progress,
-            onTogglePlayPause = onTogglePlayPause,
-            onSkipPrevious = onSkipPrevious,
-            onSkipNext = onSkipNext
-        )
-
-        // Bottom room for the page dots (drawn by the host).
-        Spacer(modifier = Modifier.height(18.dp))
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Screen 1 — Actions sub-screen (favourite / download / queue / output)
+// Page 1 — Actions sub-screen (favourite / download / queue / output)
 // ─────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun ActionsPage(
-    track: Track,
     hasTrack: Boolean,
     isFavorite: Boolean,
     isDownloaded: Boolean,
@@ -320,52 +500,61 @@ private fun ActionsPage(
     onToggleFavorite: () -> Unit,
     onDownloadTrack: () -> Unit,
     onNavigateToQueue: () -> Unit,
-    onNavigateToVolume: () -> Unit
+    onNavigateToVolume: () -> Unit,
+    active: Boolean
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp),
+    val listState = rememberScalingLazyListState()
+    ScalingLazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize().wearsicRotaryScroll(listState, enabled = active),
+        contentPadding = wearsicListContentPadding(PaddingValues(bottom = 44.dp)),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        ActionRow(
-            icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-            label = if (isFavorite) "Favorited" else "Favorite",
-            enabled = hasTrack,
-            onClick = onToggleFavorite,
-            testTag = "player_favorite_button"
-        )
-        ActionRow(
-            icon = when {
-                isDownloading -> Icons.Rounded.HourglassEmpty
-                isDownloaded -> Icons.Rounded.CheckCircle
-                else -> Icons.Rounded.Download
-            },
-            label = when {
-                isDownloading -> "Downloading… $downloadProgress%"
-                isDownloaded -> "Downloaded Offline"
-                else -> "Download"
-            },
-            enabled = hasTrack && !isDownloaded && !isDownloading,
-            onClick = onDownloadTrack,
-            testTag = "player_download_button"
-        )
-        ActionRow(
-            icon = Icons.AutoMirrored.Rounded.QueueMusic,
-            label = "Queue",
-            enabled = true,
-            onClick = onNavigateToQueue,
-            testTag = "player_queue_shortcut_button"
-        )
-        ActionRow(
-            icon = Icons.AutoMirrored.Rounded.VolumeUp,
-            label = "Audio Output",
-            enabled = true,
-            onClick = onNavigateToVolume,
-            testTag = "player_output_button"
-        )
-        Spacer(modifier = Modifier.height(18.dp))
+        item {
+            ActionRow(
+                icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                label = if (isFavorite) "Favorited" else "Favorite",
+                enabled = hasTrack,
+                onClick = onToggleFavorite,
+                testTag = "player_favorite_button"
+            )
+        }
+        item {
+            ActionRow(
+                icon = when {
+                    isDownloading -> Icons.Rounded.HourglassEmpty
+                    isDownloaded -> Icons.Rounded.CheckCircle
+                    else -> Icons.Rounded.Download
+                },
+                label = when {
+                    isDownloading -> "Downloading… $downloadProgress%"
+                    isDownloaded -> "Downloaded Offline"
+                    else -> "Download"
+                },
+                enabled = hasTrack && !isDownloaded && !isDownloading,
+                onClick = onDownloadTrack,
+                testTag = "player_download_button"
+            )
+        }
+        item {
+            ActionRow(
+                icon = Icons.AutoMirrored.Rounded.QueueMusic,
+                label = "Queue",
+                enabled = true,
+                onClick = onNavigateToQueue,
+                testTag = "player_queue_shortcut_button"
+            )
+        }
+        item {
+            ActionRow(
+                icon = Icons.AutoMirrored.Rounded.VolumeUp,
+                label = "Audio Output",
+                enabled = true,
+                onClick = onNavigateToVolume,
+                testTag = "player_output_button"
+            )
+        }
     }
 }
 
@@ -374,133 +563,138 @@ private fun ActionsPage(
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * The artwork backdrop: one full-bleed crop of the album cover under a fixed
- * dark scrim gradient (stronger where the title and the transport sit).
- * Decoded once per artwork at 256px — cheap on memory, no blur passes.
- * Falls back to pure black when there is no artwork.
+ * The artwork backdrop: one full-bleed crop under a fixed dark scrim, darkened
+ * further behind the disc so the artwork itself stays readable as the art.
+ * Decoded once per artwork at 256 px — cheap on memory, no blur passes.
  */
 @Composable
-private fun ArtworkBackdrop(artworkUrl: String?) {
+private fun ArtworkBackdrop(artworkUrl: String?, onColors: (ArtworkColors) -> Unit) {
+    var bitmap by remember(artworkUrl) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(bitmap, artworkUrl) {
+        onColors(withContext(Dispatchers.Default) { extractArtworkColors(bitmap) })
+    }
     if (artworkUrl.isNullOrBlank()) {
         Box(modifier = Modifier.fillMaxSize().background(WearsicBlack))
         return
     }
     val context = LocalContext.current
-    val request = remember(artworkUrl) {
+    val request = remember(context, artworkUrl) {
         ImageRequest.Builder(context)
             .data(artworkUrl)
             .size(256)
+            .allowHardware(false)
+            .crossfade(180)
             .build()
     }
     AsyncImage(
         model = request,
         contentDescription = null,
         contentScale = ContentScale.Crop,
-        modifier = Modifier.fillMaxSize()
+        onSuccess = { bitmap = (it.result.drawable as? BitmapDrawable)?.bitmap },
+        modifier = Modifier.fillMaxSize().background(WearsicBlack)
     )
-    // One gradient = the whole readability story. Top and bottom (where the
-    // text and controls live) are darkest; the middle shows the art.
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    0f to Color.Black.copy(alpha = 0.74f),
-                    0.45f to Color.Black.copy(alpha = 0.55f),
-                    1f to Color.Black.copy(alpha = 0.82f)
+                    0f to Color.Black.copy(alpha = 0.78f),
+                    0.45f to Color.Black.copy(alpha = 0.48f),
+                    1f to Color.Black.copy(alpha = 0.88f)
                 )
             )
     )
 }
 
 /**
- * Previous / play-next transport. Sizes derive from the width actually
- * available on the (round) display, so on a 44mm watch the next button can
- * never sit outside the visible area — the row always fits exactly.
+ * Previous / play / next. Skip targets keep a full 44 dp touch box (they are
+ * the controls most often hit blind, while walking) but a quieter visual disc,
+ * so the play button still carries the weight.
  */
 @Composable
 private fun TransportRow(
     isPlaying: Boolean,
     isBuffering: Boolean,
     progress: State<Float>,
+    playSize: Dp,
     onTogglePlayPause: () -> Unit,
     onSkipPrevious: () -> Unit,
-    onSkipNext: () -> Unit
+    onSkipNext: () -> Unit,
+    colors: ArtworkColors,
+    enabled: Boolean
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val available = maxWidth
-        val playSize = (available * 0.36f).coerceIn(58.dp, 72.dp)
-        val skipSize = (available * 0.235f).coerceIn(42.dp, 50.dp)
-        val gap = ((available - playSize - skipSize * 2) / 2f).coerceIn(6.dp, 18.dp)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        SkipButton(
+            icon = Icons.Rounded.SkipPrevious,
+            contentDescription = "Previous Track",
+            onClick = onSkipPrevious,
+            accent = colors.accent,
+            enabled = enabled,
+            testTag = "player_previous_button"
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        PlayButton(
+            isPlaying = isPlaying,
+            isBuffering = isBuffering,
+            progress = progress,
+            size = playSize,
+            onClick = onTogglePlayPause,
+            colors = colors,
+            enabled = enabled && !isBuffering
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        SkipButton(
+            icon = Icons.Rounded.SkipNext,
+            contentDescription = "Next Track",
+            onClick = onSkipNext,
+            accent = colors.accent,
+            enabled = enabled,
+            testTag = "player_next_button"
+        )
+    }
+}
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxWidth()
+@Composable
+private fun SkipButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    testTag: String,
+    accent: Color,
+    enabled: Boolean
+) {
+    Box(
+        modifier = Modifier.size(WearsicDimens.TouchTarget),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(accent.copy(alpha = if (enabled) 0.20f else 0.08f))
+                .border(1.dp, Color.White.copy(alpha = if (enabled) 0.12f else 0.06f), CircleShape)
+                .wearsicClickable(enabled = enabled, pressedScale = 0.88f, onClick = onClick)
+                .testTag(testTag),
+            contentAlignment = Alignment.Center
         ) {
-            SkipButton(
-                icon = Icons.Rounded.SkipPrevious,
-                contentDescription = "Previous Track",
-                size = skipSize,
-                onClick = onSkipPrevious,
-                testTag = "player_previous_button"
-            )
-            Spacer(modifier = Modifier.width(gap))
-            PlayButton(
-                isPlaying = isPlaying,
-                isBuffering = isBuffering,
-                progress = progress,
-                size = playSize,
-                onClick = onTogglePlayPause
-            )
-            Spacer(modifier = Modifier.width(gap))
-            SkipButton(
-                icon = Icons.Rounded.SkipNext,
-                contentDescription = "Next Track",
-                size = skipSize,
-                onClick = onSkipNext,
-                testTag = "player_next_button"
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = Color.White.copy(alpha = if (enabled) 0.92f else 0.40f),
+                modifier = Modifier.size(19.dp)
             )
         }
     }
 }
 
 /**
- * Quiet monochrome skip button: translucent grey disc, white glyph. The
- * visual weight sits on the play button — like every premium media player.
- */
-@Composable
-private fun SkipButton(
-    icon: ImageVector,
-    contentDescription: String,
-    size: Dp,
-    onClick: () -> Unit,
-    testTag: String
-) {
-    Box(
-        modifier = Modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.12f))
-            .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape)
-            .wearsicClickable(pressedScale = 0.90f, onClick = onClick)
-            .testTag(testTag),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = Color.White.copy(alpha = 0.92f),
-            modifier = Modifier.size(size * 0.44f)
-        )
-    }
-}
-
-/**
- * The primary play/pause control: a solid white disc with a near-black
- * glyph, wrapped by a thin playback-progress ring. One small Canvas draws
- * the ring (track + filled arc); the animated progress value is read in the
- * DRAW phase only, so the 2s sweep never recomposes the screen.
+ * The primary control: an artwork-tinted disc with a near-black glyph. The
+ * glyph pops in on every play/pause/buffer change (a keyed one-shot scale),
+ * and the disc keeps a hairline ring so it never melts into the backdrop.
  */
 @Composable
 private fun PlayButton(
@@ -508,75 +702,51 @@ private fun PlayButton(
     isBuffering: Boolean,
     progress: State<Float>,
     size: Dp,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    colors: ArtworkColors,
+    enabled: Boolean
 ) {
-    // Thin progress ring drawn around the white disc (NOT on it — white on
-    // white is invisible): quiet track + solid sweep from 12 o'clock, in one
-    // draw phase so the 2s interpolation never recomposes anything.
-    val ringStroke = 2.5f
+    val glyph = when {
+        isBuffering -> Icons.Rounded.HourglassEmpty
+        isPlaying -> Icons.Rounded.Pause
+        else -> Icons.Rounded.PlayArrow
+    }
     Box(
         modifier = Modifier
             .size(size)
-            .drawBehind {
-                val stroke = Stroke(width = ringStroke.dp.toPx(), cap = StrokeCap.Round)
-                val inset = ringStroke.dp.toPx()
-                val arcSize = androidx.compose.ui.geometry.Size(
-                    this.size.width - 2 * inset,
-                    this.size.height - 2 * inset
-                )
-                val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
-                drawArc(
-                    color = Color.White.copy(alpha = 0.16f),
-                    startAngle = -90f,
-                    sweepAngle = 360f,
-                    useCenter = false,
-                    topLeft = topLeft,
-                    size = arcSize,
-                    style = stroke
-                )
-                val sweep = progress.value * 360f
-                if (sweep > 0.5f) {
-                    // The one piece of brand colour on the screen: the
-                    // signature lavender sweeps around the play disc —
-                    // instantly recognizable as Wearsic, costs one arc.
-                    drawArc(
-                        color = WearsicVibrantLavender,
-                        startAngle = -90f,
-                        sweepAngle = sweep,
-                        useCenter = false,
-                        topLeft = topLeft,
-                        size = arcSize,
-                        style = stroke
-                    )
-                }
-            }
-            .wearsicClickable(pressedScale = 0.93f, onClick = onClick)
+            .wearsicClickable(enabled = enabled, pressedScale = 0.92f, onClick = onClick)
             .testTag("player_play_pause_button"),
         contentAlignment = Alignment.Center
     ) {
         Box(
             modifier = Modifier
-                .size(size * 0.82f)
+                .size(size)
                 .clip(CircleShape)
-                .background(Color.White),
+                .background(colors.blobTint.copy(alpha = if (enabled || isBuffering) 1f else 0.4f))
+                .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
+            // Keyed so the glyph pops in on every play/pause/buffer change.
+            key(glyph) {
             Icon(
-                imageVector = when {
-                    isBuffering -> Icons.Rounded.HourglassEmpty
-                    isPlaying -> Icons.Rounded.Pause
-                    else -> Icons.Rounded.PlayArrow
+                imageVector = glyph,
+                contentDescription = when {
+                    isBuffering -> "Buffering"
+                    isPlaying -> "Pause"
+                    else -> "Play"
                 },
-                contentDescription = if (isPlaying) "Pause" else "Play",
                 tint = WearsicBlack,
-                modifier = Modifier.size(size * 0.38f)
+                modifier = Modifier
+                    .size(size * 0.40f)
+                    .wearsicEntrance(fromScale = 0.70f, riseDp = 0f)
             )
+            }
         }
     }
 }
 
 /**
- * One row of the Actions sub-screen: 44dp+ touch box, icon + label, and the
+ * One row of the Actions sub-screen: 44 dp+ touch box, icon + label, and the
  * same flat glass language as the list rows.
  */
 @Composable
@@ -591,9 +761,9 @@ private fun ActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = WearsicDimens.SheetRowMinHeight)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
             .background(Color.White.copy(alpha = 0.10f))
-            .border(1.dp, WearsicSurfaceBorder, RoundedCornerShape(16.dp))
+            .border(1.dp, WearsicSurfaceBorder, RoundedCornerShape(18.dp))
             .wearsicClickable(enabled = enabled, pressedScale = 0.98f, onClick = onClick)
             .testTag(testTag)
             .padding(horizontal = 16.dp),
@@ -617,13 +787,32 @@ private fun ActionRow(
     }
 }
 
+/** m:ss (or h:mm:ss) for the player's elapsed/total read-out. */
+private fun formatTime(ms: Long): String {
+    if (ms <= 0L) return "--:--"
+    val totalSeconds = ms / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        String.format("%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%d:%02d", minutes, seconds)
+    }
+}
+
 @Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
 @Composable
 fun PlayerScreenPreview() {
     WearsicTheme {
         PlayerScreen(
             playbackState = PlaybackUiState(
-                currentTrack = Track(id = "1", title = "Walcott", artist = "Vampire Weekend"),
+                currentTrack = Track(
+                    id = "1",
+                    title = "Walcott",
+                    artist = "Vampire Weekend",
+                    artworkUrl = null
+                ),
                 isPlaying = true,
                 durationMs = 220_000L,
                 currentPositionMs = 84_000L,

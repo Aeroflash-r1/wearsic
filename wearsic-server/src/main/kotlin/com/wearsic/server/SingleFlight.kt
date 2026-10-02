@@ -1,6 +1,7 @@
 package com.wearsic.server
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -30,7 +31,7 @@ class SingleFlight<K : Any, V> {
 
     suspend fun run(key: K, block: suspend () -> V): V {
         // Fast path: join an in-flight computation without allocating anything.
-        inFlight[key]?.takeIf { it.isActive }?.let { return it.await() }
+        inFlight[key]?.let { return it.await() }
 
         // The computing coroutine must be a SUPERVISED child of the caller's
         // job: it inherits the caller's dispatcher and cancellation (so
@@ -44,13 +45,13 @@ class SingleFlight<K : Any, V> {
         val supervisor = SupervisorJob(callerContext[Job])
         val deferred = CoroutineScope(
             supervisor + callerContext.minusKey(Job)
-        ).async { block() }
+        ).async(start = CoroutineStart.LAZY) { block() }
         deferred.invokeOnCompletion { supervisor.complete() }
 
         val winner = inFlight.putIfAbsent(key, deferred)
         if (winner != null) {
-            // Lost the race: drop our duplicate (cancelling it is safe — it
-            // has not been awaited yet) and join the actual winner.
+            // Lazy start is essential: a losing candidate must NEVER execute
+            // extraction, even on a multi-threaded dispatcher.
             deferred.cancel()
             return winner.await()
         }

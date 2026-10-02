@@ -106,6 +106,48 @@ class OrchestratorFallbackTest {
         assertEquals(null, orchestrator.resolveStreamVideoId("it:999999"))
     }
 
+    @Test
+    fun `metadata exception falls back without hiding cancellation`() = runTest {
+        val metadata = object : MetadataSource {
+            override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> = error("upstream unavailable")
+            override fun toTrackDto(track: YtmTrack): TrackDto = error("unused")
+        }
+        val youtube = FakeYoutubeMetadataClient().apply {
+            results = listOf(TrackDto("fallback", "Song", "Artist"))
+        }
+        val orchestrator = MetadataSearchOrchestrator(metadata, youtube)
+        try {
+            assertEquals("fallback", orchestrator.search("  my   song  ").single().videoId)
+            assertEquals("my song", youtube.searchCalls.single())
+            assertTrue(orchestrator.search(" ").isEmpty())
+        } finally { orchestrator.shutdown() }
+    }
+
+    @Test
+    fun `duplicate and blank ids do not reach the watch`() = runTest {
+        val metadata = FakeMetadataSource().apply {
+            tracks = listOf(track("same"), track("same"), track(""))
+        }
+        val orchestrator = MetadataSearchOrchestrator(metadata, FakeYoutubeMetadataClient())
+        try {
+            assertEquals(listOf("same"), orchestrator.search("music").map { it.videoId })
+        } finally { orchestrator.shutdown() }
+    }
+
+    @Test
+    fun `metadata cancellation is propagated instead of triggering fallback`() = runTest {
+        val metadata = object : MetadataSource {
+            override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> = throw kotlinx.coroutines.CancellationException("cancelled")
+            override fun toTrackDto(track: YtmTrack): TrackDto = error("unused")
+        }
+        val youtube = FakeYoutubeMetadataClient()
+        val orchestrator = MetadataSearchOrchestrator(metadata, youtube)
+        try {
+            kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> { orchestrator.search("music") }
+            assertTrue(youtube.searchCalls.isEmpty())
+        } finally { orchestrator.shutdown() }
+    }
+
     // ---------------- Legacy match store (pre-1.5 `it:` ids) ----------------
 
     private class InMemoryMatchStore : MetadataSearchOrchestrator.MatchPersistence {

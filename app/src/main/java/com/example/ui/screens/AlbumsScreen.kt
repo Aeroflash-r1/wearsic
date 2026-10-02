@@ -32,6 +32,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
+import com.example.ui.components.WearsicEmptyState
+import com.example.ui.components.WearsicLoadingState
+import com.example.ui.components.WearsicSongRowArtwork
+import com.example.ui.theme.WearsicSurfaceRaised
+import com.example.ui.theme.WearsicSurfaceBorderSubtle
+import com.example.ui.theme.WearsicAccentSky
+import com.example.ui.util.wearsicClickable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
@@ -87,12 +97,17 @@ fun AlbumsScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     var typed by remember(albumsState.query) { mutableStateOf(albumsState.query) }
     var debouncedQuery by remember { mutableStateOf("") }
+    var submittedQuery by remember { mutableStateOf("") }
 
     // Debounce: fire search 400ms after the user stops typing.
     LaunchedEffect(debouncedQuery) {
         if (debouncedQuery.isNotBlank()) {
             kotlinx.coroutines.delay(400)
-            onQueryChanged(debouncedQuery.trim())
+            val query = debouncedQuery.trim()
+            if (query != submittedQuery) {
+                submittedQuery = query
+                onQueryChanged(query)
+            }
         }
     }
 
@@ -102,6 +117,7 @@ fun AlbumsScreen(
         val q = typed.trim()
         if (q.isNotBlank()) {
             keyboardController?.hide()
+            submittedQuery = q
             onQueryChanged(q)
         }
     }
@@ -168,7 +184,7 @@ fun AlbumsScreen(
                                 onDone = { submitAlbumSearch() },
                                 onGo = { submitAlbumSearch() }
                             ),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().onFocusChanged { isFocused = it.isFocused }
                         )
                     }
                 }
@@ -176,7 +192,7 @@ fun AlbumsScreen(
 
             if (albumsState.isLoading) {
                 item {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    WearsicLoadingState(label = "Finding albums…")
                 }
             }
 
@@ -191,7 +207,17 @@ fun AlbumsScreen(
                 }
             }
 
-            items(albumsState.albums, key = { it.id }) { album ->
+            if (!albumsState.isLoading && albumsState.albums.isEmpty() && albumsState.errorMessage == null) {
+                item {
+                    WearsicEmptyState(
+                        title = if (albumsState.query.isBlank()) "Listen from start to finish" else "No albums found",
+                        message = if (albumsState.query.isBlank()) "Search an artist or album and explore the full release." else "Try another artist or album title.",
+                        icon = Icons.Rounded.Album
+                    )
+                }
+            }
+
+            items(albumsState.albums.distinctBy { it.id }, key = { it.id }) { album ->
                 AlbumCard(album = album, onClick = { onOpenAlbum(album) })
             }
 
@@ -206,22 +232,39 @@ private fun AlbumCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    WearsicSongRow(
-        title = album.name,
-        artist = "${album.trackCount} songs • ${album.uploader}",
-        artworkUrl = album.thumbnailUrl,
-        onClick = onClick,
-        modifier = modifier,
-        testTag = "album_${album.id}",
-        trailing = {
-            Icon(
-                imageVector = Icons.Rounded.Album,
-                contentDescription = null,
-                tint = WearsicVibrantLavender.copy(alpha = 0.7f),
-                modifier = Modifier.size(18.dp)
-            )
+    Column(
+        modifier = modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(WearsicSurfaceRaised)
+            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(24.dp))
+            .wearsicClickable(onClick = onClick)
+            .testTag("album_${album.id}")
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        WearsicSongRowArtwork(
+            artworkUrl = album.thumbnailUrl,
+            contentDescription = album.name,
+            size = 88.dp
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = album.name, color = WearsicTextPrimary,
+            fontSize = 15.sp, fontWeight = FontWeight.Bold,
+            maxLines = 2, overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = album.uploader, color = WearsicTextMuted,
+            fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Album, contentDescription = null, tint = WearsicAccentSky, modifier = Modifier.size(12.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("${album.trackCount} songs", color = WearsicAccentSky, fontSize = 10.sp)
         }
-    )
+    }
 }
 
 @Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)

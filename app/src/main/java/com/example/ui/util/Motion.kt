@@ -18,6 +18,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import kotlinx.coroutines.android.awaitFrame
+import kotlinx.coroutines.delay
 
 /**
  * One motion system for the whole app.
@@ -78,7 +84,11 @@ fun Modifier.wearsicEntrance(
     riseDp: Float = 8f
 ): Modifier {
     var entered by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { entered = true }
+    val risePx = with(LocalDensity.current) { riseDp * density }
+    LaunchedEffect(Unit) {
+        awaitFrame()
+        entered = true
+    }
 
     val progress by animateFloatAsState(
         targetValue = if (entered) 1f else 0f,
@@ -95,7 +105,7 @@ fun Modifier.wearsicEntrance(
         val s = fromScale + (1f - fromScale) * progress
         scaleX = s
         scaleY = s
-        translationY = (1f - progress) * riseDp
+        translationY = (1f - progress) * risePx
     }
 }
 
@@ -110,11 +120,13 @@ fun Modifier.wearsicEntrance(
  *
  * [haptic] can be turned off for very small / decorative targets.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Modifier.wearsicClickable(
     enabled: Boolean = true,
     pressedScale: Float = 0.95f,
     haptic: Boolean = true,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ): Modifier {
     val haptics = LocalHapticFeedback.current
@@ -130,14 +142,22 @@ fun Modifier.wearsicClickable(
             scaleX = scale
             scaleY = scale
         }
-        .clickable(
+        .combinedClickable(
             interactionSource = interaction,
             indication = null,
-            enabled = enabled
-        ) {
-            if (haptic) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-            onClick()
-        }
+            enabled = enabled,
+            role = Role.Button,
+            onLongClick = onLongClick?.let { action ->
+                {
+                    if (haptic) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    action()
+                }
+            },
+            onClick = {
+                if (haptic) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+        )
 }
 
 /**

@@ -157,6 +157,9 @@ fun WearsicApp(
                     onNavigateToAlbums = {
                         navController.navigate(Screen.Albums.route)
                     },
+                    onNavigateToFavorites = {
+                        navController.navigate(Screen.Favorites.route)
+                    },
                     onNavigateToArtists = {
                         navController.navigate(Screen.Artists.route)
                     },

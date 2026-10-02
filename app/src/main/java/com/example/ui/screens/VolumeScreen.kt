@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import com.example.ui.theme.WearsicDimens
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Headphones
@@ -351,6 +352,7 @@ private fun VolumeBar(fraction: Float, modifier: Modifier = Modifier) {
 private fun SleepChip(label: String, isActive: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
+            .heightIn(min = WearsicDimens.TouchTarget)
             .clip(CircleShape)
             .background(if (isActive) WearsicVibrantLavender else WearsicGlassFill)
             .border(

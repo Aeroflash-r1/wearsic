@@ -33,9 +33,9 @@ Wearsic adopts a clean, modular Model-View-ViewModel (MVVM) architecture with st
 - **Rotary Scroll Input**: Uses a dedicated, zero-allocation custom `wearsicRotaryScroll()` modifier leveraging `FocusRequester` and `dispatchRawDelta` to translate physical crown and touch bezel movements directly into list movements and player seeks. Every list screen merges the system insets with the shared design padding via `wearsicListContentPadding()` (`ui/theme/WearsicDimens.kt`), so content always stays inside the circular safe area.
 - **Watch-First Touch Targets**: every tappable control carries at least a 44dp touch box (the `WearsicDimens.TouchTarget` token), including compact transport pills and song-row actions — visual size and tap area are decoupled so dense lists stay usable on the 44mm round display.
 - **Material Design 3 (Vibrant Palette)**: Deep black background (`#000000`), dark charcoal surfaces (`#1C1B1F`), and high-contrast Lavender accents (`#D0BCFF`). All colors/type live as named tokens in `ui/theme/Color.kt` — no scattered hex literals.
-- **Typographic headers**: screen titles are bold white typography centred at the top of the round face (2 lines max, ellipsized) — no gradient washes; the lavender accent (`WearsicVibrantLavender`) is reserved for interactive and progress elements.
-- **One motion system** (`ui/util/Motion.kt`): springs (not fixed tweens) for every press, staggered entrance animations for screens, and a shared `wearsicClickable` with haptics — all tuned to settle in under 200 ms so a weak watch SoC never reads them as lag.
-- **Wear-native player (screen + sub-screen)**: the album artwork is the full-bleed background under a dark scrim; a 2-page pager holds Now Playing (title/artist + full transport, always visible — never scrolled to) and an Actions sub-screen (favourite/download/queue/output). The play disc is wrapped by the signature lavender progress ring, drawn in the draw phase only.
+- **Immersive visual hierarchy**: OLED-black canvases, section-colored header markers, rounded album-cover rows, and an artwork-backed Library shortcut. Shared typography, quiet borders, and compact surface-local gradients keep the music—not decoration—in focus.
+- **One motion system** (`ui/util/Motion.kt`): spring press feedback, brief screen/sheet entrances with density-correct translation, and shared click/long-press handling with haptics. Song rows do not replay entrance animations as lazy scrolling recycles them. Player motion is finite by design: a track change plays one short staggered entrance (art scales in, text rises) and the play/pause glyph pops on each state change — nothing animates while the user simply listens.
+- **Wear-native player (screen + sub-screen)**: the album artwork is the full-bleed background under a dark scrim; a 2-page pager holds Now Playing (album-art disc + metadata + transport, always visible — never scrolled to) and an Actions sub-screen (favourite/download/queue/output). The composition is centre-weighted for the round face, because the widest part of a circle is its middle: the art disc owns the centre, metadata sits in the readable mid-band, and the transport hugs the lower third. Progress is a ring drawn around the art, and every size derives from the measured viewport so a control can never leave the visible chord (short viewports automatically use a tighter scale). Controls and ring use colors extracted from decoded artwork off the main thread, with lavender fallback. A tappable 44dp page indicator exposes the scrollable Actions page; rotary focus follows the active page, and transport is disabled when no track is loaded.
 - **Consistent components & states**: screens share canonical empty/loading states (`WearsicEmptyState`, `WearsicLoadingState`), glass pills, headers and song rows, so loading/empty/error moments look identical everywhere.
 - **Recently Played is identity-exact**: recents rows are keyed by the stable track ID, never by title — two different recordings that share a title/artist stay separate rows and always replay their exact recording (regression-covered by `RecentPlaybackIdentityTest`).
 
@@ -70,7 +70,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 ```json
 {
   "status": "ok",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -206,5 +206,5 @@ keytool -genkeypair -v -keystore my-upload-key.jks -alias upload \
 Then cut a release:
 
 ```bash
-git tag v1.5.0 && git push origin v1.5.0
+git tag v1.6.0 && git push origin v1.6.0
 ```

@@ -58,7 +58,9 @@ import com.example.ui.theme.WearsicTextPrimaryDark
 import com.example.ui.theme.WearsicTextSecondary
 import com.example.ui.theme.WearsicVibrantLavender
 import com.example.ui.util.WearsicMotion
-import com.example.ui.util.wearsicEntrance
+import com.example.ui.util.wearsicClickable
+import com.example.ui.theme.WearsicSurfaceRaised
+import com.example.ui.theme.WearsicTextWhite80
 
 /**
  * The canonical song card used across every list (search, queue, downloads,
@@ -83,33 +85,20 @@ fun WearsicSongRow(
     modifier: Modifier = Modifier,
     testTag: String = "song_row",
     titleColor: Color = WearsicTextPrimary,
-    artistColor: Color = WearsicTextSecondary,
+    artistColor: Color = WearsicTextWhite80,
     titleMaxLines: Int = 2,
+    onLongClick: (() -> Unit)? = null,
     trailing: @Composable () -> Unit = {},
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val pressScale by animateFloatAsState(
-        targetValue = if (pressed) 0.975f else 1f,
-        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
-        label = "songRowPress"
-    )
-
     Box(
         modifier = modifier
             .fillMaxWidth()
-            // One-shot settle-in: rows fade + rise once when they appear, so
-            // lists feel alive — cost is a single 180ms tween per row, never
-            // a continuous animation.
-            .wearsicEntrance()
-            .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
-            }
-            .clip(RoundedCornerShape(22.dp))
-            .background(WearsicGlassFill)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            // Rows enter with the list, not every time lazy scrolling recycles them.
+            .clip(RoundedCornerShape(20.dp))
+            .background(WearsicSurface)
+            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(20.dp))
+            .wearsicClickable(pressedScale = 0.975f, onLongClick = onLongClick, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp)
             .testTag(testTag)
     ) {
         Row(
@@ -122,7 +111,7 @@ fun WearsicSongRow(
                 modifier = Modifier.weight(1f)
             ) {
                 WearsicSongRowArtwork(artworkUrl = artworkUrl, contentDescription = title)
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
                         text = title,
@@ -169,7 +158,7 @@ fun WearsicSongRowArtwork(
         // Built once per URL: a fresh ImageRequest on every row recomposition
         // (rows redraw during a press and on list updates) makes Coil restart
         // the load instead of reusing the already-decoded bitmap.
-        val request = remember(artworkUrl) {
+        val request = remember(context, artworkUrl) {
             // ~80px at watch density; 112 leaves no visible headroom for
             // scaling-based blurs/shaders but still cuts the decoded bitmap
             // roughly in half versus the old 160px request.

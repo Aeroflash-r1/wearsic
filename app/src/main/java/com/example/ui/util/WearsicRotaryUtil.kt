@@ -13,9 +13,11 @@ import androidx.wear.compose.foundation.lazy.ScalingLazyListState
 @Composable
 fun Modifier.wearsicRotaryScroll(
     listState: ScalingLazyListState,
-    focusRequester: FocusRequester = remember { FocusRequester() }
+    focusRequester: FocusRequester = remember { FocusRequester() },
+    enabled: Boolean = true
 ): Modifier {
-    LaunchedEffect(listState) {
+    LaunchedEffect(listState, enabled) {
+        if (!enabled) return@LaunchedEffect
         try {
             focusRequester.requestFocus()
         } catch (_: Exception) {
@@ -26,7 +28,11 @@ fun Modifier.wearsicRotaryScroll(
         .focusRequester(focusRequester)
         .focusable()
         .onRotaryScrollEvent { event ->
-            listState.dispatchRawDelta(event.verticalScrollPixels)
-            true
+            if (enabled && event.verticalScrollPixels != 0f) {
+                listState.dispatchRawDelta(event.verticalScrollPixels)
+                true
+            } else {
+                false
+            }
         }
 }

@@ -67,6 +67,9 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.model.Track
 import com.example.ui.components.WearsicScreenHeader
+import com.example.ui.components.WearsicLoadingState
+import com.example.ui.components.WearsicEmptyState
+import com.example.ui.components.WearsicSectionTitle
 import com.example.ui.theme.WearsicDimens
 import com.example.ui.components.WearsicSongRow
 import com.example.ui.components.WearsicSongRowActionButton
@@ -135,6 +138,7 @@ fun SearchScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .wearsicEntrance()
+                .testTag("search_lazy_column")
                 .wearsicRotaryScroll(listState),
             contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -144,7 +148,7 @@ fun SearchScreen(
             item {
                 WearsicScreenHeader(
                     title = "Search",
-                    subtitle = "Stream Catalog",
+                    subtitle = "Find your next favorite",
                 )
             }
 
@@ -219,16 +223,12 @@ fun SearchScreen(
                         }
 
                         if (typedQuery.isNotEmpty()) {
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
+                            WearsicSongRowActionButton(
+                                icon = Icons.Rounded.Close,
                                 contentDescription = "Clear Search",
-                                tint = WearsicTextSecondary,
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .clip(CircleShape)                                    .wearsicClickable {
-                                onSearchTextChanged("")
-                            }
-                                    .testTag("search_clear_button")
+                                onClick = { onSearchTextChanged("") },
+                                testTag = "search_clear_button",
+                                tint = WearsicTextSecondary
                             )
                         }
                     }
@@ -241,6 +241,7 @@ fun SearchScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = WearsicDimens.TouchTarget)
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
@@ -275,20 +276,7 @@ fun SearchScreen(
             // Loading State
             if (searchState.isSearching) {
                 item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(22.dp))
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Searching server...",
-                            color = WearsicTextSecondary,
-                            fontSize = 11.sp
-                        )
-                    }
+                    WearsicLoadingState(label = "Finding your music…")
                 }
             }
 
@@ -310,8 +298,23 @@ fun SearchScreen(
                 }
             }
 
-            // Result Items
-            items(searchState.results, key = { it.id }) { track ->
+            if (!searchState.hasSearched && !searchState.isSearching && searchState.suggestions.isEmpty()) {
+                item {
+                    WearsicEmptyState(
+                        title = "A world of music",
+                        message = "Search a song, artist, or album to start listening.",
+                        icon = Icons.Rounded.Search
+                    )
+                }
+            }
+
+            if (searchState.results.isNotEmpty()) {
+                item { WearsicSectionTitle(label = "Songs", trailing = {
+                    Text("${searchState.results.size}", color = WearsicTextMuted, fontSize = 10.sp)
+                }) }
+            }
+            // Defend against duplicate IDs returned by older servers.
+            items(searchState.results.distinctBy { it.id }, key = { it.id }) { track ->
                 SearchTrackItem(
                     track = track,
                     onClick = { onTrackSelected(track) },
@@ -361,7 +364,8 @@ private fun SearchTrackItem(
         artist = track.artist,
         artworkUrl = track.artworkUrl,
         onClick = onClick,
-        modifier = modifier.combinedClickable(onClick = onClick, onLongClick = onLongPress),
+        modifier = modifier,
+        onLongClick = onLongPress,
         testTag = "search_track_${track.id}",
         trailing = {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -372,8 +376,7 @@ private fun SearchTrackItem(
                     testTag = "search_more_${track.id}",
                     tint = WearsicTextMuted
                 )
-                Spacer(modifier = Modifier.width(6.dp))
-                WearsicSongRowPlayButton(onClick = onClick)
+
             }
         }
     )

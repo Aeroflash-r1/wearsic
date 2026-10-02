@@ -323,23 +323,12 @@ private fun DownloadingItemCard(
                 }
             }
 
-            Box(
-                modifier = Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .background(WearsicSurface)
-                    .border(1.dp, WearsicSurfaceBorder, CircleShape)
-                    .wearsicClickable(onClick = onCancel)
-                    .testTag("cancel_download_${entity.trackId}"),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Close,
-                    contentDescription = "Cancel",
-                    tint = WearsicTextMuted,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
+            WearsicSongRowActionButton(
+                icon = Icons.Rounded.Close,
+                contentDescription = "Cancel download",
+                onClick = onCancel,
+                testTag = "cancel_download_${entity.trackId}"
+            )
         }
     }
 }

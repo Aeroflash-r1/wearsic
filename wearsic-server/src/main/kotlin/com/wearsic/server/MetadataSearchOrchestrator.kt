@@ -1,6 +1,8 @@
 package com.wearsic.server
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -17,7 +19,7 @@ import kotlinx.coroutines.launch
  * Fallback contract (see OrchestratorFallbackTest):
  *   YTM usable results   -> return them; only stream prefetch runs behind
  *                           the response (warms the CDN-URL cache)
- *   YTM empty/unusable   -> direct NewPipeExtractor YouTube search so the
+ *   YTM empty/unusable/failed -> direct NewPipeExtractor YouTube search so the
  *                           watch still gets results instead of an empty page
  *
  * Legacy `it:<id>` ids saved by pre-1.5 builds (favorites/playlists from the
@@ -44,7 +46,7 @@ class MetadataSearchOrchestrator(
          */
         private const val PREFETCH_COUNT = 2
 
-        /** Pause between prefetch extractions so user taps can jump ahead. */
+        /** Yield between prefetch extractions so user taps can acquire the mutex. */
         private const val PREFETCH_EXTRACT_STAGGER_MS = 300L
 
         /** Prefix used by the removed iTunes layer; kept for legacy replay. */
@@ -64,17 +66,30 @@ class MetadataSearchOrchestrator(
      * Counts fallback invocations; exposed for tests to prove that usable
      * YTM results never trigger the synchronous YouTube fallback.
      */
-    var youtubeFallbackCount: Int = 0
-        private set
+    private val fallbackCount = AtomicInteger()
+    val youtubeFallbackCount: Int get() = fallbackCount.get()
+    private val searchFlight = SingleFlight<String, List<TrackDto>>()
 
     suspend fun search(query: String): List<TrackDto> {
-        val tracks = metadata.searchSongs(query)
-        if (tracks.isNotEmpty()) {
-            prefetch(tracks.take(PREFETCH_COUNT))
-            return tracks.map { metadata.toTrackDto(it) }
+        val normalized = query.trim().replace(Regex("\\s+"), " ")
+        if (normalized.length < 2) return emptyList()
+        require(normalized.length <= 200) { "Search query is too long" }
+        return searchFlight.run(normalized) {
+            val tracks = try {
+                metadata.searchSongs(normalized)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(10)
+            if (tracks.isNotEmpty()) {
+                prefetch(tracks.take(PREFETCH_COUNT))
+                tracks.map { metadata.toTrackDto(it) }
+            } else {
+                fallbackCount.incrementAndGet()
+                youtube.search(normalized).filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(10)
+            }
         }
-        youtubeFallbackCount++
-        return youtube.search(query)
     }
 
     /**
@@ -83,7 +98,7 @@ class MetadataSearchOrchestrator(
      * tracks resolve instantly instead of queueing a cold extraction.
      */
     fun prefetchVideoIds(videoIds: List<String>) {
-        val ids = videoIds.filter { it.isNotBlank() && !it.startsWith(LEGACY_IT_PREFIX) }
+        val ids = videoIds.filter { it.isNotBlank() && !it.startsWith(LEGACY_IT_PREFIX) }.distinct().take(PREFETCH_COUNT)
         if (ids.isEmpty()) return
         prefetch(ids.map { YtmTrack(videoId = it) })
     }
@@ -91,17 +106,25 @@ class MetadataSearchOrchestrator(
     private var prefetchJob: Job? = null
 
     /**
-     * Warms the stream-URL cache top-first so taps play instantly. YTM ids
-     * are already real videoIds, so this is pure extraction with a stagger
-     * that lets an interactive tap jump the queue.
+     * One bounded top-first warmup batch. Never replace an active batch by
+     * cancellation: foreground callers can be awaiting its shared resolution.
      */
+    @Synchronized
     private fun prefetch(tracks: List<YtmTrack>) {
-        prefetchJob?.cancel()
+        // Never cancel a resolution a foreground stream may have joined.
+        // Keep one bounded warmup batch; newer requests do not create a backlog.
+        if (prefetchJob?.isActive == true) return
         prefetchJob = backgroundScope.launch {
             coroutineScope {
                 for (track in tracks) {
                     if (!isActive) break
-                    runCatching { youtube.streamTarget(track.videoId) }
+                    try {
+                        youtube.streamTarget(track.videoId)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        // Warmup failure must not prevent the remaining candidate.
+                    }
                     delay(PREFETCH_EXTRACT_STAGGER_MS)
                 }
             }

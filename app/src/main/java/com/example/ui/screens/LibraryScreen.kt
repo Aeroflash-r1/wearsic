@@ -14,12 +14,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.graphics.Brush
+import com.example.ui.components.WearsicSongRowArtwork
+import com.example.ui.theme.WearsicSurfaceRaised
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Favorite
+import com.example.ui.theme.WearsicAccentRose
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -85,6 +91,7 @@ fun LibraryScreen(
     onNavigateToDownloads: () -> Unit,
     onNavigateToPlaylists: () -> Unit,
     onNavigateToAlbums: () -> Unit = {},
+    onNavigateToFavorites: (() -> Unit)? = null,
     onNavigateToArtists: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToPlayer: () -> Unit,
@@ -125,11 +132,11 @@ fun LibraryScreen(
             // reads as a real home rather than a plain menu.
             item {
                 NowPlayingMiniCard(
-                    title = playbackState.currentTrack.title.ifBlank { "No Active Track" },
-                    artist = playbackState.currentTrack.artist.ifBlank { "Wearsic Player" },
+                    title = playbackState.currentTrack.title.ifBlank { "Your next favorite" },
+                    artist = playbackState.currentTrack.artist.ifBlank { "Find something to play" },
                     artworkUrl = playbackState.currentTrack.artworkUrl,
                     isPlaying = playbackState.isPlaying,
-                    onClick = onNavigateToPlayer
+                    onClick = if (playbackState.currentTrack.id.isBlank()) onNavigateToSearch else onNavigateToPlayer
                 )
             }
 
@@ -218,6 +225,18 @@ fun LibraryScreen(
                 )
             }
 
+            if (onNavigateToFavorites != null) {
+                item {
+                    WearsicSecondaryPillButton(
+                        label = "Favorites",
+                        icon = Icons.Rounded.Favorite,
+                        onClick = onNavigateToFavorites,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "library_favorites_button"
+                    )
+                }
+            }
+
             // Settings Action Pill
             item {
                 WearsicSettingsActionPill(
@@ -245,27 +264,36 @@ private fun NowPlayingMiniCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Solid accent for the active hero — the purple multi-stop gradient was
-    // replaced with a single flat colour.
-    val heroColor = WearsicVibrantLavender
+    val heroShape = RoundedCornerShape(24.dp)
     val context = LocalContext.current
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(CircleShape)
-            // Flat fills only — no drop shadow, no sheen gradient.
-            .background(if (isPlaying) SolidColor(heroColor) else SolidColor(WearsicGlassFill))
-            .border(
-                1.dp,
-                if (isPlaying) Color.Transparent else WearsicSurfaceBorderSubtle,
-                CircleShape
-            )
+            .heightIn(min = 88.dp)
+            .clip(heroShape)
+            .background(WearsicSurfaceRaised)
+            .border(1.dp, if (isPlaying) WearsicVibrantLavender.copy(alpha = 0.4f) else WearsicGlassBorder, heroShape)
             .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp)
             .testTag("now_playing_shortcut")
     ) {
+        if (!artworkUrl.isNullOrBlank()) {
+            val backdrop = remember(context, artworkUrl) {
+                ImageRequest.Builder(context).data(artworkUrl).size(256).build()
+            }
+            AsyncImage(
+                model = backdrop,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize()
+            )
+        }
+        Box(
+            Modifier.matchParentSize().background(
+                Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.85f), Color.Black.copy(alpha = 0.55f)))
+            )
+        )
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -304,7 +332,7 @@ private fun NowPlayingMiniCard(
                         Icon(
                             imageVector = Icons.Rounded.MusicNote,
                             contentDescription = null,
-                            tint = if (isPlaying) WearsicTextPrimaryDark else WearsicVibrantLavender,
+                            tint = WearsicVibrantLavender,
                             modifier = Modifier.size(17.dp)
                         )
                     }
@@ -313,10 +341,10 @@ private fun NowPlayingMiniCard(
                 Column(modifier = Modifier.weight(1f)) {
                     // Production touch: a tiny uppercase kicker labels the
                     // hero while music is actually playing.
-                    if (isPlaying) {
+                    run {
                         Text(
-                            text = "NOW PLAYING",
-                            color = WearsicTextPrimaryDark.copy(alpha = 0.65f),
+                            text = if (isPlaying) "NOW PLAYING" else "READY TO PLAY",
+                            color = WearsicVibrantLavender,
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.2.sp,
@@ -326,7 +354,7 @@ private fun NowPlayingMiniCard(
                     }
                     Text(
                         text = title,
-                        color = if (isPlaying) WearsicTextPrimaryDark else WearsicTextPrimary,
+                        color = WearsicTextPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = (-0.2).sp,
@@ -335,11 +363,7 @@ private fun NowPlayingMiniCard(
                     )
                     Text(
                         text = artist,
-                        color = if (isPlaying) {
-                            WearsicTextPrimaryDark.copy(alpha = 0.75f)
-                        } else {
-                            WearsicTextSecondary
-                        },
+                        color = Color.White.copy(alpha = 0.75f),
                         fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis

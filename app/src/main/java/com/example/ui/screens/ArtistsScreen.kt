@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.example.ui.theme.WearsicSurfaceRaised
+import com.example.ui.theme.WearsicSurfaceBorderSubtle
+import com.example.ui.theme.WearsicAccentPeach
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Person
@@ -151,9 +155,9 @@ fun ArtistsScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(CircleShape)
-                            .background(WearsicGlassFill)
-                            .border(1.dp, WearsicGlassBorder, CircleShape)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(WearsicSurfaceRaised)
+                            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(20.dp))
                             .wearsicClickable { selected = artist }
                             .padding(horizontal = 12.dp, vertical = 10.dp)
                             .testTag("artist_${artist.name}")
@@ -166,13 +170,13 @@ fun ArtistsScreen(
                                 modifier = Modifier
                                     .size(40.dp)
                                     .clip(CircleShape)
-                                    .background(WearsicVibrantLavender.copy(alpha = 0.25f)),
+                                    .background(WearsicAccentPeach.copy(alpha = 0.18f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Person,
                                     contentDescription = null,
-                                    tint = WearsicVibrantLavender,
+                                    tint = WearsicAccentPeach,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }

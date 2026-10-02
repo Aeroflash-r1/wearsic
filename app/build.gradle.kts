@@ -4,6 +4,7 @@ plugins {
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.kotlin.serialization)
   alias(libs.plugins.roborazzi)
+  alias(libs.plugins.screenshot)
 }
 
 android {
@@ -71,6 +72,8 @@ signingConfigs {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+  // Opt in to the experimental screenshotTest source set (layoutlib renders).
+  experimentalProperties["android.experimental.enableScreenshotTest"] = true
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
@@ -130,4 +133,8 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   debugImplementation(libs.androidx.wear.compose.ui.tooling)
+  // Compose Preview Screenshot Testing: real Skia/font rendering of @Preview
+  // composables at true Galaxy Watch7 round dimensions.
+  screenshotTestImplementation(libs.screenshot.validation.api)
+  screenshotTestImplementation(libs.androidx.compose.ui.tooling)
 }

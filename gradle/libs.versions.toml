@@ -30,9 +30,11 @@ wearCompose = "1.4.1"
 wearComposeMaterial3 = "1.0.0-alpha32"
 wearToolingPreview = "1.0.0"
 media3 = "1.5.1"
+screenshot = "0.0.1-alpha16"
 
 
 [libraries]
+screenshot-validation-api = { group = "com.android.tools.screenshot", name = "screenshot-validation-api", version.ref = "screenshot" }
 androidx-tiles = { group = "androidx.wear.tiles", name = "tiles", version.ref = "androidxTiles" }
 androidx-ongoing = { group = "androidx.wear", name = "wear-ongoing", version.ref = "androidxOngoing" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -87,4 +89,5 @@ kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "ko
 google-devtools-ksp = { id = "com.google.devtools.ksp", version.ref = "googleDevtoolsKsp" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }
+screenshot = { id = "com.android.compose.screenshot", version.ref = "screenshot" }
 

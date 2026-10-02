@@ -74,8 +74,16 @@ fun Modifier.wearsicPress(
 }
 
 /**
- * Content entrance: the element fades in, scales up slightly and settles, with
+ * Content entrance: the element scales up slightly and rises into place, with
  * an optional [delayMillis] so a column of things can stagger.
+ *
+ * DELIBERATELY DOES NOT FADE. The previous version animated alpha from 0,
+ * which meant the very first frame of any screen it wrapped was fully
+ * transparent — a blank flash on the watch, and a wasted full-screen alpha
+ * layer over every list. That also made the screen unreadable to any
+ * single-frame capture (screenshot/preview tooling, and the first frame after
+ * a cold start). Scale + rise reads as an entrance while keeping content
+ * visible from frame one.
  */
 @Composable
 fun Modifier.wearsicEntrance(
@@ -101,7 +109,7 @@ fun Modifier.wearsicEntrance(
     )
 
     return this.graphicsLayer {
-        alpha = progress
+        // No alpha here on purpose — see the KDoc above.
         val s = fromScale + (1f - fromScale) * progress
         scaleX = s
         scaleY = s

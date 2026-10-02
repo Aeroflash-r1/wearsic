@@ -216,17 +216,21 @@ jobs:
           VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
           RELEASE_REF="$GITHUB_REF_NAME"
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
-          # Remove stale draft releases for this version left by earlier packaging attempts.
-          # Never delete a published release.
-          gh release list --limit 100 --json databaseId,tagName,isDraft --jq \\
-            ".[] | select(.tagName == \"$RELEASE_REF\" and .isDraft == true) | .databaseId" |
-            while read -r RELEASE_ID; do
-              [ -z "$RELEASE_ID" ] || gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
-            done
-          if gh release view "$RELEASE_REF" >/dev/null 2>&1; then
-            echo "Published release $RELEASE_REF already exists; nothing to publish."
-            exit 0
-          fi
+          # Remove stale draft releases for this version. Never delete a published release.
+          while true; do
+            RELEASE_STATE=$(gh release view "$RELEASE_REF" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+            case "$RELEASE_STATE" in
+              true)
+                echo "Removing stale draft release $RELEASE_REF"
+                gh release delete "$RELEASE_REF" --yes
+                ;;
+              false)
+                echo "Published release $RELEASE_REF already exists; nothing to publish."
+                exit 0
+                ;;
+              *) break ;;
+            esac
+          done
           gh release create "$RELEASE_REF" \
             --target "$GITHUB_SHA" \
             --title "Wearsic $RELEASE_REF" \

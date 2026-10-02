@@ -128,12 +128,13 @@ jobs:
       - name: Stage release assets from THIS build (never a committed zip)
         run: |
           mkdir -p dist
-          # Signed release APK built moments ago in this same job.
-          # Server installDist output built moments ago in this same job.
-          cp app/build/outputs/apk/release/app-release.apk "dist/Wearsic-${RELEASE_REF}.apk"
+          VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
           RELEASE_REF="${GITHUB_REF_NAME}"
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
           echo "Packaging server version $VERSION as $RELEASE_REF"
+          # Signed release APK built moments ago in this same job.
+          cp app/build/outputs/apk/release/app-release.apk "dist/Wearsic-${RELEASE_REF}.apk"
+          # Server installDist output built moments ago in this same job.
           STAGE="dist/wearsic-server"
           mkdir -p "$STAGE"
           cp -r wearsic-server/build/install/wearsic-server/bin "$STAGE/"

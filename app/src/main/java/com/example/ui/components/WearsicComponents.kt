@@ -2,7 +2,10 @@ package com.example.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -44,6 +47,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -535,6 +539,57 @@ private fun wearsicSectionAccent(title: String): Color = when (title) {
     "Artists" -> WearsicAccentPeach
     "Queue", "Audio Output" -> WearsicAccentAmber
     else -> WearsicVibrantLavender
+}
+
+/**
+ * A single-line, self-scrolling title.
+ *
+ * Long song names used to wrap onto a second line on the round face. That
+ * pushed the artist line and transport down and clipped against the curved
+ * edge, so a long title also cost layout stability. This keeps the text on
+ * ONE line and slides it horizontally instead, so the FULL name is always
+ * reachable while the composition never changes height.
+ *
+ * Uses Compose's [basicMarquee], so the loop is driven by the framework's
+ * scroll machinery (and simply stops when the text is off-screen) rather
+ * than by an animation this app has to keep alive. `initialDelayMillis` holds
+ * the text still long enough for the screen's entrance motion to finish
+ * first, so the two movements never compete.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun WearsicMarqueeText(
+    text: String,
+    color: Color,
+    fontSize: TextUnit,
+    lineHeight: TextUnit,
+    modifier: Modifier = Modifier,
+    fontWeight: FontWeight = FontWeight.Normal,
+    letterSpacing: TextUnit = TextUnit.Unspecified,
+    startDelayMillis: Int = 900,
+    gapDp: Int = 48,
+    velocityDp: Int = 26
+) {
+    Text(
+        text = text,
+        color = color,
+        fontSize = fontSize,
+        lineHeight = lineHeight,
+        fontWeight = fontWeight,
+        letterSpacing = letterSpacing,
+        maxLines = 1,
+        softWrap = false,
+        textAlign = TextAlign.Center,
+        modifier = modifier.basicMarquee(
+            // Long titles loop; short ones never overflow so this never runs.
+            iterations = Int.MAX_VALUE,
+            initialDelayMillis = startDelayMillis,
+            // One gap between the end of the title and its restart, so the
+            // loop reads as "…full name | full name…" rather than a jump cut.
+            spacing = MarqueeSpacing(gapDp.dp),
+            velocity = velocityDp.dp
+        )
+    )
 }
 
 /**

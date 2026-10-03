@@ -56,12 +56,16 @@ fun main() {
     // bounded concurrency budget. The default CIO client has NO
     // timeouts — one stalled googlevideo.com connection used to park
     // a server worker forever while the watch spun buffering.
+    // keepAliveTime is 60s (was 30s): a watch that skips back and forth
+    // inside one song re-requests byte ranges of the SAME CDN URL, so
+    // reusing the live connection saves a fresh TLS handshake and a radio
+    // wake-up on every seek.
     val proxyClient = HttpClient(CIO) {
         engine {
             maxConnectionsCount = 20
             endpoint.apply {
                 maxConnectionsPerRoute = 10
-                keepAliveTime = 30_000
+                keepAliveTime = 60_000
                 connectAttempts = 2
             }
         }

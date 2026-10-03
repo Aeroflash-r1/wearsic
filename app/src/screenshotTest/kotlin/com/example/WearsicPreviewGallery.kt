@@ -136,6 +136,23 @@ fun GalleryPlayerNowPlaying() {
 @PreviewTest
 @Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
 @Composable
+fun GalleryPlayerLongTitle() {
+    GallerySurface {
+        PlayerScreen(
+            playbackState = previewPlayback.copy(
+                currentTrack = previewPlayback.currentTrack!!.copy(
+                    title = "A Really Quite Long Song Title That Should Slide Instead Of Wrapping"
+                )
+            ),
+            onTogglePlayPause = {}, onSkipNext = {}, onSkipPrevious = {},
+            onToggleFavorite = {}, onNavigateToVolume = {}
+        )
+    }
+}
+
+@PreviewTest
+@Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
+@Composable
 fun GalleryPlayerEmpty() {
     GallerySurface {
         PlayerScreen(

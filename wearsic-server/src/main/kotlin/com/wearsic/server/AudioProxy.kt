@@ -11,7 +11,8 @@ import io.ktor.server.request.header
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytesWriter
-import io.ktor.utils.io.copyAndClose
+import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.writeFully
 import org.slf4j.LoggerFactory
 
 /**
@@ -19,6 +20,13 @@ import org.slf4j.LoggerFactory
  * but YouTube revoked/expired it before the TTL ran out. Trigger self-heal.
  */
 private val DEAD_URL_STATUSES = setOf(403, 404, 410)
+
+/**
+ * Size of one upstream -> watch copy. Bigger than Ktor's 8KB default so a
+ * phone-hosted proxy isn't dominated by per-chunk overhead; small enough to
+ * stay cheap to allocate per request.
+ */
+private const val STREAM_CHUNK_BYTES = 64 * 1024
 
 class AudioProxy(
     private val extractor: YoutubeMetadataClient,
@@ -192,7 +200,32 @@ class AudioProxy(
                 }
 
                 call.respondBytesWriter(contentType = io.ktor.http.ContentType.parse(target.mimeType), status = status) {
-                    upstream.bodyAsChannel().copyAndClose(this)
+                    // Pump in 64KB chunks instead of Ktor's default 8KB
+                    // copyAndClose. This is the hot path for EVERY byte of
+                    // every song: 8KB writes mean 8x more socket writes,
+                    // 8x more channel hand-offs and 8x more CIO event-loop
+                    // wake-ups per megabyte, all on a phone CPU in Termux
+                    // that has a handful of big cores to share with ffmpeg
+                    // and NewPipe. 64KB also matches what ExoPlayer's
+                    // OkHttpDataSource reads per chunk on the watch, so the
+                    // two ends now work in comparable blocks.
+                    val source = upstream.bodyAsChannel()
+                    val buffer = ByteArray(STREAM_CHUNK_BYTES)
+                    while (true) {
+                        val read = source.readAvailable(buffer, 0, buffer.size)
+                        if (read < 0) break
+                        if (read > 0) {
+                            writeFully(buffer, 0, read)
+                        } else {
+                            // Channel has no bytes right now but isn't closed:
+                            // suspend until the CDN delivers more instead of
+                            // spinning on a 0-length read.
+                            source.awaitContent()
+                        }
+                    }
+                    // The surrounding `execute { }` closes the upstream
+                    // response when this block returns, so a skipped track
+                    // releases its CDN socket here without an explicit cancel.
                 }
                 ProxyOutcome.Streamed
             }

@@ -42,6 +42,17 @@ object WearsicStreamDataSource {
                 // healthy stream.
                 .callTimeout(0, TimeUnit.MILLISECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
+                // A watch on WiFi drops a socket when the radio roams between
+                // access points. OkHttp's default is to hand the failure
+                // straight to ExoPlayer, which surfaces it as a buffering
+                // error; retrying the read hides a single dropped packet
+                // instead of restarting the stream.
+                .retryOnConnectionFailure(true)
+                // Writing is only the request head here, so this can stay
+                // short — it must NOT be lengthened to "match" readTimeout,
+                // because a long write timeout would also delay a real
+                // connectivity failure being noticed.
+                .writeTimeout(15, TimeUnit.SECONDS)
                 .build()
         )
         return DefaultDataSource.Factory(context.applicationContext, upstreamFactory)

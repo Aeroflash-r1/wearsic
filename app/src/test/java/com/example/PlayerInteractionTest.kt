@@ -2,6 +2,7 @@ package com.example
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -15,6 +16,7 @@ import com.example.ui.screens.PlayerScreen
 import com.example.ui.theme.WearsicTheme
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -85,6 +87,46 @@ class PlayerInteractionTest {
         composeTestRule.onNodeWithTag("player_previous_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("player_next_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("player_page_switch").assertIsDisplayed()
+    }
+
+    @Test
+    fun nowPlaying_keepsALongSongTitleOnOneLine() {
+        val longTitle = "An Extremely Long Song Title That Must Never Be Allowed To Wrap Onto A Second Line On A Round Watch Face"
+        composeTestRule.setContent {
+            WearsicTheme {
+                PlayerScreen(
+                    playbackState = PlaybackUiState(
+                        currentTrack = Track(
+                            id = "track",
+                            title = longTitle,
+                            artist = "Artist With A Long Name"
+                        ),
+                        isPlaying = true,
+                        durationMs = 240_000L
+                    ),
+                    onTogglePlayPause = {}, onSkipNext = {}, onSkipPrevious = {},
+                    onToggleFavorite = {}, onNavigateToVolume = {}
+                )
+            }
+        }
+
+        val titleHeight = composeTestRule
+            .onNodeWithText(longTitle, substring = true, useUnmergedTree = true)
+            .fetchSemanticsNode().size.height
+        // The artist line is a known single line, so it works as a
+        // density-independent yardstick. Measured on WearOSLargeRound both
+        // report 36px (one 18sp title line vs the artist's 11sp line plus its
+        // 3dp top padding). A title that wrapped would be ~72px, so a 1.5x
+        // bound separates the two cases with room to spare. This is what
+        // proves the title scrolls sideways instead of reflowing.
+        val artistHeight = composeTestRule
+            .onNode(hasText("Artist With A Long Name", substring = true), useUnmergedTree = true)
+            .fetchSemanticsNode().size.height
+
+        assertTrue(
+            "Long title must stay on one scrolling line (title ${titleHeight}px, artist line ${artistHeight}px)",
+            titleHeight <= artistHeight * 1.5f
+        )
     }
 
     @Test

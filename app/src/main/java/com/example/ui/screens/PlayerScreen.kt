@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import com.example.ui.components.WearsicMarqueeText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -333,17 +334,19 @@ private fun NowPlayingPage(
 
             Spacer(modifier = Modifier.height(if (compact) 4.dp else 8.dp))
 
-            Text(
+            // Single line, always. A long title used to wrap to two lines,
+            // which pushed the artist line down and clipped at the curved
+            // edge; now the full name slides sideways instead.
+            WearsicMarqueeText(
                 text = if (hasTrack) track.title else "Nothing playing",
                 color = Color.White,
                 fontSize = if (compact) 14.sp else 15.sp,
                 lineHeight = if (compact) 16.sp else 18.sp,
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = (-0.2).sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.wearsicEntrance(delayMillis = 50, fromScale = 0.98f, riseDp = 6f)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wearsicEntrance(delayMillis = 50, fromScale = 0.98f, riseDp = 6f)
             )
 
             Text(

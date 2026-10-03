@@ -141,20 +141,36 @@ class WearsicMediaService : MediaSessionService() {
             WearsicStreamDataSource.createDataSourceFactory(this)
         )
 
-        // 3. Buffer policy: a modest in-memory window (ExoPlayer memory
-        //    buffering only — nothing is written to disk). Halved from
-        //    30s/60s: a watch has a small heap and this is the single largest
-        //    allocation the player holds, while 15s/30s still covers a whole
-        //    track transition plus a couple of seconds of network jitter (the
-        //    server-side warm-up removes the extraction stall that used to
-        //    justify the deep buffer).
+        // 3. Buffer policy: an in-memory window only (nothing is written to
+        //    disk). These four numbers were the main reason playback felt
+        //    sluggish on a watch:
+        //
+        //    - bufferForPlaybackMs 1500 -> 800: cold-start latency. The old
+        //      value made every tap wait 1.5s of audio before the first
+        //      sample, which reads as the app being slow even when the
+        //      network is fast.
+        //    - bufferForPlaybackAfterRebufferMs 5000 -> 2500: THIS was the
+        //      real culprit for mid-song stalls. After any interruption the
+        //      player sat silent for a full 5 seconds waiting to accumulate
+        //      buffer. On a phone that reads as cautious; on a watch it
+        //      reads as broken. 2.5s still guards against thrashing between
+        //      stalling and resuming, so a flaky link isn't made worse.
+        //    - maxBufferMs 30s -> 50s: a deeper runway against WiFi jitter.
+        //      A 4-minute AAC track at 128kbps is ~3.8MB, so 50s costs well
+        //      under 1MB of heap — affordable, and it means a track that
+        //      starts buffering usually finishes before the buffer is gone.
+        //    - targetBufferBytes 2MB as a hard backstop so a pathological
+        //      bitrate can't grow the buffer without bound on a small heap,
+        //      with time thresholds prioritised over that byte target.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 /* minBufferMs = */ 15000,
-                /* maxBufferMs = */ 30000,
-                /* bufferForPlaybackMs = */ 1500,
-                /* bufferForPlaybackAfterRebufferMs = */ 5000
+                /* maxBufferMs = */ 50000,
+                /* bufferForPlaybackMs = */ 800,
+                /* bufferForPlaybackAfterRebufferMs = */ 2500
             )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .setTargetBufferBytes(2 * 1024 * 1024)
             .build()
 
         // 4. Player

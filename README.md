@@ -1,6 +1,6 @@
 # Wearsic — Wear OS 6 Music App
 
-**Wearsic** is a lightweight, high-performance, and secure music streaming application engineered specifically for **Wear OS 6** smartwatches, fully optimized for the **Samsung Galaxy Watch7 (44mm)**.
+**Wearsic** is a lightweight and secure music streaming application engineered specifically for **Wear OS 6** smartwatches, fully optimized for the **Samsung Galaxy Watch7 (44mm)**.
 
 ---
 

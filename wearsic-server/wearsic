@@ -518,7 +518,10 @@ cmd_update() {
   if [ -z "$zip_url" ] && [ "$include_pre" = "1" ]; then
     zip_url="$(resolve_pre_zip_url "$repo")"
     [ -n "$zip_url" ] || die "no release with a server package was found for ${repo} — check your internet connection"
-    say "Newest release (incl. pre-releases): ${zip_url##*/wearsic-server-termux-}"
+    # Print the bare tag (e.g. "v1.6.2"), not the asset filename.
+    local chosen="${zip_url##*/}"
+    chosen="${chosen#wearsic-server-termux-}"; chosen="${chosen%.zip}"
+    say "Newest release (incl. pre-releases): $chosen"
   fi
   if [ -z "$zip_url" ]; then
     json="$(curl -fsSL --retry 2 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null || true)"

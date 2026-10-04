@@ -7,7 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -46,8 +45,6 @@ class MetadataSearchOrchestrator(
          */
         private const val PREFETCH_COUNT = 2
 
-        /** Yield between prefetch extractions so user taps can acquire the mutex. */
-        private const val PREFETCH_EXTRACT_STAGGER_MS = 300L
 
         /** Prefix used by the removed iTunes layer; kept for legacy replay. */
         const val LEGACY_IT_PREFIX = "it:"
@@ -105,29 +102,38 @@ class MetadataSearchOrchestrator(
 
     private var prefetchJob: Job? = null
 
+    @Volatile
+    private var foregroundPlaybackDemand = false
+
     /**
-     * One bounded top-first warmup batch. Never replace an active batch by
-     * cancellation: foreground callers can be awaiting its shared resolution.
+     * Top-first, event-driven warmup. There is deliberately no fixed delay:
+     * the next candidate starts only after the previous resolution finishes,
+     * and background work stops before starting another extraction whenever a
+     * foreground playback request is waiting.
      */
     @Synchronized
     private fun prefetch(tracks: List<YtmTrack>) {
-        // Never cancel a resolution a foreground stream may have joined.
-        // Keep one bounded warmup batch; newer requests do not create a backlog.
         if (prefetchJob?.isActive == true) return
         prefetchJob = backgroundScope.launch {
-            coroutineScope {
-                for (track in tracks) {
-                    if (!isActive) break
-                    try {
-                        youtube.streamTarget(track.videoId)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        // Warmup failure must not prevent the remaining candidate.
-                    }
-                    delay(PREFETCH_EXTRACT_STAGGER_MS)
+            for (track in tracks) {
+                if (!isActive || foregroundPlaybackDemand) break
+                try {
+                    youtube.streamTarget(track.videoId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // Continue to the next candidate after a warmup miss.
                 }
             }
+        }
+    }
+
+    suspend fun <T> withForegroundPlayback(block: suspend () -> T): T {
+        foregroundPlaybackDemand = true
+        return try {
+            block()
+        } finally {
+            foregroundPlaybackDemand = false
         }
     }
 

@@ -187,3 +187,29 @@ or changed automatically — set one yourself with `wearsic api-key
 A Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:8080`)
 also works but its URL changes on every restart. All options, including
 the no-tunnel ones, are in [`../TERMUX_SERVER_GUIDE.md`](../TERMUX_SERVER_GUIDE.md).
+
+## License
+
+The Wearsic server is free software licensed under the **GNU General Public
+License, version 3 only** (`SPDX-License-Identifier: GPL-3.0-only`).
+
+"Only" is deliberate: the server is not offered under any later version of the
+GPL, and not under the GNU Lesser General Public License. The complete license
+text is in [`LICENSE`](./LICENSE) in this directory.
+
+Scope of this license:
+
+- `wearsic-server/` — the server, licensed GPL-3.0-only.
+- `app/` — the Wear OS application, licensed **separately** under the Apache
+  License, Version 2.0 (see [`../LICENSE`](../LICENSE)). The GPL does not apply
+  to the Wear OS application, and the Apache-2.0 license does not apply to the
+  server. The two are separate works that talk to each other over HTTP.
+
+Third-party components:
+
+- [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor) — a
+  dependency of the server, licensed under the GNU General Public License,
+  version 3. See [`../NOTICE`](../NOTICE).
+
+Other dependencies (Ktor, SQLite JDBC, Logback, Kotlin) remain under their own
+licenses; review those before redistributing.

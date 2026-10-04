@@ -263,10 +263,35 @@ git tag v1.6.3 && git push origin v1.6.3
 
 ## 📄 License
 
-Wearsic is open source software licensed under the **Apache License 2.0** (`Apache-2.0`).
+Wearsic is open source software with **two components under two different licenses**:
 
-You may use, modify, and redistribute the project under the terms of that license. If you redistribute Wearsic or derivative works, retain the required copyright, license, and attribution notices.
+| Component | Path | License |
+| :--- | :--- | :--- |
+| Wear OS application (the watch app) | [`app/`](./app) | **Apache License 2.0** ([LICENSE](./LICENSE)) |
+| Wearsic server (backend) | [`wearsic-server/`](./wearsic-server) | **GPL-3.0-only** ([wearsic-server/LICENSE](./wearsic-server/LICENSE)) |
 
-The repository includes the full license in [LICENSE](./LICENSE) and third-party attribution guidance in [NOTICE](./NOTICE).
+The two components are separate works that communicate over HTTP, so each
+carries its own license. The Apache-2.0 license in [`LICENSE`](./LICENSE)
+covers the Wear OS application only, and the GPL-3.0-only license in
+[`wearsic-server/LICENSE`](./wearsic-server/LICENSE) covers the server only —
+the GPL does **not** apply to the Wear OS application, and the Apache-2.0
+license does **not** apply to the server.
 
-> **Important:** Wearsic includes third-party dependencies and tools that remain subject to their own licenses. The Apache-2.0 license for Wearsic does not relicense those components. Review the applicable dependency licenses before redistribution.
+### Wear OS application — Apache-2.0
+
+You may use, modify, and redistribute the app under the terms of the Apache
+License 2.0. If you redistribute Wearsic or derivative works, retain the
+required copyright, license, and attribution notices.
+
+### Wearsic server — GPL-3.0-only
+
+The server is free software licensed under the GNU General Public License,
+version 3 **only** (`GPL-3.0-only`) — not any later version of the GPL. The
+complete license text is in
+[`wearsic-server/LICENSE`](./wearsic-server/LICENSE).
+
+### Third-party components
+
+The repository includes third-party attribution guidance in [NOTICE](./NOTICE).
+
+> **Important:** Wearsic includes third-party dependencies and tools that remain subject to their own licenses. Neither the Apache-2.0 license nor the GPL-3.0-only license relicenses those components. In particular, the server depends on [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor), which is itself GPL-3.0. Review the applicable dependency licenses before redistribution.

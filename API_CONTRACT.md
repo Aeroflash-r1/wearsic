@@ -4,7 +4,7 @@ This document describes the REST API that the Wearsic Wear OS client actually
 speaks. It matches the source-built Ktor + NewPipe Extractor server
 (`wearsic-server/src/`, canonical implementation; release ZIPs are generated
 from it by CI) and the client parser in
-`app/src/main/java/com/example/network/WearsicHttpApiClient.kt`.
+`app/src/main/java/com/wearsic/app/network/WearsicHttpApiClient.kt`.
 
 > Note: earlier revisions of this file described a `/api/v1/...` namespace with
 > `tracks[]` arrays. That contract was never implemented; the real surface is

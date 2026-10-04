@@ -4,7 +4,7 @@
 # (DownloadState.QUEUED.name, COMPLETED.name, ...). Their names must never be
 # obfuscated, otherwise downloads recorded by a previous build would no longer
 # match and the Downloads screen would misrender offline tracks.
--keepclassmembers enum com.example.data.db.DownloadState { *; }
+-keepclassmembers enum com.wearsic.app.data.db.DownloadState { *; }
 
 # Keep readable file/line info in release stack traces for crash reports.
 -keepattributes SourceFile,LineNumberTable
@@ -16,19 +16,19 @@
 
 # Media3 MediaSessionService is referenced via ComponentName in
 # WearsicPlaybackController and started from the manifest.
--keep class com.example.media.WearsicMediaService { <init>(); }
+-keep class com.wearsic.app.media.WearsicMediaService { <init>(); }
 
-# kotlinx.serialization (com.example.network.model, health, playlist DTOs):
+# kotlinx.serialization (com.wearsic.app.network.model, health, playlist DTOs):
 # reified decodeFromString<T>() passes generated serializers directly, but R8
 # full mode can still strip the generated serializer/companion when a code path
 # is only reached at runtime (e.g. restored sessions on relaunch). Keep the
 # generated serializer classes + annotation metadata so release builds never
 # lose a serializer on any path.
 -keepattributes *Annotation*, InnerClasses, EnclosingMethod
--keep,includedescriptorclasses class com.example.**$$serializer { *; }
--keepclassmembers class com.example.** {
+-keep,includedescriptorclasses class com.wearsic.app.**$$serializer { *; }
+-keepclassmembers class com.wearsic.app.** {
     *** Companion;
 }
--keepclasseswithmembers class com.example.** {
+-keepclasseswithmembers class com.wearsic.app.** {
     kotlinx.serialization.KSerializer serializer(...);
 }

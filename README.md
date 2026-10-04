@@ -71,7 +71,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 ```json
 {
   "status": "ok",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -201,8 +201,9 @@ The Wearsic watch application is a **lightweight streaming client**. To protect 
 
 ### Pre-releases
 
-v1.6.x ships as a **GitHub pre-release** (`RELEASE_PRERELEASE: "true"` in the
-release job). This is enforced end-to-end, not just a label:
+v1.6.1 ships as a **GitHub pre-release** (`RELEASE_PRERELEASE: "true"` in the
+release job). v1.6.0 was published earlier as a normal release. This is
+enforced end-to-end, not just a label:
 
 | Reader | Endpoint | Pre-release behaviour |
 |---|---|---|
@@ -232,5 +233,5 @@ keytool -genkeypair -v -keystore my-upload-key.jks -alias upload \
 Then cut a release:
 
 ```bash
-git tag v1.6.0 && git push origin v1.6.0
+git tag v1.6.1 && git push origin v1.6.1
 ```

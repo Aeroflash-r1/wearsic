@@ -34,6 +34,13 @@ trap 'rm -rf "$STAGE"' EXIT
 cp -r "$SRC/bin" "$SRC/lib" "$STAGE/"
 cp "$HERE/run-termux.sh" "$HERE/wearsic" "$HERE/.env.example" "$STAGE/"
 
+# Licence files travel with the binary. The server itself is GPL-3.0-only, so
+# the GPL text is the LICENSE in this directory; the Apache-2.0 text is renamed
+# to make clear it covers the Wear OS app, not this server.
+cp "$HERE/LICENSE" "$STAGE/LICENSE"
+cp "$HERE/../LICENSE" "$STAGE/LICENSE.apache-2.0"
+cp "$HERE/../NOTICE" "$STAGE/NOTICE"
+
 mkdir -p "$(dirname "$OUT")"
 {
   sed "s/@VERSION@/$VERSION/g" <<'STUB'
@@ -94,7 +101,9 @@ install_bundle() {
   stage="$DEST/.install-staging.$$"
   rm -rf "$stage" && mkdir -p "$stage"
   tail -n +"$line" "$0" | base64 -d | tar xz -C "$stage" || { rm -rf "$stage"; die "payload extraction failed"; }
-  { [ -f "$stage/bin/wearsic-server" ] && [ -n "$(ls -A "$stage/lib" 2>/dev/null)" ] && [ -f "$stage/run-termux.sh" ]; } \
+  { [ -f "$stage/bin/wearsic-server" ] && [ -n "$(ls -A "$stage/lib" 2>/dev/null)" ] \
+      && [ -f "$stage/run-termux.sh" ] && [ -f "$stage/LICENSE" ] \
+      && [ -f "$stage/LICENSE.apache-2.0" ] && [ -f "$stage/NOTICE" ]; } \
     || { rm -rf "$stage"; die "bundle payload is incomplete — nothing was changed"; }
 
   rm -rf "$DEST/bin.new" "$DEST/lib.new"
@@ -107,7 +116,7 @@ install_bundle() {
   fi
   mv "$DEST/bin.new" "$DEST/bin" && mv "$DEST/lib.new" "$DEST/lib" \
     || die "swap failed midway — run the installer again to recover"
-  for f in run-termux.sh wearsic .env.example; do
+  for f in run-termux.sh wearsic .env.example LICENSE LICENSE.apache-2.0 NOTICE; do
     [ -f "$stage/$f" ] && cp "$stage/$f" "$DEST/$f"
   done
   rm -rf "$stage"

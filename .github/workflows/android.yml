@@ -160,6 +160,12 @@ jobs:
           cp wearsic-server/wearsic "$STAGE/"
           cp wearsic-server/.env.example "$STAGE/"
           cp wearsic-server/README.md "$STAGE/"
+          # Licence files must travel with the distributed server. The server
+          # is GPL-3.0-only (LICENSE); the Apache-2.0 text is renamed so it is
+          # obvious it covers the Wear OS app, not the server.
+          cp wearsic-server/LICENSE "$STAGE/LICENSE"
+          cp LICENSE "$STAGE/LICENSE.apache-2.0"
+          cp NOTICE "$STAGE/NOTICE"
           (cd dist && zip -qr "wearsic-server-termux-${RELEASE_REF}.zip" wearsic-server)
           # Authenticity: publish the zip's SHA-256 alongside it. The server's
           # auto-updater REFUSES to install any release without this file.

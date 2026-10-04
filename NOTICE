@@ -1,0 +1,18 @@
+Wearsic
+Copyright 2026 Aeroflash-r1
+
+Wearsic is distributed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+Third-party dependencies
+------------------------
+Wearsic depends on third-party open-source libraries and tools. Those
+components remain under their respective licenses; this NOTICE file does
+not replace or modify any third-party license terms.
+
+The project currently uses libraries including AndroidX, Jetpack Compose,
+Kotlin, Kotlin Coroutines, Kotlin Serialization, Ktor, Media3/ExoPlayer,
+OkHttp, Coil, Room, SQLite JDBC, Logback, and NewPipeExtractor.
+Redistributors should review and comply with the license and notice
+requirements of each dependency and any third-party assets included in
+a particular distribution.

@@ -136,7 +136,7 @@ not "not ready".
 - **Response**: array of album objects:
 
 ```json
-[ { "id": "<playlist-url>", "name": "...", "uploader": "...", "trackCount": 10, "thumbnailUrl": "..." } ]
+[ { "id": "<playlist-url>", "name": "...", "uploader": "...", "thumbnailUrl": "..." } ]
 ```
 
 Note: album `id` is a full playlist URL, not a bare id.

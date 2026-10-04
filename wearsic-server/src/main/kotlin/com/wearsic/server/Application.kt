@@ -15,6 +15,7 @@ import io.ktor.server.plugins.callloging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.application.log
+import io.ktor.server.http.HttpRequestLifecycle
 import io.ktor.server.plugins.origin
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
@@ -147,6 +148,13 @@ fun Application.module(
     canary: ExtractionCanary? = null,
     engineUpdater: EngineUpdater? = null,
 ) {
+    install(HttpRequestLifecycle) {
+        // When the Watch leaves a stream request, cancel the route coroutine.
+        // This releases its shared stream-extraction interest and closes the
+        // proxy work instead of continuing for a listener that no longer exists.
+        cancelCallOnClose = true
+    }
+
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true; encodeDefaults = true })
     }
@@ -311,7 +319,9 @@ fun Application.module(
                     )
                     return@get
                 }
-                audioProxy.handle(call, realVideoId)
+                searchOrchestrator.withForegroundPlayback {
+                    audioProxy.handle(call, realVideoId)
+                }
             }
 
             get("/search") {

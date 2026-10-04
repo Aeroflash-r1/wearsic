@@ -245,7 +245,6 @@ class YoutubeGateway(
                         id = item.url ?: return@mapNotNull null,
                         name = item.name ?: return@mapNotNull null,
                         uploader = item.uploaderName ?: "Unknown",
-                        trackCount = item.streamCount.coerceAtLeast(0).toInt(),
                         thumbnailUrl = bestThumbnailUrl(item.thumbnails),
                     )
                 }

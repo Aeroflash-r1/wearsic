@@ -15,7 +15,6 @@ data class Album(
     val id: String = "",
     val name: String = "",
     val uploader: String = "",
-    val trackCount: Int = 0,
     val thumbnailUrl: String? = null
 )
 

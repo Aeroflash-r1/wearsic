@@ -71,7 +71,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 ```json
 {
   "status": "ok",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -201,19 +201,42 @@ The Wearsic watch application is a **lightweight streaming client**. To protect 
 
 ### Pre-releases
 
-v1.6.1 ships as a **GitHub pre-release** (`RELEASE_PRERELEASE: "true"` in the
+v1.6.1+ ship as a **GitHub pre-release** (`RELEASE_PRERELEASE: "true"` in the
 release job). v1.6.0 was published earlier as a normal release. This is
 enforced end-to-end, not just a label:
 
 | Reader | Endpoint | Pre-release behaviour |
 |---|---|---|
 | `wearsic update` (Termux CLI) | `releases/latest` | Excluded by GitHub itself. |
+| `wearsic update --pre` (Termux CLI) | `releases?per_page=10` | **Includes** pre-releases — opt-in per run. |
 | `EngineUpdater::checkForUpdate` (phone auto-update) | `releases?per_page=10` | **Includes** pre-releases — so the server filters `prerelease`/`draft` itself. |
 
-Without that second filter, tagging a beta as a pre-release would still
+Without that third filter, tagging a beta as a pre-release would still
 auto-install it onto every existing phone within the check interval, making
 the pre-release flag cosmetic. `EngineUpdaterPrereleaseTest` covers it.
 To cut the next version as a normal release, set `RELEASE_PRERELEASE: ""`.
+
+**Updating to a pre-release.** Because GitHub's `releases/latest` excludes
+pre-releases, a plain `wearsic update` keeps serving the newest *stable*
+build even while a newer beta exists. To pull the beta:
+
+```bash
+wearsic update --pre
+```
+
+`--pre` walks the release list instead and installs the newest release that
+actually has a server package. Drafts and releases shipping no package are
+skipped. SHA-256 verification and rollback are unchanged — a pre-release is
+verified exactly like a stable one.
+
+To install a specific build without touching the CLI at all:
+
+```bash
+WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.6.1/wearsic-server-termux-v1.6.1.zip \
+  wearsic update
+```
+
+`update-pre-test.sh` pins this resolution logic offline (faking `curl`).
 
 One-time setup for releases — add these repository **secrets**:
 
@@ -233,5 +256,5 @@ keytool -genkeypair -v -keystore my-upload-key.jks -alias upload \
 Then cut a release:
 
 ```bash
-git tag v1.6.1 && git push origin v1.6.1
+git tag v1.6.2 && git push origin v1.6.2
 ```

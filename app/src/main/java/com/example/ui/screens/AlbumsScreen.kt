@@ -34,13 +34,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.width
 import com.example.ui.components.WearsicEmptyState
 import com.example.ui.components.WearsicLoadingState
 import com.example.ui.components.WearsicSongRowArtwork
 import com.example.ui.theme.WearsicSurfaceRaised
 import com.example.ui.theme.WearsicSurfaceBorderSubtle
-import com.example.ui.theme.WearsicAccentSky
 import com.example.ui.util.wearsicClickable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -258,12 +256,7 @@ private fun AlbumCard(
             text = album.uploader, color = WearsicTextMuted,
             fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
         )
-        Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.Album, contentDescription = null, tint = WearsicAccentSky, modifier = Modifier.size(12.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("${album.trackCount} songs", color = WearsicAccentSky, fontSize = 10.sp)
-        }
+        Spacer(Modifier.height(4.dp))
     }
 }
 

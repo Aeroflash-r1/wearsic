@@ -226,18 +226,19 @@ jobs:
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-          # v1.6.x ships as a PRE-RELEASE. Set this to "" (empty) to cut the
-          # next version as a normal release.
+          # Empty = publish as a NORMAL release. Set to "true" to cut a beta.
           #
           # This flag is NOT cosmetic. Two separate things depend on it:
           #   1. GitHub's "latest release" endpoint (releases/latest) IGNORES
-          #      pre-releases, so `wearsic update` in the Termux CLI will not
-          #      offer this build.
+          #      pre-releases, so a beta is invisible to plain `wearsic update`
+          #      in the Termux CLI — testers must use `wearsic update --pre`.
           #   2. ServerUpdater::checkForUpdate reads the releases LIST, which
           #      does include pre-releases — it filters them out itself (see
           #      GithubRelease.prerelease). If you ever remove that filter, a
           #      pre-release would silently auto-install on every user's phone.
-          RELEASE_PRERELEASE: "true"
+          #
+          # Default is "" (normal) so the ordinary update path works.
+          RELEASE_PRERELEASE: ""
         run: |
           VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
           RELEASE_REF="$GITHUB_REF_NAME"

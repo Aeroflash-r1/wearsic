@@ -71,7 +71,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 ```json
 {
   "status": "ok",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -201,9 +201,10 @@ The Wearsic watch application is a **lightweight streaming client**. To protect 
 
 ### Pre-releases
 
-v1.6.1+ ship as a **GitHub pre-release** (`RELEASE_PRERELEASE: "true"` in the
-release job). v1.6.0 was published earlier as a normal release. This is
-enforced end-to-end, not just a label:
+Releases ship as **normal GitHub releases** (`RELEASE_PRERELEASE: ""` in the
+release job), so plain `wearsic update` can actually see them. Set it to
+`"true"` to cut a beta instead — betas are then reachable only via
+`wearsic update --pre`. This is enforced end-to-end, not just a label:
 
 | Reader | Endpoint | Pre-release behaviour |
 |---|---|---|
@@ -214,7 +215,7 @@ enforced end-to-end, not just a label:
 Without that third filter, tagging a beta as a pre-release would still
 auto-install it onto every existing phone within the check interval, making
 the pre-release flag cosmetic. `EngineUpdaterPrereleaseTest` covers it.
-To cut the next version as a normal release, set `RELEASE_PRERELEASE: ""`.
+To cut the next version as a beta instead, set `RELEASE_PRERELEASE: "true"`.
 
 **Updating to a pre-release.** Because GitHub's `releases/latest` excludes
 pre-releases, a plain `wearsic update` keeps serving the newest *stable*
@@ -256,5 +257,5 @@ keytool -genkeypair -v -keystore my-upload-key.jks -alias upload \
 Then cut a release:
 
 ```bash
-git tag v1.6.2 && git push origin v1.6.2
+git tag v1.6.3 && git push origin v1.6.3
 ```

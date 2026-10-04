@@ -259,3 +259,14 @@ Then cut a release:
 ```bash
 git tag v1.6.3 && git push origin v1.6.3
 ```
+
+
+## 📄 License
+
+Wearsic is open source software licensed under the **Apache License 2.0** (`Apache-2.0`).
+
+You may use, modify, and redistribute the project under the terms of that license. If you redistribute Wearsic or derivative works, retain the required copyright, license, and attribution notices.
+
+The repository includes the full license in [LICENSE](./LICENSE) and third-party attribution guidance in [NOTICE](./NOTICE).
+
+> **Important:** Wearsic includes third-party dependencies and tools that remain subject to their own licenses. The Apache-2.0 license for Wearsic does not relicense those components. Review the applicable dependency licenses before redistribution.

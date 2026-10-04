@@ -25,13 +25,22 @@ private val DEAD_URL_STATUSES = setOf(403, 404, 410)
  * Size of one upstream -> watch copy. Bigger than Ktor's 8KB default so a
  * phone-hosted proxy isn't dominated by per-chunk overhead; small enough to
  * stay cheap to allocate per request.
+ *
+ * Verified by AudioProxyThroughputTest, which streams a real body through the
+ * real CIO stack at several chunk sizes.
  */
-private const val STREAM_CHUNK_BYTES = 64 * 1024
+internal const val STREAM_CHUNK_BYTES = 64 * 1024
 
 class AudioProxy(
     private val extractor: YoutubeMetadataClient,
     private val client: HttpClient,
     val transcoder: Transcoder = Transcoder(client),
+    /**
+     * Copy block size for every audio byte forwarded to the watch.
+     * Injectable so the throughput test can measure the real difference
+     * instead of the size being an unverified constant.
+     */
+    internal val chunkBytes: Int = STREAM_CHUNK_BYTES,
 ) {
 
     private val logger = LoggerFactory.getLogger(AudioProxy::class.java)
@@ -210,7 +219,7 @@ class AudioProxy(
                     // OkHttpDataSource reads per chunk on the watch, so the
                     // two ends now work in comparable blocks.
                     val source = upstream.bodyAsChannel()
-                    val buffer = ByteArray(STREAM_CHUNK_BYTES)
+                    val buffer = ByteArray(chunkBytes)
                     while (true) {
                         val read = source.readAvailable(buffer, 0, buffer.size)
                         if (read < 0) break

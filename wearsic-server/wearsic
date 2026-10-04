@@ -277,6 +277,37 @@ cmd_cookies() {
   fi
 }
 
+# Tailscale's daemon state, read without needing jq.
+#
+#   NoState   — tailscaled is not answering (daemon problem)
+#   NeedsLogin— daemon up, but this node is not authenticated
+#   Stopped   — authenticated but the node is down
+#   Starting  — coming up
+#   Running   — connected
+#
+# WHY THIS EXISTS: the funnel flow used to probe `tailscale status` for BOTH
+# "is the daemon up?" and "am I logged in?". But `tailscale status` FAILS in
+# BOTH cases, so the two conditions were indistinguishable. A freshly
+# installed but logged-OUT node was reported as "Tailscale daemon is not
+# running", and the `tailscale up` branch below it was unreachable code that
+# could never run. Reading the backend state separates them cleanly.
+ts_state() {
+  local s
+  s="$(tailscale status --json 2>/dev/null \
+        | sed -n 's/.*"BackendState"[[:space:]]*:[[:space:]]*"\([A-Za-z]*\)".*/\1/p' | head -1)"
+  # Fall back to probing if this tailscale build has no --json flag.
+  if [ -z "$s" ]; then
+    if tailscale status >/dev/null 2>&1; then
+      s="Running"
+    elif tailscale status 2>&1 | grep -qi 'logged out\|not logged in'; then
+      s="NeedsLogin"
+    else
+      s="NoState"
+    fi
+  fi
+  printf '%s' "$s"
+}
+
 cmd_funnel() {
   installed
   # Funnel exposes the server to the whole internet — require a key.
@@ -316,36 +347,89 @@ cmd_funnel() {
   # If the service is unavailable, fall back to the package's own launcher.
   # This also handles a fresh install where termux-services has not yet
   # created/registered the service directory.
-  if ! tailscale status >/dev/null 2>&1 && command -v tailscaled-start >/dev/null 2>&1; then
+  if [ "$(ts_state)" = "NoState" ] && command -v tailscaled-start >/dev/null 2>&1; then
     say "Termux service is unavailable — starting tailscaled directly…"
     tailscaled-start >/dev/null 2>&1 || true
   fi
 
-  local daemon_ok=0
-  local attempt
+  # Wait for tailscaled to ANSWER AT ALL. Any state other than NoState proves
+  # the daemon is alive; being authenticated is a separate question.
+  local state="" attempt
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    if tailscale status >/dev/null 2>&1; then
-      daemon_ok=1
-      break
-    fi
+    state="$(ts_state)"
+    [ -n "$state" ] && [ "$state" != "NoState" ] && break
     sleep 1
   done
-  [ "$daemon_ok" -eq 1 ] || die "Tailscale daemon is not running. Try: tailscaled-start"
-  # 3. logged in?
-  if ! tailscale status >/dev/null 2>&1; then
-    say "Logging in to Tailscale — open the printed link in a browser:"
-    tailscale up || die "Tailscale login failed — run 'tailscale up' manually"
-  else
-    say "Tailscale is connected."
+  if [ -z "$state" ] || [ "$state" = "NoState" ]; then
+    die "Tailscale daemon is not responding — nothing is listening."
+    die "  This is a DAEMON problem (not a login problem). Try: tailscaled-start"
   fi
+
+  # 3. Authenticated? Now answerable, because the state is explicit.
+  case "$state" in
+    Running)
+      say "Tailscale is connected."
+      ;;
+    NeedsLogin)
+      say "Tailscale is installed but this phone is NOT logged in."
+      say "Logging in — open the printed link in any browser on this device:"
+      say ""
+      if tailscale up; then
+        say "Logged in."
+      else
+        die "Tailscale login failed. Run it by hand to see the full output:"
+        die "  tailscale up"
+      fi
+      ;;
+    Stopped|Starting)
+      say "Tailscale state is '$state' — starting the node…"
+      tailscale up >/dev/null 2>&1 || true
+      ;;
+    *)
+      say "Tailscale state is '$state' — attempting Funnel anyway…"
+      ;;
+  esac
+
   # 4. expose the server
   local P; P="$(port)"
   say ""
   say "Enabling Funnel on port $P… (Ctrl+C to stop the public URL)"
-  say "If it complains about HTTPS certificates, enable them at:"
-  say "  https://login.tailscale.com/admin/dns  (DNS → HTTPS Certificates)"
   say ""
-  tailscale funnel "$P"
+
+  # Tailscale's own error is the most useful thing on screen, so stream it
+  # live — but also keep a copy so a FAILURE can be diagnosed rather than
+  # dumping a bare message at the user with no way forward.
+  local out; out="$(mktemp)"
+  tailscale funnel "$P" 2>&1 | tee "$out"
+  local rc=${PIPESTATUS[0]}
+
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 130 ]; then
+    say ""
+    say "─────────────────────────────────────────────"
+    say "Funnel did not start (tailscale exit $rc)."
+    say "Most likely causes:"
+    if grep -qi 'certificate\|https' "$out"; then
+      say ""
+      say "  ▸ HTTPS certificates are disabled for your tailnet."
+      say "    Enable them: https://login.tailscale.com/admin/dns"
+      say "    (DNS → HTTPS Certificates → Enable HTTPS)"
+    fi
+    if grep -qi 'policy\|acl\|denied\|not allowed\|permission' "$out"; then
+      say ""
+      say "  ▸ Your tailnet policy does not allow Funnel on this node/port."
+      say "    Check: https://login.tailscale.com/admin/acls"
+    fi
+    if grep -qi 'logged out\|not logged in\|needslogin' "$out"; then
+      say ""
+      say "  ▸ Not logged in. Run:  tailscale up"
+    fi
+    say ""
+    say "  The full tailscale output is above. Still stuck? Try the"
+    say "  no-account alternative (URL changes on every restart):"
+    say "    pkg install -y cloudflared"
+    say "    cloudflared tunnel --url http://localhost:$P"
+  fi
+  rm -f "$out"
 }
 
 cmd_public() {
@@ -684,17 +768,30 @@ cmd_doctor() {
     doctor_line "Termux" "—" "not Termux"; warns=$((warns+1))
   fi
 
-  # Tailscale / Funnel: only ever reported ACTIVE when confirmed.
+  # Tailscale / Funnel: only ever reported ACTIVE when confirmed, and the
+  # reason is always spelled out — "not active" alone gave no way to tell a
+  # dead daemon from a logged-out phone.
   if command -v tailscale >/dev/null 2>&1; then
-    if tailscale status >/dev/null 2>&1; then
-      doctor_line "Tailscale" "✓" "connected"
-    else
-      doctor_line "Tailscale" "—" "installed, not connected"; warns=$((warns+1))
-    fi
+    local ts_st; ts_st="$(ts_state)"
+    case "$ts_st" in
+      Running)   doctor_line "Tailscale" "✓" "connected" ;;
+      NeedsLogin) doctor_line "Tailscale" "!" "installed, not logged in — for a public URL run: tailscale up"; warns=$((warns+1)) ;;
+      Stopped)   doctor_line "Tailscale" "!" "node stopped — for a public URL run: tailscale up"; warns=$((warns+1)) ;;
+      Starting)  doctor_line "Tailscale" "—" "starting up"; warns=$((warns+1)) ;;
+      *)         doctor_line "Tailscale" "!" "daemon not responding — run: tailscaled-start"; warns=$((warns+1)) ;;
+    esac
+    # Tailscale is OPTIONAL: the server plays fine over LAN without it, so
+    # all of the above stay warnings and never flip doctor's exit code.
+    # Making a logged-out phone a hard failure would report "NOT READY" for
+    # a server that is in fact serving music perfectly over WiFi.
     if tailscale funnel status 2>/dev/null | grep -qi 'https://'; then
       doctor_line "Funnel" "✓" "active"
+    elif [ "$ts_st" != "Running" ]; then
+      # Funnel cannot work until the node is connected — say THAT instead of
+      # reporting a separate, confusing Funnel failure.
+      doctor_line "Funnel" "—" "blocked: Tailscale not connected"
     else
-      doctor_line "Funnel" "—" "not active"
+      doctor_line "Funnel" "—" "not active — start with: wearsic funnel"
     fi
   else
     doctor_line "Tailscale" "—" "not installed"

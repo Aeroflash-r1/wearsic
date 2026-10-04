@@ -72,7 +72,17 @@ class EngineUpdater(
     private data class GithubAsset(val name: String? = null, val browser_download_url: String? = null)
 
     @Serializable
-    private data class GithubRelease(val tag_name: String? = null, val assets: List<GithubAsset> = emptyList())
+    private data class GithubRelease(
+        val tag_name: String? = null,
+        val assets: List<GithubAsset> = emptyList(),
+        // GitHub's releases LIST includes pre-releases and drafts; only
+        // releases/latest excludes them. Because this class reads the list,
+        // it MUST honour both flags itself or a pre-release would quietly
+        // auto-install onto every user's phone. The Termux CLI does not need
+        // this: it reads releases/latest, which GitHub already filters.
+        val prerelease: Boolean = false,
+        val draft: Boolean = false,
+    )
 
     /** Supervisor-facing state written to `state/update.json`. */
     @Serializable
@@ -164,7 +174,12 @@ class EngineUpdater(
         }.bodyAsText()
         val releases = json.decodeFromString<List<GithubRelease>>(body)
         var skippedUnsigned: String? = null
-        val update = releases.asSequence()
+        // Only real, published, stable releases are installable. Anything
+        // else (a draft, or a pre-release like the v1.6 betas) is skipped
+        // entirely: users stay on the last stable build until the release is
+        // marked final.
+        val installable = releases.filterNot { it.prerelease || it.draft }
+        val update = installable.asSequence()
             .mapNotNull { rel ->
                 val tag = rel.tag_name ?: return@mapNotNull null
                 val version = tag.removePrefix("v")
@@ -194,7 +209,7 @@ class EngineUpdater(
             "release $it publishes no .sha256 checksum — refusing unverified auto-update"
         }
         latestKnownVersion = update?.version
-            ?: releases.firstNotNullOfOrNull { it.tag_name?.removePrefix("v") }
+            ?: installable.firstNotNullOfOrNull { it.tag_name?.removePrefix("v") }
 
         if (update != null) {
             println("[update] New engine available: v${update.version} (running v$runningVersion)")

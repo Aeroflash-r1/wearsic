@@ -45,6 +45,13 @@ jobs:
       - name: Run server tests
         run: ./gradlew :wearsic-server:test --stacktrace
 
+      # Shell logic lives in the `wearsic` CLI, which no Kotlin test covers.
+      # This one is fast and offline: it fakes `tailscale` and pins the state
+      # detection that `wearsic funnel` depends on to tell a dead daemon from
+      # a logged-out phone (the bug that made funnel setup fail).
+      - name: Run CLI shell tests (funnel/Tailscale state detection)
+        run: bash wearsic-server/tests/funnel-state-test.sh
+
       - name: Upload test reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -212,10 +219,24 @@ jobs:
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          # v1.6.x ships as a PRE-RELEASE. Set this to "" (empty) to cut the
+          # next version as a normal release.
+          #
+          # This flag is NOT cosmetic. Two separate things depend on it:
+          #   1. GitHub's "latest release" endpoint (releases/latest) IGNORES
+          #      pre-releases, so `wearsic update` in the Termux CLI will not
+          #      offer this build.
+          #   2. ServerUpdater::checkForUpdate reads the releases LIST, which
+          #      does include pre-releases — it filters them out itself (see
+          #      GithubRelease.prerelease). If you ever remove that filter, a
+          #      pre-release would silently auto-install on every user's phone.
+          RELEASE_PRERELEASE: "true"
         run: |
           VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
           RELEASE_REF="$GITHUB_REF_NAME"
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
+          PRERELEASE_FLAG=()
+          if [ -n "$RELEASE_PRERELEASE" ]; then PRERELEASE_FLAG=(--prerelease); fi
           # Remove stale draft releases for this version. Never delete a published release.
           while true; do
             RELEASE_STATE=$(gh release view "$RELEASE_REF" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
@@ -234,6 +255,7 @@ jobs:
           gh release create "$RELEASE_REF" \
             --target "$GITHUB_SHA" \
             --title "Wearsic $RELEASE_REF" \
+            "${PRERELEASE_FLAG[@]}" \
             --generate-notes \
             "dist/Wearsic-${RELEASE_REF}.apk" \
             "dist/wearsic-server-termux-${RELEASE_REF}.zip" \

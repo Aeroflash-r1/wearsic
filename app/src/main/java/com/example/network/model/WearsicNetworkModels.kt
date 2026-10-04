@@ -74,7 +74,6 @@ data class AlbumDto(
     val id: String,
     val name: String,
     val uploader: String = "",
-    val trackCount: Int = 0,
     val thumbnailUrl: String? = null
 ) {
     fun toDomainAlbum(): Album {
@@ -82,7 +81,6 @@ data class AlbumDto(
             id = id,
             name = name,
             uploader = uploader,
-            trackCount = trackCount,
             thumbnailUrl = thumbnailUrl?.let { url ->
                 if (url.contains("ytimg") || url.contains("googleusercontent")) {
                     url.replace(Regex("w\\d+-h\\d+"), "w256-h256")

@@ -52,6 +52,13 @@ jobs:
       - name: Run CLI shell tests (funnel/Tailscale state detection)
         run: bash wearsic-server/tests/funnel-state-test.sh
 
+      # Offline, fakes `curl`: pins `wearsic update --pre` so a published
+      # pre-release is reachable, and so drafts / releases with no server
+      # package are skipped. Without it `wearsic update` silently serves the
+      # older stable build forever.
+      - name: Run CLI shell tests (update --pre release resolution)
+        run: bash wearsic-server/tests/update-pre-test.sh
+
       - name: Upload test reports on failure
         if: failure()
         uses: actions/upload-artifact@v4

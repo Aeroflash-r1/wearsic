@@ -463,9 +463,49 @@ cmd_public() {
 #
 # Overrides (mainly for testing/mirrors): WEARSIC_ZIP_URL, WEARSIC_SHA_URL,
 # WEARSIC_REPO, WEARSIC_UPDATE_TIMEOUT (health wait seconds, default 60).
+# Echoes the newest release ZIP url from the release LIST, INCLUDING
+# pre-releases. $1 = repo slug. Empty output = nothing installable.
+#
+# releases?per_page=10 is newest-first and includes pre-releases (and drafts,
+# but a draft has no published assets). Rather than correlating
+# tag_name/draft/assets across JSON objects with grep — which is exactly the
+# class of bug the old funnel command had — this probes each tag's
+# PREDICTABLE asset url and takes the first that actually exists. A draft, or
+# a release shipping no server package, simply 404s and is skipped.
+resolve_pre_zip_url() {
+  local repo="$1" json t code u
+  json="$(curl -fsSL --retry 2 "https://api.github.com/repos/${repo}/releases?per_page=10" 2>/dev/null || true)"
+  [ -n "$json" ] || return 0
+  for t in $(printf '%s' "$json" \
+    | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed -E 's/.*"([^"]*)"$/\1/'); do
+    [ -n "$t" ] || continue
+    u="https://github.com/${repo}/releases/download/${t}/wearsic-server-termux-${t}.zip"
+    code="$(curl -sI -L -o /dev/null -m 20 -w '%{http_code}' "$u" 2>/dev/null || printf '000')"
+    [ "$code" = "200" ] && { printf '%s' "$u"; return 0; }
+  done
+  return 0
+}
+
 cmd_update() {
   installed
   local repo work zip sha expected actual stage src
+
+  # `wearsic update [--pre]`. GitHub's releases/latest endpoint EXCLUDES
+  # pre-releases, so a beta build (e.g. v1.6.1) is invisible to a plain
+  # `wearsic update` — it silently keeps serving v1.6.0. --pre is the
+  # explicit opt-in that walks the release LIST instead, so ordinary users
+  # stay on stable and testers can pull a beta on demand.
+  local include_pre=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --pre|-p) include_pre=1; shift ;;
+      -h|--help) usage; return 0 ;;
+      *) die "Unknown option for 'wearsic update': $1 (valid: --pre)" ;;
+    esac
+  done
+  [ "$include_pre" = "1" ] && say "Including pre-releases (--pre)."
+
   repo="${WEARSIC_REPO:-Aeroflash-r1/wearsic}"
   work="$(mktemp -d)" || die "could not create a temp dir"
   # EXIT (not RETURN) so the temp dir is cleaned even when die() exits.
@@ -475,6 +515,11 @@ cmd_update() {
   local zip_url sha_url json tag
   zip_url="${WEARSIC_ZIP_URL:-}"
   sha_url="${WEARSIC_SHA_URL:-}"
+  if [ -z "$zip_url" ] && [ "$include_pre" = "1" ]; then
+    zip_url="$(resolve_pre_zip_url "$repo")"
+    [ -n "$zip_url" ] || die "no release with a server package was found for ${repo} — check your internet connection"
+    say "Newest release (incl. pre-releases): ${zip_url##*/wearsic-server-termux-}"
+  fi
   if [ -z "$zip_url" ]; then
     json="$(curl -fsSL --retry 2 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null || true)"
     zip_url="$(printf '%s' "$json" \
@@ -821,7 +866,8 @@ usage() {
   say "  wearsic url                 Server URL + API key for the watch"
   say "  wearsic ip                  this phone's WiFi IP"
   say "  wearsic api-key [new]       show / change the API key"
-  say "  wearsic update              update to the latest release (verified, rollback-safe)"
+  say "  wearsic update [--pre]      update to the latest release (verified, rollback-safe)"
+  say "                             --pre also considers pre-release/beta builds"
   say "  wearsic version             installed + running engine version"
   say "  wearsic doctor              environment diagnostics (exit 0 = READY)"
   say "  wearsic cookies [str]       set the YouTube cookie"
@@ -847,7 +893,7 @@ case "${1:-}" in
       url)     cmd_url ;;
       ip)      cmd_ip ;;
       version) cmd_version ;;
-      update)  cmd_update ;;
+      update)  shift 2; cmd_update "$@" ;;
       doctor)  cmd_doctor ;;
       api)
         case "${3:-}" in
@@ -871,7 +917,7 @@ case "${1:-}" in
   url)       cmd_url ;;
   ip)        cmd_ip ;;
   version)   cmd_version ;;
-  update)    cmd_update ;;
+  update)    shift; cmd_update "$@" ;;
   doctor)    cmd_doctor ;;
   api-key|apikey) shift; cmd_api_key "$@" ;;
   cookies)   shift; cmd_cookies "$@" ;;

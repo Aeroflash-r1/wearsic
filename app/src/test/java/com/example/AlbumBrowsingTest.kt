@@ -31,7 +31,7 @@ class AlbumBrowsingTest {
 
     @Test
     fun artworkCard_opensExactAlbum_andDeduplicatesIds() {
-        val album = Album(id = "release", name = "A beautiful album", uploader = "Artist", trackCount = 12)
+        val album = Album(id = "release", name = "A beautiful album", uploader = "Artist")
         var selected: Album? = null
         composeTestRule.setContent {
             WearsicTheme {

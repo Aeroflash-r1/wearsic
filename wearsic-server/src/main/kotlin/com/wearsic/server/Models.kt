@@ -31,7 +31,6 @@ data class AlbumDto(
     val id: String, // full playlist URL, not a bare id — per contract
     val name: String,
     val uploader: String,
-    val trackCount: Int,
     val thumbnailUrl: String? = null,
 )
 

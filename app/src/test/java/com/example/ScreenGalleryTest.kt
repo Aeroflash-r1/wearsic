@@ -177,9 +177,9 @@ class ScreenGalleryTest {
             albumsState = AlbumsUiState(
                 query = "coldplay",
                 albums = listOf(
-                    Album("a1", "Parachutes", "Coldplay", 10),
-                    Album("a2", "A Rush of Blood to the Head", "Coldplay", 11),
-                    Album("a3", "X&Y", "Coldplay", 13)
+                    Album("a1", "Parachutes", "Coldplay"),
+                    Album("a2", "A Rush of Blood to the Head", "Coldplay"),
+                    Album("a3", "X&Y", "Coldplay")
                 )
             ),
             onQueryChanged = {}, onOpenAlbum = {}

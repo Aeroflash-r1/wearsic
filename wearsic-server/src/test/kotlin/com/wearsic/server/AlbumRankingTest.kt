@@ -15,7 +15,6 @@ class AlbumRankingTest {
         id = "https://example.com/${name.hashCode()}",
         name = name,
         uploader = uploader,
-        trackCount = 10,
         thumbnailUrl = null,
     )
 

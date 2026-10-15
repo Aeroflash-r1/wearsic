@@ -1,9 +1,6 @@
 package com.wearsic.server
 
 import io.ktor.client.HttpClient
-import io.ktor.client.request.header
-import io.ktor.client.request.prepareGet
-import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -11,7 +8,6 @@ import io.ktor.server.request.header
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytesWriter
-import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import org.slf4j.LoggerFactory
 
@@ -119,6 +115,7 @@ class AudioProxy(
             is ProxyOutcome.Streamed -> return
             is ProxyOutcome.Aborted -> return
             is ProxyOutcome.UpstreamError -> {
+                logger.info("Upstream refused {} with HTTP {} (first attempt)", videoId, outcome.status)
                 if (outcome.status !in DEAD_URL_STATUSES) {
                     call.respond(
                         HttpStatusCode.BadGateway,
@@ -185,59 +182,36 @@ class AudioProxy(
         rangeHeader: String?,
     ): ProxyOutcome {
         return try {
-            client.prepareGet(target.url) {
-                // Always ask upstream for a byte range: YouTube's CDN throttles
-                // non-range (200) audio responses and closes them after ~256KB,
-                // which made the first play of a song stall after ~15s of audio.
-                // Ranged requests stream the whole file at full speed. Forward the
-                // client's Range when present, otherwise request from byte 0.
-                header(HttpHeaders.Range, rangeHeader ?: "bytes=0-")
-            }.execute { upstream ->
-                // A 4xx/5xx from the CDN must surface as a real error — but
-                // NOT committed here: the caller retries once on dead URLs
-                // before sending anything (double-respond would throw).
-                if (upstream.status.value >= 400) {
-                    return@execute ProxyOutcome.UpstreamError(upstream.status.value)
-                }
-                upstream.headers[HttpHeaders.ContentRange]?.let { call.response.header(HttpHeaders.ContentRange, it) }
-                call.response.header(HttpHeaders.AcceptRanges, "bytes")
-
-                val status = if (upstream.status == HttpStatusCode.PartialContent) {
-                    HttpStatusCode.PartialContent
-                } else {
-                    HttpStatusCode.OK
-                }
-
-                call.respondBytesWriter(contentType = io.ktor.http.ContentType.parse(target.mimeType), status = status) {
-                    // Pump in 64KB chunks instead of Ktor's default 8KB
-                    // copyAndClose. This is the hot path for EVERY byte of
-                    // every song: 8KB writes mean 8x more socket writes,
-                    // 8x more channel hand-offs and 8x more CIO event-loop
-                    // wake-ups per megabyte, all on a phone CPU in Termux
-                    // that has a handful of big cores to share with ffmpeg
-                    // and NewPipe. 64KB also matches what ExoPlayer's
-                    // OkHttpDataSource reads per chunk on the watch, so the
-                    // two ends now work in comparable blocks.
-                    val source = upstream.bodyAsChannel()
-                    val buffer = ByteArray(chunkBytes)
-                    while (true) {
-                        val read = source.readAvailable(buffer, 0, buffer.size)
-                        if (read < 0) break
-                        if (read > 0) {
-                            writeFully(buffer, 0, read)
-                        } else {
-                            // Channel has no bytes right now but isn't closed:
-                            // suspend until the CDN delivers more instead of
-                            // spinning on a 0-length read.
-                            source.awaitContent()
-                        }
-                    }
-                    // The surrounding `execute { }` closes the upstream
-                    // response when this block returns, so a skipped track
-                    // releases its CDN socket here without an explicit cancel.
-                }
-                ProxyOutcome.Streamed
+            val (start, end) = parseRangeHeader(rangeHeader)
+            // Validate the URL + learn its total with a 1-byte CLOSED probe.
+            // Open-ended ranges 403 from throttled networks, so the probe
+            // (and every chunk below) carries an explicit end byte.
+            val (probeStatus, total) = client.probeUpstreamLength(target.url, start)
+            if (probeStatus != HttpStatusCode.PartialContent.value || total == null) {
+                return ProxyOutcome.UpstreamError(probeStatus)
             }
+            val lastByte = minOf(end ?: Long.MAX_VALUE, total - 1)
+            if (start > lastByte) {
+                call.respond(
+                    HttpStatusCode.RequestedRangeNotSatisfiable,
+                    ErrorResponse("Range start is beyond the content length")
+                )
+                return ProxyOutcome.Aborted // responded; nothing more to do
+            }
+            call.response.header(HttpHeaders.ContentRange, "bytes $start-$lastByte/$total")
+            call.response.header(HttpHeaders.AcceptRanges, "bytes")
+
+            call.respondBytesWriter(
+                contentType = io.ktor.http.ContentType.parse(target.mimeType),
+                status = HttpStatusCode.PartialContent
+            ) {
+                // Stitch 1 MB closed-range chunks into one client stream, in
+                // large copy blocks (see STREAM_CHUNK_BYTES).
+                client.fetchClosedChunks(target.url, start, lastByte, blockBytes = chunkBytes) { buf, n ->
+                    writeFully(buf, 0, n)
+                }
+            }
+            ProxyOutcome.Streamed
         } catch (e: Exception) {
             // Client disconnected/skipped mid-stream, or upstream failed —
             // not worth a scary 500, this happens routinely on track skips.

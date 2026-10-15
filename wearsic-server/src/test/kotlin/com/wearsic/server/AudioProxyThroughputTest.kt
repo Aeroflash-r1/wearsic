@@ -11,6 +11,7 @@ import io.ktor.server.application.call
 import io.ktor.server.cio.CIO as ServerCIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.response.header
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -92,21 +93,30 @@ class AudioProxyThroughputTest {
         }
     }
 
-    /** Origin server that serves [bytes] with range support, like a CDN. */
+    /** Origin server that honors closed ranges with exact slices, like a CDN. */
     private fun withOrigin(bytes: ByteArray, block: (String) -> Unit) {
         val server = embeddedServer(ServerCIO, port = 0, host = "127.0.0.1") {
             routing {
                 get("/audio") {
-                    // Always ranged, matching how the proxy talks to YouTube.
-                    call.response.header(HttpHeaders.ContentRange, "bytes 0-${bytes.size - 1}/${bytes.size}")
+                    val (start, end) = parseRangeHeader(call.request.headers[HttpHeaders.Range])
+                    if (start > bytes.size) {
+                        call.respond(
+                            io.ktor.http.HttpStatusCode.RequestedRangeNotSatisfiable,
+                            "range too large"
+                        )
+                        return@get
+                    }
+                    val last = minOf(end ?: (bytes.size - 1).toLong(), (bytes.size - 1).toLong())
+                    call.response.header(
+                        HttpHeaders.ContentRange,
+                        "bytes $start-$last/${bytes.size}"
+                    )
                     call.respondBytesWriter(contentType = ContentType.parse("audio/mp4"), status = io.ktor.http.HttpStatusCode.PartialContent) {
+                        var off = start.toInt()
+                        val stop = (last + 1).toInt()
                         val buf = ByteArray(64 * 1024)
-                        var off = 0
-                        while (off < bytes.size) {
-                            val n = minOf(buf.size, bytes.size - off)
-                            // Copy FROM the payload into the buffer (not
-                            // buffer into itself) — the previous form read
-                            // past the end of a 64KB buffer.
+                        while (off < stop) {
+                            val n = minOf(buf.size, stop - off)
                             bytes.copyInto(buf, 0, off, off + n)
                             writeFully(buf, 0, n)
                             off += n

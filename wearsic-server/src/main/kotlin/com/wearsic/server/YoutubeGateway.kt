@@ -85,6 +85,13 @@ class YoutubeGateway(
         /** Wall-clock budget for one full stream resolution. */
         internal const val EXTRACTION_TIMEOUT_MS: Long = 25_000L
 
+        /**
+         * Wall-clock budget for one search flight. A hung fetchPage() must
+         * never park a SingleFlight key forever — every later identical query
+         * would hang with it until restart. Timeouts are NOT cached.
+         */
+        internal const val SEARCH_TIMEOUT_MS: Long = 30_000L
+
         /** Client order for stream extraction: iOS first, default fallback. */
         internal val CLIENT_ORDER: List<Boolean> = listOf(true, false)
 
@@ -132,7 +139,12 @@ class YoutubeGateway(
         return searchSingleFlight.run(cacheKey) {
             // Double-check the cache after joining: the winner just populated it.
             searchCache.get(cacheKey)?.let { return@run it }
-            val results = searchMusic(normalized)
+            val results = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                searchMusic(normalized)
+            } ?: run {
+                logger.info("Search timed out for '{}'", normalized)
+                return@run emptyList()
+            }
             searchCache.put(cacheKey, results)
             results
         }

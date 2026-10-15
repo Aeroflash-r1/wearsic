@@ -23,6 +23,16 @@ class Database(dbPath: String) {
     /** Hard cap on persisted matches; the oldest are evicted beyond this. */
     private val MAX_MATCH_ROWS = 2000
 
+    /**
+     * Anti-abuse backstops for an open (keyless) server: anyone on the LAN
+     * can add favorites/playlists. Caps are generous for a human (a personal
+     * library never approaches them) and enforced by evicting the oldest —
+     * no new error paths, storage simply stops growing.
+     */
+    private val MAX_FAVORITES = 5000
+    private val MAX_PLAYLISTS = 200
+    private val MAX_TRACKS_PER_PLAYLIST = 2000
+
     private val lock = Any()
     private val conn: Connection = DriverManager.getConnection("jdbc:sqlite:$dbPath").apply {
         createStatement().use { it.execute("PRAGMA foreign_keys = ON") }
@@ -110,6 +120,15 @@ class Database(dbPath: String) {
         true
     } catch (_: Exception) {
         false
+    }
+
+    /** Idempotent close for graceful shutdown (drains WAL via checkpoint). */
+    fun close() = try {
+        synchronized(lock) {
+            conn.createStatement().use { it.execute("PRAGMA wal_checkpoint(TRUNCATE)") }
+            conn.close()
+        }
+    } catch (_: Exception) {
     }
 
     // ---------------- Settings (persisted YouTube cookie etc.) ----------------
@@ -239,6 +258,10 @@ class Database(dbPath: String) {
             ps.setString(5, track.thumbnailUrl ?: "")
             ps.executeUpdate()
         }
+        conn.prepareStatement(
+            "DELETE FROM favorites WHERE video_id NOT IN " +
+                "(SELECT video_id FROM favorites ORDER BY rowid DESC LIMIT $MAX_FAVORITES)"
+        ).use { it.executeUpdate() }
     }
 
     fun removeFavorite(videoId: String) = synchronized(lock) {
@@ -285,6 +308,10 @@ class Database(dbPath: String) {
             ps.setString(2, name)
             ps.executeUpdate()
         }
+        conn.prepareStatement(
+            "DELETE FROM playlists WHERE id NOT IN " +
+                "(SELECT id FROM playlists ORDER BY rowid DESC LIMIT $MAX_PLAYLISTS)"
+        ).use { it.executeUpdate() }
         PlaylistSummaryDto(id = id, name = name, trackCount = 0, thumbnailUrl = null)
     }
 
@@ -333,6 +360,18 @@ class Database(dbPath: String) {
             ps.setString(5, track.uploader)
             ps.setLong(6, track.durationMs)
             ps.setString(7, track.thumbnailUrl ?: "")
+            ps.executeUpdate()
+        }
+        conn.prepareStatement(
+            """
+            DELETE FROM playlist_tracks WHERE playlist_id = ? AND video_id NOT IN (
+                SELECT video_id FROM playlist_tracks WHERE playlist_id = ?
+                ORDER BY position DESC LIMIT $MAX_TRACKS_PER_PLAYLIST
+            )
+            """.trimIndent()
+        ).use { ps ->
+            ps.setString(1, playlistId)
+            ps.setString(2, playlistId)
             ps.executeUpdate()
         }
     }

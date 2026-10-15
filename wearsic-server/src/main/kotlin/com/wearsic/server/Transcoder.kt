@@ -111,15 +111,17 @@ class Transcoder(
         var aborted = false
 
         sharedSlots.withPermit {
-            val process = ProcessBuilder(
-                ffmpegBinary, "-hide_banner", "-loglevel", "error",
-                "-i", "pipe:0",
-                "-vn", "-c:a", "aac", "-b:a", "128k", "-f", "adts", "pipe:1"
-            ).start()
-            val stdin: OutputStream = process.outputStream
-            val stdout: InputStream = process.inputStream
-
+            var process: Process? = null
             try {
+                process = ProcessBuilder(
+                    ffmpegBinary, "-hide_banner", "-loglevel", "error",
+                    "-i", "pipe:0",
+                    "-vn", "-c:a", "aac", "-b:a", "128k", "-f", "adts", "pipe:1"
+                ).start()
+                val active = process
+                val stdin: OutputStream = active.outputStream
+                val stdout: InputStream = active.inputStream
+
                 client.prepareGet(sourceUrl) {
                     // Always ranged upstream: YouTube's CDN throttles and closes
                     // non-range audio responses around 256KB (same fix as the
@@ -150,6 +152,17 @@ class Transcoder(
                         status = status
                     ) {
                         coroutineScope {
+                            // Drain ffmpeg's stderr to nowhere on its own thread.
+                            // A full OS pipe buffer would otherwise wedge ffmpeg
+                            // forever while it holds a global transcode permit.
+                            // (Never redirectErrorStream into stdout — that pipe
+                            // carries the AAC bytes.)
+                            val stderrDrain = launch(Dispatchers.IO) {
+                                runCatching {
+                                    active.errorStream.copyTo(OutputStream.nullOutputStream())
+                                }
+                            }
+
                             // Pump CDN bytes into ffmpeg's stdin.
                             val pump = launch(Dispatchers.IO) {
                                 try {
@@ -188,6 +201,7 @@ class Transcoder(
                                 writeFully(buf, 0, n)
                             }
                             pump.join()
+                            stderrDrain.join()
                         }
                     }
                 }
@@ -196,7 +210,16 @@ class Transcoder(
                 logger.info("Transcode proxy ended early: {}", e.message)
                 aborted = true
             } finally {
-                runCatching { process.destroy() }
+                // destroy() alone can leave a wedged ffmpeg as a zombie:
+                // escalate and reap so permits/threads never leak.
+                runCatching { process?.destroy() }
+                try {
+                    if (process != null && process!!.isAlive) {
+                        process!!.destroyForcibly()
+                        process!!.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+                    }
+                } catch (_: Exception) {
+                }
             }
         }
 

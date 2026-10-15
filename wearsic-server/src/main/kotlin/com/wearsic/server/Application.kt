@@ -133,6 +133,18 @@ fun main() {
             canary = canary,
             engineUpdater = engineUpdater,
         )
+    }.apply {
+        // Graceful shutdown: drain in-flight streams, then release every
+        // owned resource. Previously SIGTERM cut streams mid-byte and leaked
+        // the SQLite connection, HTTP pools, and watchdog scopes.
+        Runtime.getRuntime().addShutdownHook(Thread({
+            runCatching { stop(5_000, 10_000) }
+            runCatching { selfHeal.stop() }
+            runCatching { searchOrchestrator.shutdown() }
+            runCatching { ytmusic.close() }
+            runCatching { proxyClient.close() }
+            runCatching { database.close() }
+        }, "wearsic-shutdown"))
     }.start(wait = true)
 }
 
@@ -353,6 +365,12 @@ fun Application.module(
                     call.respond(HttpStatusCode.BadRequest, ErrorResponse("Missing 'url' query parameter"))
                     return@get
                 }
+                // SSRF guard: attacker input becomes a fetch target, so only
+                // YouTube origins are ever resolved. Everything else is 400.
+                if (!isYouTubeUrl(url)) {
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse("Only YouTube playlist URLs are accepted"))
+                    return@get
+                }
                 val result = gateway.playlistByUrl(url)
                 if (result == null) {
                     call.respond(HttpStatusCode.NotFound, ErrorResponse("Could not resolve playlist"))
@@ -426,4 +444,24 @@ private fun mapRequestError(cause: Throwable?): Pair<HttpStatusCode, String> = w
     is BadRequestException -> HttpStatusCode.BadRequest to "Invalid request"
     is IllegalArgumentException -> HttpStatusCode.BadRequest to "Invalid request"
     else -> HttpStatusCode.BadRequest to "Invalid request"
+}
+
+/**
+ * SSRF allowlist for /api/playlist?url=. Only YouTube origins may be
+ * resolved: youtu.be, youtube.com, music.youtube.com and their www/nocookie
+ * variants. Case-insensitive host match; userinfo/ports do not smuggle
+ * another host past java.net.URI parsing.
+ */
+private val YOUTUBE_HOSTS = setOf(
+    "youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com",
+    "youtu.be", "www.youtu.be", "youtube-nocookie.com", "www.youtube-nocookie.com"
+)
+
+private fun isYouTubeUrl(raw: String): Boolean {
+    val host = try {
+        java.net.URI(raw.trim()).host?.lowercase()
+    } catch (_: Exception) {
+        null
+    } ?: return false
+    return host in YOUTUBE_HOSTS || YOUTUBE_HOSTS.any { host.endsWith(".$it") }
 }

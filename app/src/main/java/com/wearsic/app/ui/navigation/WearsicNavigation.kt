@@ -190,8 +190,12 @@ fun WearsicApp(
                         downloadsVM.startDownload(track)
                     },
                     onAddToQueue = { track ->
-                        playbackVM.addToQueue(track)
+                        playerViewModel.queueTrack(track)
                     },
+                    onToggleFavorite = { track ->
+                        playerViewModel.toggleFavoriteFor(track)
+                    },
+                    favoriteTrackIds = favoritesState.tracks.map { it.id }.toSet(),
                     playlists = playlistsState.playlists,
                     onCreatePlaylistAndAdd = { name, track ->
                         libraryVM.createPlaylistAndAdd(name, track)
@@ -224,7 +228,9 @@ fun WearsicApp(
                         playbackVM.seekBack()
                     },
                     onToggleFavorite = {
-                        playbackVM.toggleFavorite()
+                        // Network version: POST/DELETE /api/favorites + refresh.
+                        // (playbackVM.toggleFavorite() only flips the icon locally.)
+                        playerViewModel.toggleFavorite()
                     },
                     onNavigateToVolume = {
                         navController.navigate(Screen.Volume.route)
@@ -386,6 +392,9 @@ fun WearsicApp(
                     onDownloadTrack = { track ->
                         downloadsVM.startDownload(track)
                     },
+                    onQueue = { track ->
+                        playerViewModel.queueTrack(track)
+                    },
                     onRemoveFavorite = { trackId ->
                         libraryVM.removeFavorite(trackId)
                     },
@@ -417,6 +426,13 @@ fun WearsicApp(
                     onDownloadTrack = { track ->
                         downloadsVM.startDownload(track)
                     },
+                    onQueue = { track ->
+                        playerViewModel.queueTrack(track)
+                    },
+                    onToggleFavorite = { track ->
+                        playerViewModel.toggleFavoriteFor(track)
+                    },
+                    favoriteTrackIds = favoritesState.tracks.map { it.id }.toSet(),
                     onRemoveTrack = { id, trackId ->
                         libraryVM.removeTrackFromPlaylist(id, trackId)
                     },

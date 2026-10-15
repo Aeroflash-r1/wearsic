@@ -31,6 +31,8 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.runtime.Composable
@@ -79,6 +81,8 @@ fun WearsicTrackActionSheet(
     onCreatePlaylistAndAdd: (String) -> Unit,
     onRemove: (() -> Unit)? = null,
     removeLabel: String = "Remove",
+    onToggleFavorite: (() -> Unit)? = null,
+    isFavorite: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var mode by remember { mutableStateOf("menu") } // menu | pick | create
@@ -135,6 +139,12 @@ fun WearsicTrackActionSheet(
                     SheetAction(Icons.AutoMirrored.Rounded.QueueMusic, "Queue next") { onDismiss(); onQueue() }
                     SheetAction(Icons.Rounded.Add, "To playlist") { mode = "pick" }
                     SheetAction(Icons.Rounded.Download, "Download") { onDismiss(); onDownload() }
+                    if (onToggleFavorite != null) {
+                        SheetAction(
+                            if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            if (isFavorite) "Remove favorite" else "Add favorite"
+                        ) { onDismiss(); onToggleFavorite() }
+                    }
                     if (onRemove != null) {
                         SheetAction(Icons.Rounded.Delete, removeLabel) { onDismiss(); onRemove() }
                     }

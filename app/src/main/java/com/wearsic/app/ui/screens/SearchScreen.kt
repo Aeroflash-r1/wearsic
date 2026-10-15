@@ -103,6 +103,8 @@ fun SearchScreen(
     onTrackSelected: (Track) -> Unit,
     onDownloadTrack: (Track) -> Unit = {},
     onAddToQueue: (Track) -> Unit = {},
+    onToggleFavorite: (Track) -> Unit = {},
+    favoriteTrackIds: Set<String> = emptySet(),
     playlists: List<com.wearsic.app.model.Playlist> = emptyList(),
     onCreatePlaylistAndAdd: (String, Track) -> Unit = { _, _ -> },
     onAddToPlaylist: (String, Track) -> Unit = { _, _ -> },
@@ -340,7 +342,9 @@ fun SearchScreen(
                 onQueue = { onAddToQueue(t) },
                 onDownload = { onDownloadTrack(t) },
                 onAddToPlaylist = { pid -> onAddToPlaylist(pid, t) },
-                onCreatePlaylistAndAdd = { name -> onCreatePlaylistAndAdd(name, t) }
+                onCreatePlaylistAndAdd = { name -> onCreatePlaylistAndAdd(name, t) },
+                onToggleFavorite = { onToggleFavorite(t) },
+                isFavorite = t.id in favoriteTrackIds
             )
         }
     }

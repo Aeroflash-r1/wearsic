@@ -109,6 +109,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         playbackController.setCurrentTrackFavorite(isFavorite)
     }
 
+    fun swapQueuedItemToLocalFile(trackId: String, localFilePath: String) {
+        playbackController.swapQueuedItemToLocalFile(trackId, localFilePath)
+    }
+
     // ============================================================================
     // Output Device
     // ============================================================================

@@ -79,6 +79,11 @@ class WearsicPlayerViewModel(
     private val _sleepRemainingMs = MutableStateFlow(0L)
     private var sleepJob: Job? = null
 
+    // Server truth for hearts: refreshed from GET /api/favorites, applied to
+    // every track entering a queue and to the current track on change.
+    @Volatile
+    private var favoriteIds: Set<String> = emptySet()
+
     init {
         val container = (getApplication<WearsicApp>()).container
         
@@ -145,6 +150,40 @@ class WearsicPlayerViewModel(
                 }
             }
         }
+
+        // Hot-swap: the moment any download/AutoCache completes, rewrite queued
+        // http items to their local file. Prev/next then start instantly from
+        // disk — no server re-fetch, no radio wakeup (battery).
+        viewModelScope.launch {
+            downloadsViewModel.completedTracks.collect { completed ->
+                for (track in completed) {
+                    if (track.id.isNotBlank() && track.mediaUri.startsWith("/")) {
+                        playbackViewModel.swapQueuedItemToLocalFile(track.id, track.mediaUri)
+                    }
+                }
+            }
+        }
+
+        // Favorite hydration: keep hearts truthful to the server. The player
+        // heart previously only reflected local taps; now every favorites
+        // refresh re-stamps the set and the current track follows it.
+        viewModelScope.launch {
+            libraryViewModel.refreshFavorites()
+            libraryViewModel.favoritesState.collect { fav ->
+                favoriteIds = fav.tracks.map { it.id }.toSet()
+                val current = playbackViewModel.uiState.value.currentTrack
+                if (current.id.isNotBlank()) {
+                    playbackViewModel.setCurrentTrackFavorite(current.id in favoriteIds)
+                }
+            }
+        }
+    }
+
+    /** Stamp server favorite truth onto a track entering a queue. */
+    private fun applyFavoriteFlags(track: Track): Track {
+        if (track.id.isBlank()) return track
+        val fav = track.id in favoriteIds
+        return if (track.isFavorite == fav) track else track.copy(isFavorite = fav)
     }
 
     // ============================================================================
@@ -219,11 +258,19 @@ class WearsicPlayerViewModel(
     // ============================================================================
 
     fun playTrack(track: Track) {
+        // Same-track tap: never tear down the pipeline — just (re)play.
+        // This alone removes the full stop/clear/prepare/play stall that made
+        // every re-tap feel like a fresh cold start.
+        val current = playbackViewModel.uiState.value
+        if (track.id.isNotBlank() && track.id == current.currentTrack.id) {
+            if (!current.isPlaying) playbackViewModel.togglePlayPause()
+            return
+        }
         viewModelScope.launch {
             val localTrack = withContext(Dispatchers.IO) {
                 (getApplication<WearsicApp>()).container.downloadRepository.getDownloadedTrack(track.id)
             }
-            val trackToPlay = localTrack ?: track
+            val trackToPlay = applyFavoriteFlags(localTrack ?: track)
             warmUpStream(trackToPlay)
 
             val completed = completedTracks.value
@@ -248,12 +295,28 @@ class WearsicPlayerViewModel(
         playbackViewModel.addToQueue(track)
     }
 
+    /**
+     * Queue ONE track with local-file resolution: a downloaded track is queued
+     * as its file (instant later playback), never as a re-streamable http URI.
+     */
+    fun queueTrack(track: Track) {
+        viewModelScope.launch {
+            val local = withContext(Dispatchers.IO) {
+                (getApplication<WearsicApp>()).container.downloadRepository.getDownloadedTrack(track.id)
+            }
+            playbackViewModel.addToQueue(applyFavoriteFlags(local ?: track))
+        }
+    }
+
     fun playTracksFromList(tracks: List<Track>, startIndex: Int = 0) {
         viewModelScope.launch {
             val container = (getApplication<WearsicApp>()).container
-            val resolved = tracks.map { t ->
-                container.downloadRepository.getDownloadedTrack(t.id) ?: t
+            // ONE batched Room query (not N serial lookups on the tap path),
+            // then stamp server favorite flags onto the whole queue at once.
+            val localById = withContext(Dispatchers.IO) {
+                container.downloadRepository.getCompletedTracksById(tracks.map { it.id })
             }
+            val resolved = tracks.map { t -> applyFavoriteFlags(localById[t.id] ?: t) }
             if (resolved.isNotEmpty()) {
                 warmUpStream(resolved[startIndex.coerceIn(0, resolved.lastIndex)])
             }
@@ -432,6 +495,24 @@ class WearsicPlayerViewModel(
             }.onFailure {
                 playbackViewModel.setCurrentTrackFavorite(!targetFavorite)
             }
+        }
+    }
+
+    /**
+     * Favorite toggle for ANY track (action sheets, lists) — decided by server
+     * truth ([favoriteIds]), not by the possibly-stale row flag. Refreshes the
+     * set on success so hearts everywhere converge.
+     */
+    fun toggleFavoriteFor(track: Track) {
+        if (track.id.isBlank()) return
+        viewModelScope.launch {
+            val repo = (getApplication<WearsicApp>()).container.musicRepository
+            val result = if (track.id in favoriteIds) {
+                repo.removeFavorite(track.id)
+            } else {
+                repo.addFavorite(track)
+            }
+            result.onSuccess { libraryViewModel.refreshFavorites() }
         }
     }
 

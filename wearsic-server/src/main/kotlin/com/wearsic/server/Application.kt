@@ -45,6 +45,10 @@ fun main() {
 
     val database = Database(dbPath)
     YoutubeSession.init(database)
+    // Crash capture FIRST so even startup failures are recorded. Files land
+    // in <state>/crashes (cap 20); /health reports the count + newest time.
+    val crashReporter = CrashReporter(java.io.File(stateDir, "crashes"))
+    crashReporter.install()
     // v1.4.4: wipe matches persisted by older, version-blind matcher builds
     // so every song re-matches with the fixed logic once.
     database.clearStaleMatchesOnce("matcher_version_wipe", "1.4.4")
@@ -132,6 +136,7 @@ fun main() {
             healthMeter = healthMeter,
             canary = canary,
             engineUpdater = engineUpdater,
+            crashReporter = crashReporter,
         )
     }.apply {
         // Graceful shutdown: drain in-flight streams, then release every
@@ -158,6 +163,7 @@ fun Application.module(
     healthMeter: ExtractionHealthMeter? = null,
     canary: ExtractionCanary? = null,
     engineUpdater: EngineUpdater? = null,
+    crashReporter: CrashReporter? = null,
 ) {
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true; encodeDefaults = true })
@@ -230,6 +236,8 @@ fun Application.module(
                     extraction = extraction,
                     canaryHealthy = canary?.lastProbeHealthy,
                     update = update,
+                    crashCount = crashReporter?.crashCount() ?: 0,
+                    lastCrashAtMillis = crashReporter?.lastCrash()?.atMillis ?: 0,
                 )
             )
         }

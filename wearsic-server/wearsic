@@ -919,6 +919,11 @@ cmd_doctor() {
     elif [ -n "$canary" ]; then
       doctor_line "Canary" "—" "$canary"
     fi
+    local crashes
+    crashes="$(printf '%s' "$health" | sed -n 's/.*"crashCount"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')"
+    if [ -n "$crashes" ] && [ "$crashes" -gt 0 ] 2>/dev/null; then
+      doctor_line "Crashes" "!" "$crashes recorded — see state/crashes + wearsic-server.log"; warns=$((warns+1))
+    fi
   fi
 
   local ip; ip="$(lan_ip)"

@@ -112,6 +112,11 @@ data class HealthResponse(
     val extraction: ExtractionHealthDto? = null,
     val canaryHealthy: Boolean? = null,
     val update: UpdateStatusDto? = null,
+    // Crash visibility: how many uncaught throwables were captured since
+    // install (files in state/crashes) and when the newest happened. Zero
+    // means "none recorded", not "none happened before capture existed".
+    val crashCount: Int = 0,
+    val lastCrashAtMillis: Long = 0,
 )
 
 @Serializable

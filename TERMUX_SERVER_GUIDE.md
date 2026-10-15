@@ -45,6 +45,12 @@ Copy this **one line** into Termux:
 curl -fsSL https://raw.githubusercontent.com/Aeroflash-r1/wearsic/main/install.sh | bash
 ~~~
 
+If that host is blocked on your network, this mirror serves the same file:
+
+~~~bash
+curl -fsSL https://cdn.jsdelivr.net/gh/Aeroflash-r1/wearsic@main/install.sh | bash
+~~~
+
 The installer will:
 
 - detect Termux and the phone architecture

@@ -71,7 +71,12 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
 fi
 
 # --- Perf-tuned JVM flags ---
-export JAVA_OPTS="${JAVA_OPTS:--Xms64m -Xmx512m -XX:+UseG1GC -XX:MaxGCPauseMillis=150 -Dhttp.keepAlive=true -Dhttp.maxConnections=10}"
+# G1GC with a 512m heap (SerialGC froze the whole server on every
+# collection). TieredStopAtLevel=1: this server is I/O-bound (network +
+# SQLite), so C2's peak-throughput win never materializes while its slow
+# optimizing compiles stretch cold boots on little phone CPUs by ~30%.
+# Drop -Xmx512m to -Xmx384m on phones with <3-4GB free RAM.
+export JAVA_OPTS="${JAVA_OPTS:--Xms64m -Xmx512m -XX:+UseG1GC -XX:TieredStopAtLevel=1 -XX:MaxGCPauseMillis=150 -Dhttp.keepAlive=true -Dhttp.maxConnections=10}"
 export PORT="${PORT:-8080}"
 export WEARSIC_DB_PATH="${WEARSIC_DB_PATH:-$SCRIPT_DIR/wearsic.db}"
 
@@ -110,16 +115,22 @@ trap cleanup INT TERM
 # checking live processes; the pattern is the absolute script path so it
 # cannot match an unrelated process).
 other_supervisor_pids() {
+  # Direct /proc scan (see pids_for in the wearsic CLI): no pgrep/ps
+  # dependency — busybox pgrep -f misbehaves, and `ps -ef` is not portable.
   # $$ is the script's PID even inside $() — the command substitution has its
   # OWN pid (BASHPID) and its command line also matches the pattern. Filter
   # both, or the guard would always "find itself" and refuse to start.
-  local self="${BASHPID:-$$}"
-  if command -v pgrep >/dev/null 2>&1; then
-    pgrep -f "$SCRIPT_DIR/run-termux.sh" 2>/dev/null | grep -v "^$$\$" | grep -v "^$self\$"
-  else
-    ps -ef 2>/dev/null | awk -v p="$SCRIPT_DIR/run-termux.sh" -v s1="$$" -v s2="$self" \
-      '$0 ~ p && $2 != s1 && $2 != s2 {print $2}'
-  fi
+  local self="${BASHPID:-$$}" d pid cmdline
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    [ "$pid" = "$$" ] && continue
+    [ "$pid" = "$self" ] && continue
+    cmdline="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" || continue
+    [ -z "$cmdline" ] && continue
+    case "$cmdline" in
+      *"$SCRIPT_DIR/run-termux.sh"*) printf '%s\n' "$pid" ;;
+    esac
+  done
 }
 
 # --- Crash-safe engine replacement -----------------------------------------
@@ -281,31 +292,22 @@ recover_interrupted_update
 log "auto-heal supervisor starting (health checks every 30s)"
 
 # --- FFmpeg: required only for the rare Opus/WebM-only song (503 otherwise). ---
-# Installation failures must NOT be reported as success: verify the binary
-# actually exists after pkg install, and exit non-zero if it does not — a
-# silent partial install previously made the supervisor print "ffmpeg
-# installed" while transcoding stayed broken.
+# Installs in the BACKGROUND so first boot isn't held hostage by a ~50MB
+# download: AAC songs (nearly everything) play immediately; the log says
+# exactly when conversion comes online. Failures stay LOUD in the log —
+# a silent partial install once made the supervisor claim success while
+# transcoding stayed broken, so the background job verifies the binary.
 if ! command -v ffmpeg >/dev/null 2>&1; then
-  log "ffmpeg not found — attempting installation..."
   if command -v pkg >/dev/null 2>&1; then
-    if pkg install -y ffmpeg >> "$LOG" 2>&1; then
-      if command -v ffmpeg >/dev/null 2>&1; then
-        log "ffmpeg installed and verified"
+    log "ffmpeg not found — installing in the background (music plays meanwhile)…"
+    ( if pkg install -y ffmpeg >> "$LOG" 2>&1 && command -v ffmpeg >/dev/null 2>&1; then
+        log "ffmpeg installed and verified — all songs now play"
       else
-        log "ERROR: pkg reported success but ffmpeg is still not on PATH"
-        log "Install it manually with: pkg install ffmpeg   (then re-run this script)"
-        exit 1
-      fi
-    else
-      log "ERROR: ffmpeg installation FAILED (unmet dependencies or network problem)"
-      log "The server will still run, but songs YouTube only offers in Opus/WebM will answer 503."
-      log "Fix with: pkg update -y && pkg install -y ffmpeg   (then re-run this script)"
-      exit 1
-    fi
+        log "ERROR: ffmpeg installation FAILED — Opus/WebM-only songs will answer 503."
+        log "Fix with: pkg update -y && pkg install -y ffmpeg   (then: wearsic restart)"
+      fi ) &
   else
-    log "ERROR: pkg not found — cannot install ffmpeg automatically"
-    log "Install it manually with: pkg install ffmpeg   (then re-run this script)"
-    exit 1
+    log "ERROR: pkg not found — cannot install ffmpeg automatically (run: pkg install ffmpeg manually)"
   fi
 fi
 
@@ -322,6 +324,7 @@ MAX_RESTART_DELAY=60
 while true; do
   rotate_log
   apply_staged_update
+  CYCLE_START_MS="$(date +%s)000"
   "$APP" >> "$LOG" 2>&1 &
   CHILD=$!
   log "server started (pid $CHILD, port $PORT)"
@@ -339,8 +342,14 @@ while true; do
     else
       FAILS=$((FAILS+1))
       log "health check FAILED ($FAILS/3)"
-      if [ "$FAILS" -ge 3 ]; then
-        log "server unhealthy for 90s — killing for auto-heal restart"
+      # Never kill a freshly started server: a cold JVM on a phone CPU can
+      # take minutes before /health answers. Killing it at 90s guaranteed a
+      # permanent restart loop on slow devices ("starts then dies forever").
+      # Only auto-heal after 4 minutes of consecutive failures.
+      NOW_MS="$(date +%s)000"
+      UPTIME_MS=$(( NOW_MS - CYCLE_START_MS ))
+      if [ "$FAILS" -ge 3 ] && [ "$UPTIME_MS" -gt 240000 ]; then
+        log "server unhealthy for 90s after boot grace — killing for auto-heal restart"
         kill "$CHILD" 2>/dev/null
         sleep 5
         kill -9 "$CHILD" 2>/dev/null

@@ -50,6 +50,64 @@ spinner_stop() {
   SPIN_MSG=""
 }
 
+human_bytes() { # $1 = bytes -> 12.4M
+  local b="${1:-0}"
+  case "$b" in ''|*[!0-9]*) b=0 ;; esac
+  if [ "$b" -ge 1048576 ]; then awk "BEGIN{printf \"%.1fM\", $b/1048576}";
+  elif [ "$b" -ge 1024 ]; then awk "BEGIN{printf \"%.0fK\", $b/1024}";
+  else printf '%sB' "$b"; fi
+}
+
+draw_bar() { # $1 label $2 pct $3 have-bytes $4 total-bytes
+  local label="$1" pct="$2" have="$3" total="$4" width=18 i bar=""
+  local filled=$(( pct * width / 100 ))
+  i=0; while [ "$i" -lt "$filled" ]; do bar="${bar}█"; i=$((i + 1)); done
+  while [ "$i" -lt "$width" ]; do bar="${bar}░"; i=$((i + 1)); done
+  printf "\r\033[1;35m[wearsic]\033[0m  %s \033[1;36m%s\033[0m %3d%%  \033[2m%s / %s\033[0m" \
+    "$label" "$bar" "$pct" "$(human_bytes "$have")" "$(human_bytes "$total")"
+}
+
+# Download with a live █ progress bar (MB + %). Spinner fallback when the
+# server hides Content-Length. Returns curl's exit status.
+download_bar() { # $1 = url, $2 = out file, $3 = label
+  local url="$1" out="$2" label="${3:-download}"
+  local total=""
+  total="$(curl -fsSIL --max-time 15 "$url" 2>/dev/null | grep -i '^content-length:' | tail -1 | tr -d '\r' | awk '{print $2}')"
+  case "$total" in ''|*[!0-9]*) total="" ;; esac
+  if [ -z "$total" ] || [ "$TTY_OUT" != "1" ]; then
+    spinner_start "$label"
+    if curl -fL --retry 3 --retry-delay 2 -o "$out" "$url" >/dev/null 2>&1; then
+      spinner_stop 0 "$label ($(du -h "$out" 2>/dev/null | cut -f1))"
+    else
+      spinner_stop 1 "$label"; return 1
+    fi
+    return 0
+  fi
+  curl -fL --retry 3 --retry-delay 2 -o "$out" "$url" >/dev/null 2>&1 &
+  local pid=$! have=0 pct=0
+  while kill -0 "$pid" 2>/dev/null; do
+    have="$(wc -c < "$out" 2>/dev/null || echo 0)"
+    pct=$(( have * 100 / total ))
+    [ "$pct" -gt 100 ] && pct=100
+    draw_bar "$label" "$pct" "$have" "$total"
+    sleep 0.2
+  done
+  wait "$pid" || { printf '\n'; return 1; }
+  draw_bar "$label" 100 "$total" "$total"
+  printf '\n'
+  return 0
+}
+
+# Rounded box for pairing cards and verdicts.
+box_top()    { printf '\033[1;35m╭─ %s %s\033[0m\n' "$1" "$(box_rule "$1")"; }
+box_line()   { printf '\033[1;35m│\033[0m %s\n' "$1"; }
+box_bottom() { printf '\033[1;35m╰%s╯\033[0m\n' "$(box_rule "")"; }
+box_rule() {
+  local n=$(( 50 - ${#1} )); [ "$n" -lt 4 ] && n=4
+  local i=0 s=""; while [ "$i" -lt "$n" ]; do s="${s}─"; i=$((i + 1)); done
+  printf '%s' "$s"
+}
+
 installed() { [ -f "$RUN" ] || die "Not installed (no $DEST). Run the one-line installer first."; }
 
 # --- .env parsing (never `source` it — values may contain spaces) ----
@@ -142,17 +200,14 @@ server_url() {
 }
 
 show_pairing() {
-  say ""
-  say "═══════════════════════════════════════════════════════"
-  say "  Connect your watch:"
-  say ""
-  say "  Server URL : $(server_url)"
-  say "  API key    : $(api_key)"
-  say ""
-  say "  Watch → Wearsic → Settings → Server URL   (paste the URL)"
-  say "                           → API Key        (paste the key)"
-  say "═══════════════════════════════════════════════════════"
-  say ""
+  box_top "♪ Connect your watch"
+  box_line ""
+  box_line "   Server URL : $(server_url)"
+  box_line "   API key    : $(api_key)"
+  box_line ""
+  box_line "   Watch → Wearsic → Settings → Server URL   (paste the URL)"
+  box_line "                            → API Key        (paste the key)"
+  box_bottom
 }
 
 cmd_start() {
@@ -172,14 +227,16 @@ cmd_start() {
   # Wait up to ~30s for /health (the supervisor installs ffmpeg on
   # first start, which can take a while).
   local i
+  spinner_start "waiting for the server"
   for i in $(seq 1 30); do
     health_ok && break
     sleep 1
   done
   if health_ok; then
-    say "server started — self-healing supervisor is watching it"
+    spinner_stop 0 "server is up — self-healing supervisor is watching it"
     show_pairing
   else
+    spinner_stop 1 "server start"
     say "Not healthy yet — check the logs:  wearsic server logs"
     return 1
   fi
@@ -212,12 +269,13 @@ cmd_stop() {
   # Wait until the port actually goes quiet: graceful shutdown drains
   # in-flight streams for seconds, during which /health still answers —
   # without this wait `status` right after `stop` wrongly reports healthy.
+  spinner_start "waiting for the port to go quiet"
   i=0
   while [ "$i" -lt 20 ] && health_ok; do
     sleep 1
     i=$((i + 1))
   done
-  say "stopped."
+  spinner_stop 0 "stopped."
 }
 
 cmd_restart() { cmd_stop; cmd_start; }
@@ -587,30 +645,46 @@ cmd_update() {
     [ -n "$zip_url" ] || die "could not find a release for ${repo} — check your internet connection"
   fi
   [ -n "$sha_url" ] || sha_url="${zip_url}.sha256"
-  say "Downloading: $(basename "$zip_url")"
 
   zip="$work/update.zip"
   sha="$work/update.zip.sha256"
-  curl -fL --retry 3 --retry-delay 2 -o "$zip" "$zip_url" || die "download failed — nothing was changed"
+  download_bar "$zip_url" "$zip" "downloading $(basename "$zip_url")" \
+    || die "download failed — nothing was changed"
   [ -s "$zip" ] || die "downloaded file is empty — nothing was changed"
 
   # Authenticity: refuse to install any release without a published checksum.
-  curl -fsSL --retry 2 -o "$sha" "$sha_url" 2>/dev/null && [ -s "$sha" ] \
-    || die "no SHA-256 checksum at $sha_url — refusing to install unverified code"
+  spinner_start "fetching checksum"
+  if ! curl -fsSL --retry 2 -o "$sha" "$sha_url" 2>/dev/null || [ ! -s "$sha" ]; then
+    spinner_stop 1 "checksum"
+    die "no SHA-256 checksum at $sha_url — refusing to install unverified code"
+  fi
+  spinner_stop 0 "checksum"
   expected="$(awk '{print $1; exit}' "$sha" | tr 'A-F' 'a-f')"
+  spinner_start "verifying SHA-256"
   if command -v sha256sum >/dev/null 2>&1; then
     actual="$(sha256sum "$zip" | awk '{print $1}')"
   else
     actual="$(shasum -a 256 "$zip" | awk '{print $1}')"
   fi
-  [ "$expected" = "$actual" ] || die "SHA-256 MISMATCH — the download is corrupt or tampered. Nothing was changed."
-  ok "SHA-256 verified"
+  if [ "$expected" != "$actual" ]; then
+    spinner_stop 1 "SHA-256"
+    die "SHA-256 MISMATCH — the download is corrupt or tampered. Nothing was changed."
+  fi
+  spinner_stop 0 "SHA-256 verified"
 
   # Stage + validate BEFORE touching the active engine.
   stage="$work/stage"
   mkdir -p "$stage"
-  unzip -t "$zip" >/dev/null 2>&1 || die "the downloaded file is not a valid ZIP — nothing was changed"
-  unzip -oq "$zip" -d "$stage" || die "could not extract the update — nothing was changed"
+  spinner_start "extracting update"
+  if ! unzip -t "$zip" >/dev/null 2>&1; then
+    spinner_stop 1 "extracting update"
+    die "the downloaded file is not a valid ZIP — nothing was changed"
+  fi
+  if ! unzip -oq "$zip" -d "$stage"; then
+    spinner_stop 1 "extracting update"
+    die "could not extract the update — nothing was changed"
+  fi
+  spinner_stop 0 "extracted"
   src="$stage/wearsic-server"
   [ -d "$src" ] || src="$stage"
   [ -f "$src/bin/wearsic-server" ] && [ -n "$(ls -A "$src/lib" 2>/dev/null)" ] && [ -f "$src/run-termux.sh" ] \
@@ -899,36 +973,42 @@ cmd_doctor() {
 
   say "────────────────────────"
   if [ "$fails" -eq 0 ]; then
-    say "Result: READY ($warns warning(s))"
-    say "Next: wearsic url — connect your watch; wearsic logs — inspect playback issues"
+    box_top "✓ READY ($warns warning(s))"
+    box_line ""
+    box_line "   Next: wearsic url — connect your watch; wearsic logs — playback issues"
+    box_bottom
     return 0
   fi
-  say "Result: NOT READY ($fails problem(s), $warns warning(s))"
-  say "Next: resolve the ✗ items above, then run wearsic doctor again"
+  box_top "✗ NOT READY ($fails problem(s), $warns warning(s))"
+  box_line ""
+  box_line "   Next: resolve the ✗ items above, then run wearsic doctor again"
+  box_bottom
   return 1
 }
 
 usage() {
-  say "Wearsic server commands:"
-  say "  wearsic start               start the server"
-  say "  wearsic stop                stop the server"
-  say "  wearsic restart             stop, then start"
-  say "  wearsic status              running? healthy? which version? (0 healthy, 3 stopped, 4 unhealthy)"
-  say "  wearsic logs                live logs"
-  say "  wearsic health              raw /health JSON"
-  say "  wearsic ready               raw /ready JSON (can it serve music?)"
-  say "  wearsic url                 Server URL + API key for the watch"
-  say "  wearsic ip                  this phone's WiFi IP"
-  say "  wearsic api-key [new]       show / change the API key"
-  say "  wearsic update [--pre]      update to the latest release (verified, rollback-safe)"
-  say "                             --pre also considers pre-release/beta builds"
-  say "  wearsic version             installed + running engine version"
-  say "  wearsic doctor              environment diagnostics (exit 0 = READY)"
-  say "  wearsic cookies [str]       set the YouTube cookie"
-  say "  wearsic funnel              public HTTPS URL (Tailscale Funnel)"
-  say "  wearsic public              public URL recipes (Funnel / Cloudflare)"
-  say ""
-  say "The classic nested form also works:  wearsic server start"
+  local B='\033[1m' D='\033[2m' P='\033[1;35m' R='\033[0m'
+  printf "${P}♪ Wearsic server${R} — ${D}music for your watch${R}\n\n"
+  printf "${B}Server${R}\n"
+  printf "  ${P}wearsic start${R}      start the server\n"
+  printf "  ${P}wearsic stop${R}       stop the server\n"
+  printf "  ${P}wearsic restart${R}    stop, then start\n"
+  printf "  ${P}wearsic status${R}     running? healthy? (0 healthy, 3 stopped, 4 unhealthy)\n"
+  printf "  ${P}wearsic logs${R}       live logs\n"
+  printf "  ${P}wearsic doctor${R}     full checkup (exit 0 = READY)\n\n"
+  printf "${B}Watch pairing${R}\n"
+  printf "  ${P}wearsic url${R}        Server URL + API key for the watch\n"
+  printf "  ${P}wearsic ip${R}         this phone's WiFi IP\n"
+  printf "  ${P}wearsic api-key [new]${R}  show / change the API key\n\n"
+  printf "${B}Engine${R}\n"
+  printf "  ${P}wearsic update [--pre]${R}  update to the latest release (verified, rollback-safe)\n"
+  printf "  ${P}wearsic version${R}    installed + running engine version\n"
+  printf "  ${P}wearsic health${R}     raw /health JSON     ${P}wearsic ready${R}  raw /ready JSON\n\n"
+  printf "${B}Internet access${R}\n"
+  printf "  ${P}wearsic funnel${R}     public HTTPS URL (Tailscale Funnel)\n"
+  printf "  ${P}wearsic public${R}     public URL recipes (Funnel / Cloudflare)\n"
+  printf "  ${P}wearsic cookies [str]${R}  set the YouTube cookie\n\n"
+  printf "${D}The classic nested form also works:  wearsic server start${R}\n"
 }
 
 # --- dispatch ---------------------------------------------------------

@@ -6,7 +6,6 @@ import android.net.ConnectivityManager
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.wearsic.app.StartupDiagnostics
 import com.wearsic.app.WearsicApp
 import com.wearsic.app.data.WearsicDownloadRepository
 import com.wearsic.app.data.WearsicMusicRepository
@@ -72,14 +71,18 @@ class WearsicPlayerViewModel(
     val storageStats: StateFlow<DownloadsViewModel.StorageStats> get() = downloadsViewModel.storageStats
     val radioState: StateFlow<LibraryViewModel.RadioState> get() = libraryViewModel.radioState
     val sleepRemainingMs: StateFlow<Long> get() = _sleepRemainingMs
-    val startupHealth: StateFlow<String> get() = _startupHealth
+    // Delegates to the SettingsViewModel's flow: keeping a second copy meant
+    // reading the same startup log twice to produce one string.
+    val startupHealth: StateFlow<String> get() = settingsViewModel.startupHealth
 
     // Sleep timer state (kept here as it spans playback and UI)
     private val _sleepRemainingMs = MutableStateFlow(0L)
     private var sleepJob: Job? = null
 
-    // Startup health (kept here for backward compatibility)
-    private val _startupHealth = MutableStateFlow("")
+    // Server truth for hearts: refreshed from GET /api/favorites, applied to
+    // every track entering a queue and to the current track on change.
+    @Volatile
+    private var favoriteIds: Set<String> = emptySet()
 
     init {
         val container = (getApplication<WearsicApp>()).container
@@ -95,11 +98,6 @@ class WearsicPlayerViewModel(
             settingsViewModel.offlineLimit.collect { limit ->
                 downloadsViewModel.setMaxAutoCachedTracks(limit.coerceIn(5, 200))
             }
-        }
-
-        // Startup health
-        viewModelScope.launch(Dispatchers.IO) {
-            _startupHealth.value = StartupDiagnostics.lastStartupSummary(application.applicationContext)
         }
 
         // Auto-eviction setup
@@ -152,6 +150,40 @@ class WearsicPlayerViewModel(
                 }
             }
         }
+
+        // Hot-swap: the moment any download/AutoCache completes, rewrite queued
+        // http items to their local file. Prev/next then start instantly from
+        // disk — no server re-fetch, no radio wakeup (battery).
+        viewModelScope.launch {
+            downloadsViewModel.completedTracks.collect { completed ->
+                for (track in completed) {
+                    if (track.id.isNotBlank() && track.mediaUri.startsWith("/")) {
+                        playbackViewModel.swapQueuedItemToLocalFile(track.id, track.mediaUri)
+                    }
+                }
+            }
+        }
+
+        // Favorite hydration: keep hearts truthful to the server. The player
+        // heart previously only reflected local taps; now every favorites
+        // refresh re-stamps the set and the current track follows it.
+        viewModelScope.launch {
+            libraryViewModel.refreshFavorites()
+            libraryViewModel.favoritesState.collect { fav ->
+                favoriteIds = fav.tracks.map { it.id }.toSet()
+                val current = playbackViewModel.uiState.value.currentTrack
+                if (current.id.isNotBlank()) {
+                    playbackViewModel.setCurrentTrackFavorite(current.id in favoriteIds)
+                }
+            }
+        }
+    }
+
+    /** Stamp server favorite truth onto a track entering a queue. */
+    private fun applyFavoriteFlags(track: Track): Track {
+        if (track.id.isBlank()) return track
+        val fav = track.id in favoriteIds
+        return if (track.isFavorite == fav) track else track.copy(isFavorite = fav)
     }
 
     // ============================================================================
@@ -226,11 +258,19 @@ class WearsicPlayerViewModel(
     // ============================================================================
 
     fun playTrack(track: Track) {
+        // Same-track tap: never tear down the pipeline — just (re)play.
+        // This alone removes the full stop/clear/prepare/play stall that made
+        // every re-tap feel like a fresh cold start.
+        val current = playbackViewModel.uiState.value
+        if (track.id.isNotBlank() && track.id == current.currentTrack.id) {
+            if (!current.isPlaying) playbackViewModel.togglePlayPause()
+            return
+        }
         viewModelScope.launch {
             val localTrack = withContext(Dispatchers.IO) {
                 (getApplication<WearsicApp>()).container.downloadRepository.getDownloadedTrack(track.id)
             }
-            val trackToPlay = localTrack ?: track
+            val trackToPlay = applyFavoriteFlags(localTrack ?: track)
             warmUpStream(trackToPlay)
 
             val completed = completedTracks.value
@@ -255,12 +295,28 @@ class WearsicPlayerViewModel(
         playbackViewModel.addToQueue(track)
     }
 
+    /**
+     * Queue ONE track with local-file resolution: a downloaded track is queued
+     * as its file (instant later playback), never as a re-streamable http URI.
+     */
+    fun queueTrack(track: Track) {
+        viewModelScope.launch {
+            val local = withContext(Dispatchers.IO) {
+                (getApplication<WearsicApp>()).container.downloadRepository.getDownloadedTrack(track.id)
+            }
+            playbackViewModel.addToQueue(applyFavoriteFlags(local ?: track))
+        }
+    }
+
     fun playTracksFromList(tracks: List<Track>, startIndex: Int = 0) {
         viewModelScope.launch {
             val container = (getApplication<WearsicApp>()).container
-            val resolved = tracks.map { t ->
-                container.downloadRepository.getDownloadedTrack(t.id) ?: t
+            // ONE batched Room query (not N serial lookups on the tap path),
+            // then stamp server favorite flags onto the whole queue at once.
+            val localById = withContext(Dispatchers.IO) {
+                container.downloadRepository.getCompletedTracksById(tracks.map { it.id })
             }
+            val resolved = tracks.map { t -> applyFavoriteFlags(localById[t.id] ?: t) }
             if (resolved.isNotEmpty()) {
                 warmUpStream(resolved[startIndex.coerceIn(0, resolved.lastIndex)])
             }
@@ -435,19 +491,28 @@ class WearsicPlayerViewModel(
             }
 
             result.onSuccess {
-                val updatedFavorites = if (targetFavorite) {
-                    if (favoritesState.value.tracks.none { it.id == track.id }) {
-                        favoritesState.value.tracks + track.copy(isFavorite = true)
-                    } else {
-                        favoritesState.value.tracks
-                    }
-                } else {
-                    favoritesState.value.tracks.filterNot { it.id == track.id }
-                }
                 libraryViewModel.refreshFavorites()
-            }.onFailure { err ->
+            }.onFailure {
                 playbackViewModel.setCurrentTrackFavorite(!targetFavorite)
             }
+        }
+    }
+
+    /**
+     * Favorite toggle for ANY track (action sheets, lists) — decided by server
+     * truth ([favoriteIds]), not by the possibly-stale row flag. Refreshes the
+     * set on success so hearts everywhere converge.
+     */
+    fun toggleFavoriteFor(track: Track) {
+        if (track.id.isBlank()) return
+        viewModelScope.launch {
+            val repo = (getApplication<WearsicApp>()).container.musicRepository
+            val result = if (track.id in favoriteIds) {
+                repo.removeFavorite(track.id)
+            } else {
+                repo.addFavorite(track)
+            }
+            result.onSuccess { libraryViewModel.refreshFavorites() }
         }
     }
 
@@ -462,6 +527,11 @@ class WearsicPlayerViewModel(
     }
 
     private fun maybeAutoCacheTrack(track: Track, evaluatedTrackIds: MutableSet<String>) {
+        // The playback state flow re-emits every ~2 s while playing, so this is
+        // reached on every tick once a track has been listened to long enough.
+        // Without this check the whole guard chain below re-ran — and
+        // startDownload was requested again — for a track already handled.
+        if (track.id in evaluatedTrackIds) return
         if (!settingsViewModel.autoCacheEnabled.value) return
         if (!track.mediaUri.startsWith("http")) return
         if (!isNetworkAvailable()) return
@@ -527,6 +597,12 @@ class WearsicPlayerViewModel(
 
     override fun onCleared() {
         sleepJob?.cancel()
+        // These child ViewModels are constructed directly rather than through a
+        // ViewModelStore, so the framework never calls their onCleared(). Without
+        // this the MediaController, its coroutine scope and any in-flight
+        // download jobs outlive the screen.
+        playbackViewModel.release()
+        downloadsViewModel.release()
         super.onCleared()
     }
 

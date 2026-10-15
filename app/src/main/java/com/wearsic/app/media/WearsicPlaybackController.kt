@@ -462,6 +462,41 @@ class WearsicPlaybackController(
         }
     }
 
+    /**
+     * Hot-swap a QUEUED (not currently playing) http item to its local file.
+     * Called when a download/AutoCache completes: prev/next then start
+     * instantly from disk — no server re-fetch, no radio wakeup (battery).
+     * The playing item is deliberately left alone: replacing it would restart
+     * playback from zero. It resolves to the file on the next queue build.
+     */
+    fun swapQueuedItemToLocalFile(trackId: String, localFilePath: String) {
+        if (trackId.isBlank() || localFilePath.isBlank()) return
+        val controller = mediaController ?: return
+        val state = _uiState.value
+        state.playlist.forEachIndexed { index, queued ->
+            if (index == state.currentTrackIndex) return@forEachIndexed
+            if (index >= controller.mediaItemCount) return@forEachIndexed
+            if (queued.id == trackId && !queued.mediaUri.startsWith("/")) {
+                val updated = queued.copy(mediaUri = localFilePath)
+                try {
+                    controller.replaceMediaItem(
+                        index,
+                        WearsicMediaItemFactory.buildMediaItem(updated)
+                    )
+                } catch (_: Exception) {
+                    return@forEachIndexed
+                }
+                _uiState.update { current ->
+                    current.copy(
+                        playlist = current.playlist.mapIndexed { i, t ->
+                            if (i == index) updated else t
+                        }
+                    )
+                }
+            }
+        }
+    }
+
     fun clearQueue() {
         val controller = mediaController ?: return
         controller.stop()
@@ -662,6 +697,13 @@ class WearsicPlaybackController(
     fun release() {
         initialConnectionKnown.complete(false)
         stopPositionTracker()
+        // The sleep-timer fade writes straight to the SESSION player's volume,
+        // and that player deliberately outlives this controller (it lives in
+        // WearsicMediaService). If teardown lands during the fade's last 10 s,
+        // the session would stay at e.g. 20% with nothing in the UI explaining
+        // why — the Sound screen only drives the system stream volume, so the
+        // user could not even see it. Restore full volume on the way out.
+        mediaController?.volume = 1f
         try {
             scope.cancel()
         } catch (_: Exception) {}

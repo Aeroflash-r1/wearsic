@@ -73,6 +73,8 @@ fun PlaylistDetailScreen(
     onDownloadTrack: (Track) -> Unit,
     onRemoveTrack: (String, String) -> Unit,
     onQueue: (Track) -> Unit = {},
+    onToggleFavorite: (Track) -> Unit = {},
+    favoriteTrackIds: Set<String> = emptySet(),
     playlists: List<com.wearsic.app.model.Playlist> = emptyList(),
     onCreatePlaylistAndAdd: (String, Track) -> Unit = { _, _ -> },
     onAddToPlaylist: (String, Track) -> Unit = { _, _ -> },
@@ -150,7 +152,9 @@ fun PlaylistDetailScreen(
                 onAddToPlaylist = { pid -> onAddToPlaylist(pid, t) },
                 onCreatePlaylistAndAdd = { name -> onCreatePlaylistAndAdd(name, t) },
                 onRemove = { onRemoveTrack(playlistId, t.id) },
-                removeLabel = "Remove from playlist"
+                removeLabel = "Remove from playlist",
+                onToggleFavorite = { onToggleFavorite(t) },
+                isFavorite = t.id in favoriteTrackIds
             )
         }
     }

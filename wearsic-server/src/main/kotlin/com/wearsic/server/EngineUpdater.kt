@@ -13,6 +13,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.BufferedInputStream
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.zip.ZipInputStream
 
 /**
@@ -155,7 +157,24 @@ class EngineUpdater(
         all[version] = (all[version] ?: 0) + 1
         // Bound the map so months of updates cannot grow it forever.
         val bounded = all.entries.sortedByDescending { it.value }.take(16)
-        attemptsFile.writeText(json.encodeToString(bounded.associate { it.key to it.value }))
+        attemptsFile.writeAtomically(json.encodeToString(bounded.associate { it.key to it.value }))
+    }
+
+    /**
+     * Crash-safe write: tmp file + atomic rename, so SIGTERM/power loss can
+     * never leave a half-written JSON behind (readers would see corrupt state
+     * and silently drop a verified staged update + reset the loop guard).
+     */
+    private fun File.writeAtomically(text: String) {
+        val tmp = File(parentFile, "$name.tmp")
+        tmp.writeText(text)
+        try {
+            Files.move(tmp.toPath(), toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } catch (_: Exception) {
+            // Filesystem without atomic-move support: same-dir rename is
+            // still atomic on POSIX, just not guaranteed by the API.
+            Files.move(tmp.toPath(), toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 
     override fun hasStagedUpdate(): Boolean = readState()?.status == "staged"
@@ -305,7 +324,7 @@ class EngineUpdater(
             sha256 = actual,
             updateAttempt = attempt,
         )
-        stateFile.writeText(json.encodeToString(state))
+        stateFile.writeAtomically(json.encodeToString(state))
         recordAttempt(update.version)
         finalZip.delete()
         tmpZip.delete()

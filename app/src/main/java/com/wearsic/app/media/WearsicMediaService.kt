@@ -13,11 +13,27 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.wearsic.app.MainActivity
 import com.wearsic.app.StartupDiagnostics
+import com.wearsic.app.data.WearsicPreferencesRepository
+import com.wearsic.app.media.crossfade.WearsicCrossfadeEngine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 
 class WearsicMediaService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
-    private var player: ExoPlayer? = null
+
+    /**
+     * The two decoders the crossfade feature can move the session between. One
+     * of them is bound to [mediaSession] at any moment — the engine decides
+     * which, and demotes the other to a silent standby at the end of a fade.
+     */
+    private var sessionPlayer: ExoPlayer? = null
+    private var standbyPlayer: ExoPlayer? = null
+
+    private var crossfadeEngine: WearsicCrossfadeEngine? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     @OptIn(UnstableApi::class)
     override fun onCreate() {
@@ -38,24 +54,60 @@ class WearsicMediaService : MediaSessionService() {
         // channel; no manual channel needed (and a manual one would leave
         // dead config behind once the custom provider is gone).
 
-        // 1-4. Build the player (audio attributes, memory-only buffering media
-        // source, load policy) — shared with recreateSession().
-        val exoPlayer = buildPlayer()
+        // 1-5. Build the player, the session and the crossfade engine —
+        //      shared with recreateSession().
+        buildSession()
+    }
 
-        this.player = exoPlayer
+    /**
+     * Builds the session player and the [WearsicCrossfadeEngine] that may hand
+     * the session over to a standby player mid-transition.
+     *
+     * Session Activity Intent note: Wear OS creates the media ongoing activity
+     * (status ring) automatically from media notifications, and Media3
+     * publishes the notification itself — so there is deliberately NO manual
+     * OngoingActivity here. Applying one manually on top of Media3's
+     * notification made the watch show TWO notifications (the media card + an
+     * orphaned ongoing-activity card), because every metadata update re-posts
+     * the notification without the manual ongoing-activity extras.
+     */
+    private fun buildSession() {
+        val attributes = audioAttributes()
+        val exoPlayer = buildPlayer(attributes, handleAudioFocus = true)
+        this.sessionPlayer = exoPlayer
 
-        // 5. Session Activity Intent + MediaSession. Wear OS creates the
-        //    media ongoing activity (status ring) automatically from media
-        //    notifications, and Media3 publishes the notification itself — so
-        //    there is deliberately NO manual OngoingActivity here. Applying
-        //    one manually on top of Media3's notification made the watch show
-        //    TWO notifications (the media card + an orphaned ongoing-activity
-        //    card), because every metadata update re-posts the notification
-        //    without the manual ongoing-activity extras.
-        mediaSession = MediaSession.Builder(this, exoPlayer)
+        val session = MediaSession.Builder(this, exoPlayer)
             .setSessionActivity(playerSessionIntent())
             .build()
+        mediaSession = session
+
+        // The engine is rebuilt with the session: it reads the current player
+        // through the session, never through a cached reference, so a rebuilt
+        // session can never leave it ramping a released player's volume.
+        crossfadeEngine?.release()
+        crossfadeEngine = WearsicCrossfadeEngine(
+            context = this,
+            scope = serviceScope,
+            session = session,
+            audioAttributes = attributes,
+            standbyFactory = ::ensureStandbyPlayer,
+            crossfadeMsFlow = WearsicPreferencesRepository(this).crossfadeMsFlow
+        ).also { it.start() }
     }
+
+    /**
+     * The crossfade standby decoder, created on first use — a watch that never
+     * turns the feature on never pays for a second player's memory. It is
+     * built WITHOUT audio focus handling on purpose: during a fade both
+     * decoders are audible at once, and a second focus request from this same
+     * process would make Media3 pause the outgoing one at the fade's first
+     * frame. The engine transfers focus to it at the moment it takes over as
+     * the session player.
+     */
+    @OptIn(UnstableApi::class)
+    private fun ensureStandbyPlayer(): ExoPlayer =
+        standbyPlayer ?: buildPlayer(audioAttributes(), handleAudioFocus = false)
+            .also { standbyPlayer = it }
 
     /**
      * Tapping the media notification opens the PLAYER, not the library home
@@ -95,6 +147,9 @@ class WearsicMediaService : MediaSessionService() {
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         try {
+            // A fade in flight would otherwise keep the outgoing track (and
+            // the standby decoder) audible for up to its remaining window.
+            crossfadeEngine?.cancel()
             mediaSession?.player?.let { player ->
                 player.stop()
                 player.clearMediaItems()
@@ -106,34 +161,46 @@ class WearsicMediaService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        mediaSession?.run {
-            player.release()
-            release()
-            mediaSession = null
-        }
-        player = null
+        crossfadeEngine?.release()
+        crossfadeEngine = null
+        serviceScope.cancel()
+        mediaSession?.release()
+        mediaSession = null
+        // Both decoders are released: after a hand-off the session is bound to
+        // the standby, so releasing only the session's player would leak the
+        // other one for the life of the process.
+        sessionPlayer?.release()
+        sessionPlayer = null
+        standbyPlayer?.release()
+        standbyPlayer = null
         super.onDestroy()
     }
 
-    /** Rebuilds player + session after a teardown, preserving nothing (the
-     *  queue is gone with the old player; users re-select music). */
+    /** Rebuilds players + session after a teardown, preserving nothing (the
+     *  queue is gone with the old players; users re-select music). */
     private fun recreateSession() {
-        player?.release()
-        val exoPlayer = buildPlayer()
-        this.player = exoPlayer
-        mediaSession = MediaSession.Builder(this, exoPlayer)
-            .setSessionActivity(playerSessionIntent())
-            .build()
+        crossfadeEngine?.release()
+        crossfadeEngine = null
+        sessionPlayer?.release()
+        sessionPlayer = null
+        standbyPlayer?.release()
+        standbyPlayer = null
+        buildSession()
     }
 
+    /** 1. Audio attributes for battery-conscious music playback. */
     @OptIn(UnstableApi::class)
-    private fun buildPlayer(): ExoPlayer {
-        // 1. Audio attributes for battery-conscious music playback
-        val audioAttributes = AudioAttributes.Builder()
-            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-            .setUsage(C.USAGE_MEDIA)
-            .build()
+    private fun audioAttributes(): AudioAttributes = AudioAttributes.Builder()
+        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+        .setUsage(C.USAGE_MEDIA)
+        .build()
 
+    /**
+     * @param handleAudioFocus the session player owns audio focus; the
+     *   crossfade standby is built without it (see [ensureStandbyPlayer]).
+     */
+    @OptIn(UnstableApi::class)
+    private fun buildPlayer(audioAttributes: AudioAttributes, handleAudioFocus: Boolean): ExoPlayer {
         // 2. Media source factory. NO persistent disk cache: playback buffers
         //    in memory only, and the sole permanent local copy of a song is
         //    the single Auto/Manual download file.
@@ -171,11 +238,9 @@ class WearsicMediaService : MediaSessionService() {
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .setTargetBufferBytes(2 * 1024 * 1024)
-            .build()
-
-        // 4. Player
+            .build()        // 4. Player
         return ExoPlayer.Builder(this)
-            .setAudioAttributes(audioAttributes, /* handleAudioFocus= */ true)
+            .setAudioAttributes(audioAttributes, handleAudioFocus)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .setLoadControl(loadControl)

@@ -51,6 +51,24 @@ class WearsicDownloadRepository(
         return getDownloadedTrack(trackId) != null
     }
 
+    /**
+     * One batched lookup: trackId -> local-file [Track] for every COMPLETED row
+     * whose file is alive. Prefer this over N serial [getDownloadedTrack] calls
+     * on the tap-to-play path (one Room query + one stat per file, off-main).
+     */
+    suspend fun getCompletedTracksById(trackIds: Collection<String>): Map<String, Track> {
+        if (trackIds.isEmpty()) return emptyMap()
+        val wanted = trackIds.toSet()
+        return downloadDao.getCompletedDownloads()
+            .filter { it.trackId in wanted }
+            .mapNotNull { entity ->
+                val file = File(entity.localFilePath)
+                if (file.exists() && file.length() > 0) {
+                    entity.trackId to entity.toDomainTrack()
+                } else null
+            }.toMap()
+    }
+
     /** Rows whose job died with the process (QUEUED/DOWNLOADING, no live job). */
     suspend fun getIncompleteDownloads(): List<WearsicDownloadEntity> {
         return downloadDao.getIncompleteDownloads()

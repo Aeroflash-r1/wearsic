@@ -31,7 +31,6 @@ sealed class NetworkError(
         is HostUnreachableError -> "Cannot reach $host"
         is ConnectionRefusedError -> "Connection refused"
         is DnsError -> "Could not resolve $hostname"
-        else -> "Network error"
     }
 }
 

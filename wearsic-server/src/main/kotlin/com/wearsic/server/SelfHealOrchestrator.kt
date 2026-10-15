@@ -3,6 +3,7 @@ package com.wearsic.server
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -101,6 +102,11 @@ class SelfHealOrchestrator(
                 delay(HEALTH_CHECK_INTERVAL_MS)
             }
         }
+    }
+
+    /** Stops the watchdog loop (graceful shutdown). Idempotent. */
+    fun stop() {
+        scope.cancel()
     }
 
     /** Last update-discovery run; touched only by the single loop coroutine. */

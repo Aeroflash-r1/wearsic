@@ -1,9 +1,6 @@
 package com.wearsic.server
 
 import io.ktor.client.HttpClient
-import io.ktor.client.request.header
-import io.ktor.client.request.prepareGet
-import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -12,7 +9,6 @@ import io.ktor.server.request.header
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytesWriter
-import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -111,84 +107,97 @@ class Transcoder(
         var aborted = false
 
         sharedSlots.withPermit {
-            val process = ProcessBuilder(
-                ffmpegBinary, "-hide_banner", "-loglevel", "error",
-                "-i", "pipe:0",
-                "-vn", "-c:a", "aac", "-b:a", "128k", "-f", "adts", "pipe:1"
-            ).start()
-            val stdin: OutputStream = process.outputStream
-            val stdout: InputStream = process.inputStream
-
+            var process: Process? = null
             try {
-                client.prepareGet(sourceUrl) {
-                    // Always ranged upstream: YouTube's CDN throttles and closes
-                    // non-range audio responses around 256KB (same fix as the
-                    // passthrough proxy).
-                    header(HttpHeaders.Range, "bytes=0-")
-                }.execute { upstream ->
-                    if (upstream.status.value >= 400) {
-                        // Don't respond here — let AudioProxy retry with a
-                        // fresh URL first (dead-URL self-heal). It sends the
-                        // final 502 only if the retry also fails.
-                        upstreamFailure = upstream.status.value
-                        return@execute
-                    }
-                    val upstreamChannel = upstream.bodyAsChannel()
+                process = ProcessBuilder(
+                    ffmpegBinary, "-hide_banner", "-loglevel", "error",
+                    "-i", "pipe:0",
+                    "-vn", "-c:a", "aac", "-b:a", "128k", "-f", "adts", "pipe:1"
+                ).start()
+                val active = process
+                val stdin: OutputStream = active.outputStream
+                val stdout: InputStream = active.inputStream
 
-                    val status = if (startByte > 0) {
-                        HttpStatusCode.PartialContent
-                    } else {
-                        HttpStatusCode.OK
-                    }
-                    if (startByte > 0) {
-                        call.response.header(HttpHeaders.ContentRange, "bytes $startByte-*")
-                    }
-                    call.response.header(HttpHeaders.AcceptRanges, "bytes")
+                // Validate the CDN URL with a 1-byte CLOSED probe before
+                // committing a response (open ranges 403 — see RangedUpstream).
+                val (probeStatus, _) = client.probeUpstreamLength(sourceUrl, 0)
+                if (probeStatus != HttpStatusCode.PartialContent.value) {
+                    // Don't respond here — let AudioProxy retry with a
+                    // fresh URL first (dead-URL self-heal). It sends the
+                    // final 502 only if the retry also fails.
+                    upstreamFailure = probeStatus
+                    return@withPermit
+                }
 
-                    call.respondBytesWriter(
-                        contentType = ContentType.parse("audio/aac"),
-                        status = status
-                    ) {
-                        coroutineScope {
-                            // Pump CDN bytes into ffmpeg's stdin.
-                            val pump = launch(Dispatchers.IO) {
-                                try {
-                                    val buf = ByteArray(64 * 1024)
-                                    while (true) {
-                                        val n = upstreamChannel.readAvailable(buf)
-                                        if (n < 0) break
-                                        stdin.write(buf, 0, n)
-                                    }
-                                } catch (e: Exception) {
-                                    // Upstream died; ffmpeg sees EOF and flushes what it has.
-                                } finally {
-                                    runCatching { stdin.close() }
-                                }
-                            }
+                val status = if (startByte > 0) {
+                    HttpStatusCode.PartialContent
+                } else {
+                    HttpStatusCode.OK
+                }
+                if (startByte > 0) {
+                    call.response.header(HttpHeaders.ContentRange, "bytes $startByte-*")
+                }
+                call.response.header(HttpHeaders.AcceptRanges, "bytes")
 
-                            // Read ffmpeg stdout, discard `startByte` bytes, stream the rest.
-                            val buf = ByteArray(64 * 1024)
-                            var skipped = 0L
-                            while (skipped < startByte) {
-                                val n = withContext(Dispatchers.IO) { stdout.read(buf) }
-                                if (n < 0) break
-                                skipped += n
-                                if (skipped > startByte) {
-                                    // Chunk straddles the offset: keep the tail.
-                                    val tail = buf.copyOfRange(
-                                        (n - (skipped - startByte)).toInt(),
-                                        n
-                                    )
-                                    writeFully(tail)
-                                }
+                call.respondBytesWriter(
+                    contentType = ContentType.parse("audio/aac"),
+                    status = status
+                ) {
+                    coroutineScope {
+                        // Drain ffmpeg's stderr to nowhere on its own thread.
+                        // A full OS pipe buffer would otherwise wedge ffmpeg
+                        // forever while it holds a global transcode permit.
+                        // (Never redirectErrorStream into stdout — that pipe
+                        // carries the AAC bytes.)
+                        val stderrDrain = launch(Dispatchers.IO) {
+                            runCatching {
+                                active.errorStream.copyTo(OutputStream.nullOutputStream())
                             }
-                            while (true) {
-                                val n = withContext(Dispatchers.IO) { stdout.read(buf) }
-                                if (n < 0) break
-                                writeFully(buf, 0, n)
-                            }
-                            pump.join()
                         }
+
+                        // Pump CDN bytes into ffmpeg's stdin in closed-range
+                        // chunks (open upstream ranges 403 — see RangedUpstream).
+                        val pump = launch(Dispatchers.IO) {
+                            try {
+                                val outcome: ChunkedUpstream = client.fetchClosedChunks(
+                                    sourceUrl, 0, null
+                                ) { buf: ByteArray, n: Int ->
+                                    stdin.write(buf, 0, n)
+                                }
+                                when (outcome) {
+                                    is ChunkedUpstream.Refused,
+                                    is ChunkedUpstream.Done -> Unit
+                                }
+                            } catch (e: Exception) {
+                                // Upstream died; ffmpeg sees EOF and flushes what it has.
+                            } finally {
+                                runCatching { stdin.close() }
+                            }
+                        }
+
+                        // Read ffmpeg stdout, discard `startByte` bytes, stream the rest.
+                        val buf = ByteArray(64 * 1024)
+                        var skipped = 0L
+                        while (skipped < startByte) {
+                            val n = withContext(Dispatchers.IO) { stdout.read(buf) }
+                            if (n < 0) break
+                            skipped += n
+                            if (skipped > startByte) {
+                                // Chunk straddles the offset: keep the tail.
+                                val tail = buf.copyOfRange(
+                                    (n - (skipped - startByte)).toInt(),
+                                    n
+                                )
+                                writeFully(tail)
+                            }
+                        }
+                        while (true) {
+                            val n = withContext(Dispatchers.IO) { stdout.read(buf) }
+                            if (n < 0) break
+                            writeFully(buf, 0, n)
+                        }
+                        pump.join()
+                        stderrDrain.join()
                     }
                 }
             } catch (e: Exception) {
@@ -196,7 +205,16 @@ class Transcoder(
                 logger.info("Transcode proxy ended early: {}", e.message)
                 aborted = true
             } finally {
-                runCatching { process.destroy() }
+                // destroy() alone can leave a wedged ffmpeg as a zombie:
+                // escalate and reap so permits/threads never leak.
+                runCatching { process?.destroy() }
+                try {
+                    if (process != null && process!!.isAlive) {
+                        process!!.destroyForcibly()
+                        process!!.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+                    }
+                } catch (_: Exception) {
+                }
             }
         }
 

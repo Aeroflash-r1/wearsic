@@ -69,23 +69,33 @@ class TranscoderTest {
             routing {
                 routeGet("/source") {
                     val range = call.request.headers[HttpHeaders.Range]
-                    val start = if (range != null) {
-                        Regex("bytes=(\\d+)-").find(range)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
-                    } else {
-                        0L
+                    if (range == null) {
+                        // No range → 200 full body, like a real CDN.
+                        call.respondBytesWriter(
+                            contentType = ContentType.parse("audio/webm"),
+                            status = HttpStatusCode.OK
+                        ) {
+                            writeFully(sourceBytes)
+                        }
+                        return@routeGet
                     }
+                    // Honor closed ranges exactly (bytes s-e/size slice) —
+                    // the transcode pump only ever sends closed ranges.
+                    val (start, end) = parseRangeHeader(range)
                     if (start > sourceBytes.size) {
                         call.respond(HttpStatusCode.RequestedRangeNotSatisfiable, "range too large")
                         return@routeGet
                     }
+                    val last = minOf(end ?: (sourceBytes.size - 1).toLong(), (sourceBytes.size - 1).toLong())
+                    call.response.header(
+                        HttpHeaders.ContentRange,
+                        "bytes $start-$last/${sourceBytes.size}"
+                    )
                     call.respondBytesWriter(
                         contentType = ContentType.parse("audio/webm"),
-                        status = if (start > 0) HttpStatusCode.PartialContent else HttpStatusCode.OK
+                        status = HttpStatusCode.PartialContent
                     ) {
-                        if (start > 0) {
-                            call.response.header(HttpHeaders.ContentRange, "bytes $start-${sourceBytes.size - 1}/${sourceBytes.size}")
-                        }
-                        writeFully(sourceBytes, start.toInt(), sourceBytes.size - start.toInt())
+                        writeFully(sourceBytes, start.toInt(), (last - start + 1).toInt())
                     }
                 }
 

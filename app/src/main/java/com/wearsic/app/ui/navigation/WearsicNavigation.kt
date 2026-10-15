@@ -26,7 +26,6 @@ import com.wearsic.app.ui.screens.StorageStatsContent
 import com.wearsic.app.ui.screens.ArtistsScreen
 import com.wearsic.app.ui.screens.FavoritesScreen
 import com.wearsic.app.ui.screens.LibraryScreen
-import com.wearsic.app.ui.screens.PlaceholderScreen
 import com.wearsic.app.ui.screens.PlaylistDetailScreen
 import com.wearsic.app.ui.screens.PlaylistsScreen
 import com.wearsic.app.ui.screens.PlayerScreen
@@ -71,6 +70,7 @@ fun WearsicApp(
     val apiKey by settingsVM.apiKey.collectAsStateWithLifecycle()
     val storageStats by downloadsVM.storageStats.collectAsStateWithLifecycle()
     val sleepRemainingMs by playerViewModel.sleepRemainingMs.collectAsStateWithLifecycle()
+    val crossfadeMs by settingsVM.crossfadeMs.collectAsStateWithLifecycle()
     val albumsState by libraryVM.albumsState.collectAsStateWithLifecycle()
     val artistsState by libraryVM.artistsState.collectAsStateWithLifecycle()
     val recentTracks by libraryVM.recentTracks.collectAsStateWithLifecycle()
@@ -190,8 +190,12 @@ fun WearsicApp(
                         downloadsVM.startDownload(track)
                     },
                     onAddToQueue = { track ->
-                        playbackVM.addToQueue(track)
+                        playerViewModel.queueTrack(track)
                     },
+                    onToggleFavorite = { track ->
+                        playerViewModel.toggleFavoriteFor(track)
+                    },
+                    favoriteTrackIds = favoritesState.tracks.map { it.id }.toSet(),
                     playlists = playlistsState.playlists,
                     onCreatePlaylistAndAdd = { name, track ->
                         libraryVM.createPlaylistAndAdd(name, track)
@@ -224,7 +228,9 @@ fun WearsicApp(
                         playbackVM.seekBack()
                     },
                     onToggleFavorite = {
-                        playbackVM.toggleFavorite()
+                        // Network version: POST/DELETE /api/favorites + refresh.
+                        // (playbackVM.toggleFavorite() only flips the icon locally.)
+                        playerViewModel.toggleFavorite()
                     },
                     onNavigateToVolume = {
                         navController.navigate(Screen.Volume.route)
@@ -246,8 +252,12 @@ fun WearsicApp(
                 VolumeScreen(
                     currentOutputDevice = stablePlaybackState.outputDeviceName,
                     sleepRemainingMs = sleepRemainingMs,
+                    crossfadeMs = crossfadeMs,
                     onSleepTimerSet = { minutes ->
                         playerViewModel.setSleepTimer(minutes)
+                    },
+                    onCrossfadeMsChanged = { ms ->
+                        settingsVM.setCrossfadeMs(ms)
                     },
                     onOutputDeviceChanged = {
                         playbackVM.refreshOutputDevice()
@@ -382,6 +392,9 @@ fun WearsicApp(
                     onDownloadTrack = { track ->
                         downloadsVM.startDownload(track)
                     },
+                    onQueue = { track ->
+                        playerViewModel.queueTrack(track)
+                    },
                     onRemoveFavorite = { trackId ->
                         libraryVM.removeFavorite(trackId)
                     },
@@ -413,6 +426,13 @@ fun WearsicApp(
                     onDownloadTrack = { track ->
                         downloadsVM.startDownload(track)
                     },
+                    onQueue = { track ->
+                        playerViewModel.queueTrack(track)
+                    },
+                    onToggleFavorite = { track ->
+                        playerViewModel.toggleFavoriteFor(track)
+                    },
+                    favoriteTrackIds = favoritesState.tracks.map { it.id }.toSet(),
                     onRemoveTrack = { id, trackId ->
                         libraryVM.removeTrackFromPlaylist(id, trackId)
                     },

@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * /api/search returns YouTube Music metadata directly - official titles,
@@ -48,6 +49,14 @@ class MetadataSearchOrchestrator(
 
         /** Prefix used by the removed iTunes layer; kept for legacy replay. */
         const val LEGACY_IT_PREFIX = "it:"
+
+        /**
+         * Wall-clock budget for one metadata search. A hung fetch must never
+         * park a SingleFlight key forever — later identical queries would hang
+         * with it until restart. Timeouts fall through to the same empty path
+         * as failures (and are never cached).
+         */
+        private const val SEARCH_TIMEOUT_MS = 30_000L
     }
 
     /** Read-only view over persisted legacy surrogate matches (SQLite). */
@@ -72,19 +81,25 @@ class MetadataSearchOrchestrator(
         if (normalized.length < 2) return emptyList()
         require(normalized.length <= 200) { "Search query is too long" }
         return searchFlight.run(normalized) {
-            val tracks = try {
-                metadata.searchSongs(normalized)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                emptyList()
-            }.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(10)
+            val tracks = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                try {
+                    metadata.searchSongs(normalized)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }?.filter { it.videoId.isNotBlank() }?.distinctBy { it.videoId }?.take(10)
+                ?: emptyList()
             if (tracks.isNotEmpty()) {
                 prefetch(tracks.take(PREFETCH_COUNT))
                 tracks.map { metadata.toTrackDto(it) }
             } else {
                 fallbackCount.incrementAndGet()
-                youtube.search(normalized).filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(10)
+                val fallback = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                    youtube.search(normalized)
+                } ?: emptyList()
+                fallback.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(10)
             }
         }
     }

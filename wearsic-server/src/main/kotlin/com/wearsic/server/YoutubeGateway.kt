@@ -19,6 +19,16 @@ import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExt
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.slf4j.LoggerFactory
+import java.net.URI
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.time.Duration
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * NewPipeExtractor is initialized with a global [Downloader] and has no
@@ -60,6 +70,14 @@ class YoutubeGateway(
      */
     private val extractionMutex = Mutex()
 
+    /** Shared JDK HTTP client for the lean player fast path (own pool). */
+    private val leanHttp: java.net.http.HttpClient by lazy {
+        java.net.http.HttpClient.newBuilder()
+            .connectTimeout(Duration.ofMillis(LEAN_HTTP_TIMEOUT_MS))
+            .followRedirects(java.net.http.HttpClient.Redirect.NEVER)
+            .build()
+    }
+
     companion object {
         private const val MAX_RESULTS = 10
         // Albums/playlists: 10 tracks felt like a truncated album on the watch
@@ -84,6 +102,26 @@ class YoutubeGateway(
 
         /** Wall-clock budget for one full stream resolution. */
         internal const val EXTRACTION_TIMEOUT_MS: Long = 25_000L
+
+        /**
+         * Wall-clock budget for one search flight. A hung fetchPage() must
+         * never park a SingleFlight key forever — every later identical query
+         * would hang with it until restart. Timeouts are NOT cached.
+         */
+        internal const val SEARCH_TIMEOUT_MS: Long = 30_000L
+
+        // ---- Lean Innertube player fast path ----
+        // NewPipe's full fetchPage() costs ~10s: visitor tracking, Shorts
+        // reel, related/next — none of it needed for audio. ONE player POST
+        // with the iOS client answers in ~0.3-0.5s. Null on ANY failure
+        // (login-gated, ciphered-only, throttled) → full extraction fallback.
+        private const val LEAN_HTTP_TIMEOUT_MS: Long = 15_000L
+        private const val IOS_CLIENT_VERSION = "21.03.2"
+        private const val IOS_USER_AGENT =
+            "com.google.ios.youtube/21.03.2 (iPhone16,2; U; CPU iOS 18_7_2 like Mac OS X; en_US)"
+        private const val IOS_PLAYER_URL =
+            "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+        private val VIDEO_ID_RE = Regex("[A-Za-z0-9_-]{11}")
 
         /** Client order for stream extraction: iOS first, default fallback. */
         internal val CLIENT_ORDER: List<Boolean> = listOf(true, false)
@@ -132,7 +170,12 @@ class YoutubeGateway(
         return searchSingleFlight.run(cacheKey) {
             // Double-check the cache after joining: the winner just populated it.
             searchCache.get(cacheKey)?.let { return@run it }
-            val results = searchMusic(normalized)
+            val results = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                searchMusic(normalized)
+            } ?: run {
+                logger.info("Search timed out for '{}'", normalized)
+                return@run emptyList()
+            }
             searchCache.put(cacheKey, results)
             results
         }
@@ -304,6 +347,20 @@ class YoutubeGateway(
                 if (cached.expiresAtMillis > joinedAt) return@run cached.target
             }
 
+            // Fast path first: one player POST, no mutex (pure HTTP, no global
+            // state). Most taps skip the serialized extraction queue entirely;
+            // only login-gated/ciphered/throttled videos pay for full fetchPage.
+            val lean = withContext(Dispatchers.IO) { resolveLeanPlayer(videoId) }
+            if (lean != null) {
+                healthMeter?.recordSuccess()
+                val target = StreamTarget(url = lean.url, mimeType = lean.mimeType)
+                streamCache.put(
+                    videoId,
+                    CachedStreamTarget(target, System.currentTimeMillis() + STREAM_CACHE_TTL_MILLIS)
+                )
+                return@run target
+            }
+
             // Track whether the timeout fired vs extraction genuinely finding
             // nothing: a timeout is TRANSIENT (queue jam / slow YouTube) and
             // must NOT be cached as NOT_PLAYABLE, or the next 5 min of taps
@@ -379,6 +436,66 @@ class YoutubeGateway(
         } catch (e: Exception) {
             logger.warn("Canary probe failed: {}", e.message)
             false
+        }
+    }
+
+    /**
+     * Lean stream resolution: ONE Innertube player POST with the iOS client
+     * (~0.3-0.5s) instead of NewPipe's full fetchPage (~10s of visitor
+     * tracking, Shorts reel, related/next — none needed for audio).
+     * Pure HTTP, no global state: needs NO mutex. Null on ANY failure —
+     * the caller falls back to full NewPipe extraction.
+     */
+    private data class LeanAudio(val url: String, val mimeType: String, val bitrateKbps: Int)
+
+    private fun resolveLeanPlayer(videoId: String): LeanAudio? {
+        if (!VIDEO_ID_RE.matches(videoId)) return null
+        return try {
+            val payload =
+                """{"videoId":"$videoId","context":{"client":{""" +
+                    """"clientName":"IOS","clientVersion":"$IOS_CLIENT_VERSION",""" +
+                    """"deviceModel":"iPhone16,2","deviceMake":"Apple","osName":"iOS",""" +
+                    """"osVersion":"18.7.2","hl":"en","gl":"US"},"user":{}}}"""
+            val builder = HttpRequest.newBuilder(URI.create(IOS_PLAYER_URL))
+                .timeout(Duration.ofMillis(LEAN_HTTP_TIMEOUT_MS))
+                .header("Content-Type", "application/json")
+                .header("Accept", "*/*")
+                .header("User-Agent", IOS_USER_AGENT)
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+            // Bot-challenge workaround, same as the extractor path: attach
+            // the session cookie when one is configured.
+            YoutubeSession.cookie?.let { builder.header("Cookie", it) }
+            val resp = leanHttp.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+            if (resp.statusCode() != 200) return null
+            val root = Json.parseToJsonElement(resp.body()).jsonObject
+            if (root["playabilityStatus"]?.jsonObject
+                    ?.get("status")?.jsonPrimitive?.contentOrNull != "OK"
+            ) return null
+            val formats = root["streamingData"]?.jsonObject
+                ?.get("adaptiveFormats")?.jsonArray ?: return null
+            val audios = formats.mapNotNull { f ->
+                val o = f.jsonObject
+                // Ciphered entries have signatureCipher instead of url —
+                // leave those to full extraction (deciphering lives there).
+                val url = o["url"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val mime = o["mimeType"]?.jsonPrimitive?.contentOrNull ?: ""
+                if (!mime.contains("audio", ignoreCase = true)) return@mapNotNull null
+                val br = o["bitrate"]?.jsonPrimitive?.intOrNull ?: 0
+                LeanAudio(url, mime, br / 1000)
+            }
+            if (audios.isEmpty()) return null
+            // Same preference as the extractor path: AAC-LC (hardware-decoded
+            // on the watch, low battery) near the 128k target tier.
+            val aac = audios.filter { it.mimeType.contains("mp4", ignoreCase = true) }
+            val pool = if (aac.isNotEmpty()) aac else audios
+            val known = pool.filter { it.bitrateKbps > 0 }
+            val selectable = if (known.isNotEmpty()) known else pool
+            selectable.minByOrNull {
+                kotlin.math.abs(it.bitrateKbps - TARGET_AUDIO_BITRATE_KBPS)
+            }
+        } catch (e: Exception) {
+            logger.info("Lean player lookup failed for {}: {}", videoId, e.message)
+            null
         }
     }
 

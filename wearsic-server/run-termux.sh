@@ -292,31 +292,22 @@ recover_interrupted_update
 log "auto-heal supervisor starting (health checks every 30s)"
 
 # --- FFmpeg: required only for the rare Opus/WebM-only song (503 otherwise). ---
-# Installation failures must NOT be reported as success: verify the binary
-# actually exists after pkg install, and exit non-zero if it does not — a
-# silent partial install previously made the supervisor print "ffmpeg
-# installed" while transcoding stayed broken.
+# Installs in the BACKGROUND so first boot isn't held hostage by a ~50MB
+# download: AAC songs (nearly everything) play immediately; the log says
+# exactly when conversion comes online. Failures stay LOUD in the log —
+# a silent partial install once made the supervisor claim success while
+# transcoding stayed broken, so the background job verifies the binary.
 if ! command -v ffmpeg >/dev/null 2>&1; then
-  log "ffmpeg not found — attempting installation..."
   if command -v pkg >/dev/null 2>&1; then
-    if pkg install -y ffmpeg >> "$LOG" 2>&1; then
-      if command -v ffmpeg >/dev/null 2>&1; then
-        log "ffmpeg installed and verified"
+    log "ffmpeg not found — installing in the background (music plays meanwhile)…"
+    ( if pkg install -y ffmpeg >> "$LOG" 2>&1 && command -v ffmpeg >/dev/null 2>&1; then
+        log "ffmpeg installed and verified — all songs now play"
       else
-        log "ERROR: pkg reported success but ffmpeg is still not on PATH"
-        log "Install it manually with: pkg install ffmpeg   (then re-run this script)"
-        exit 1
-      fi
-    else
-      log "ERROR: ffmpeg installation FAILED (unmet dependencies or network problem)"
-      log "The server will still run, but songs YouTube only offers in Opus/WebM will answer 503."
-      log "Fix with: pkg update -y && pkg install -y ffmpeg   (then re-run this script)"
-      exit 1
-    fi
+        log "ERROR: ffmpeg installation FAILED — Opus/WebM-only songs will answer 503."
+        log "Fix with: pkg update -y && pkg install -y ffmpeg   (then: wearsic restart)"
+      fi ) &
   else
-    log "ERROR: pkg not found — cannot install ffmpeg automatically"
-    log "Install it manually with: pkg install ffmpeg   (then re-run this script)"
-    exit 1
+    log "ERROR: pkg not found — cannot install ffmpeg automatically (run: pkg install ffmpeg manually)"
   fi
 fi
 

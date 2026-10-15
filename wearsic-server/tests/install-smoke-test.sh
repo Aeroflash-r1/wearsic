@@ -132,9 +132,30 @@ else
   fail "server boots and answers /health"
 fi
 
+# User-data preservation is proven at the API level: a real favorite row
+# written through POST /api/favorites. (The old approach grepped a marker
+# string inside wearsic.db, but SQLite legitimately reformats the file's
+# first page on open — the marker died from normal database use, not from
+# the installer touching it.)
+FAV_ID="TESTVID0001"
+seed_favorite() {
+  curl -sf -m 10 -X POST "http://127.0.0.1:$PORT/api/favorites" \
+    -H "Content-Type: application/json" -H "X-Wearsic-Key: $API_KEY" \
+    -d '{"videoId":"'"$FAV_ID"'","title":"Smoke Song","uploader":"Smoke Test","durationMs":1000}' \
+    >/dev/null 2>&1
+}
+fav_present() {
+  curl -sf -m 10 "http://127.0.0.1:$PORT/api/favorites" \
+    -H "X-Wearsic-Key: $API_KEY" 2>/dev/null | grep -q "$FAV_ID"
+}
+if seed_favorite && fav_present; then
+  pass "favorite round-trip works (preservation baseline)"
+else
+  fail "favorite round-trip works (preservation baseline)"
+fi
+
 # ═══ 2. REINSTALL (idempotent) ═══════════════════════════════════════════════
 section "2. reinstall (idempotent)"
-printf 'SQLITE-DATA-MARKER\n' > "$DEST/wearsic.db"
 printf 'user-download\n' > "$DEST/downloads/keep.me"
 if run_install "$D1" "1.0.0" >"$T/install2.log" 2>&1; then
   pass "reinstall exits 0"
@@ -143,7 +164,7 @@ else
 fi
 KEY2="$(sed -n 's/^WEARSIC_API_KEY=//p' "$DEST/.env" | tail -1)"
 [ "$KEY2" = "$API_KEY" ] && pass "API key preserved on reinstall" || fail "API key preserved on reinstall (was: $API_KEY now: $KEY2)"
-grep -q 'SQLITE-DATA-MARKER' "$DEST/wearsic.db" && pass "wearsic.db preserved" || fail "wearsic.db preserved"
+fav_present && pass "wearsic.db preserved" || fail "wearsic.db preserved (favorite row survived reinstall)"
 [ -f "$DEST/downloads/keep.me" ] && pass "downloads/ preserved" || fail "downloads/ preserved"
 
 # ═══ 3. CLI COMMANDS ═════════════════════════════════════════════════════════
@@ -184,7 +205,7 @@ fi
 grep -q 'engine-v2' "$DEST/lib/test-engine-marker" && pass "new engine active" || fail "new engine active"
 KEY4="$(sed -n 's/^WEARSIC_API_KEY=//p' "$DEST/.env" | tail -1)"
 [ "$KEY4" = "$API_KEY" ] && pass "API key preserved across update" || fail "API key preserved across update"
-grep -q 'SQLITE-DATA-MARKER' "$DEST/wearsic.db" && pass "wearsic.db preserved across update" || fail "wearsic.db preserved across update"
+fav_present && pass "wearsic.db preserved across update" || fail "wearsic.db preserved across update (favorite row lost)"
 [ -f "$DEST/downloads/keep.me" ] && pass "downloads/ preserved across update" || fail "downloads/ preserved across update"
 HEALTH | grep -q '"status":"ok"' && pass "server healthy after update" || fail "server healthy after update"
 
@@ -229,7 +250,7 @@ fi
 grep -q 'engine-v2' "$DEST/lib/test-engine-marker" && pass "previous engine restored (rollback)" \
   || { fail "previous engine restored (rollback)"; grep -q 'broken' "$DEST/lib/test-engine-marker" && note "broken engine is still active!"; }
 HEALTH | grep -q '"status":"ok"' && pass "server healthy after rollback" || fail "server healthy after rollback"
-grep -q 'SQLITE-DATA-MARKER' "$DEST/wearsic.db" && pass "wearsic.db preserved through rollback" || fail "wearsic.db preserved through rollback"
+fav_present && pass "wearsic.db preserved through rollback" || fail "wearsic.db preserved through rollback (favorite row lost)"
 
 # ═══ 8. SECRET HYGIENE ═══════════════════════════════════════════════════════
 section "8. secrets never appear in logs"

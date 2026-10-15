@@ -344,9 +344,9 @@ if health_ok; then
 fi
 
 ( cd "$DEST" && nohup bash "$DEST/run-termux.sh" >/dev/null 2>&1 & )
-say "     waiting for the health check…"
+say "     waiting for the health check (cold JVM boots on phones can take minutes)…"
 i=0
-while [ "$i" -lt 60 ]; do
+while [ "$i" -lt 180 ]; do
   health_ok && break
   i=$((i + 1))
   sleep 1

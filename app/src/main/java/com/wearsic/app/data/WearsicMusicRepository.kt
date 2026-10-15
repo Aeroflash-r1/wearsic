@@ -36,6 +36,18 @@ class WearsicMusicRepository(
         refreshApiKeyWith(key)
     }
 
+    /**
+     * YouTube login cookie (bot-wall bypass). Write-only by design: the app
+     * never reads the value back, only whether the server holds one.
+     */
+    suspend fun getCookieStatus(): Result<Boolean> {
+        return httpApiClient.getCookieStatus(getServerUrl())
+    }
+
+    suspend fun setCookie(cookie: String): Result<Boolean> {
+        return httpApiClient.setCookie(getServerUrl(), cookie)
+    }
+
     suspend fun getServerUrl(): String {
         return preferencesRepository.serverUrlFlow.first()
     }

@@ -163,4 +163,17 @@ class WearsicMockApiClient(private val context: Context) : WearsicApiClient {
         delay(300)
         return Result.success(Unit)
     }
+
+    private var mockHasCookie = false
+
+    override suspend fun getCookieStatus(baseUrl: String): Result<Boolean> {
+        delay(200)
+        return Result.success(mockHasCookie)
+    }
+
+    override suspend fun setCookie(baseUrl: String, cookie: String): Result<Boolean> {
+        delay(200)
+        mockHasCookie = cookie.isNotBlank()
+        return Result.success(mockHasCookie)
+    }
 }

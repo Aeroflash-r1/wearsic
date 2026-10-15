@@ -142,23 +142,43 @@ class WearsicPlaybackController(
             }
             playbackRetryAttempts = 0
 
-            // Walk the cause chain to the root for a useful diagnostic.
-            var deepest: Throwable? = error.cause
-            while (deepest?.cause != null) deepest = deepest.cause
-            val detail = deepest?.message
-                ?: error.cause?.message
-                ?: error.message
             _uiState.update { current ->
                 current.copy(
                     isPlaying = false,
                     isBuffering = false,
-                    playbackError = if (!detail.isNullOrBlank()) {
-                        "Playback error (${error.errorCodeName}): ${detail.substringBefore('\n')}"
-                    } else {
-                        "Playback error: ${error.errorCodeName}"
-                    }
+                    playbackError = friendlyPlaybackError(error)
                 )
             }
+        }
+    }
+
+    /**
+     * HTTP-aware error text. A 503/401/403 from /api/stream means YouTube is
+     * bot-challenging the server — retrying won't help, but a login cookie
+     * usually does. Say THAT instead of a raw error code.
+     */
+    private fun friendlyPlaybackError(error: PlaybackException): String {
+        var cause: Throwable? = error
+        while (cause != null) {
+            val code = Regex("Response code: (\\d{3})")
+                .find(cause.message ?: "")
+                ?.groupValues?.get(1)?.toIntOrNull()
+            if (code == 503 || code == 401 || code == 403) {
+                return "Stream blocked ($code): YouTube is challenging the server. " +
+                    "Set a YouTube cookie in Settings."
+            }
+            cause = cause.cause
+        }
+        // Walk the cause chain to the root for a useful diagnostic.
+        var deepest: Throwable? = error.cause
+        while (deepest?.cause != null) deepest = deepest.cause
+        val detail = deepest?.message
+            ?: error.cause?.message
+            ?: error.message
+        return if (!detail.isNullOrBlank()) {
+            "Playback error (${error.errorCodeName}): ${detail.substringBefore('\n')}"
+        } else {
+            "Playback error: ${error.errorCodeName}"
         }
     }
 

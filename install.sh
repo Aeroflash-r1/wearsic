@@ -35,13 +35,91 @@ trap 'rm -rf "$WORK"' EXIT
 
 # ── output helpers ──────────────────────────────────────────────────────────
 C_RESET='\033[0m'; C_BOLD='\033[1m'; C_PURPLE='\033[1;35m'
-C_GREEN='\033[1;32m'; C_YELLOW='\033[1;33m'; C_RED='\033[1;31m'; C_DIM='\033[2m'
+C_GREEN='\033[1;32m'; C_YELLOW='\033[1;33m'; C_RED='\033[1;31m'; C_DIM='\033[2m'; C_CYAN='\033[1;36m'
+
+TTY_OUT=0; [ -t 1 ] && TTY_OUT=1   # animations off when piped/logged
 
 say()  { printf "${C_PURPLE}[wearsic]${C_RESET} %s\n" "$*"; }
-step() { printf "${C_PURPLE}[wearsic]${C_RESET} ${C_BOLD}%s${C_RESET}\n" "$*"; }
+step() { printf "\n${C_PURPLE}[wearsic]${C_RESET} ${C_BOLD}━━━ %s ━━━${C_RESET}\n" "$*"; }
 ok()   { printf "${C_PURPLE}[wearsic]${C_RESET}  ${C_GREEN}✓${C_RESET} %s\n" "$*"; }
 warn() { printf "${C_PURPLE}[wearsic]${C_RESET}  ${C_YELLOW}!${C_RESET} %s\n" "$*"; }
-die()  { printf "${C_PURPLE}[wearsic]${C_RESET} ${C_RED}ERROR:${C_RESET} %s\n" "$*" >&2; exit 1; }
+die()  { printf "${C_PURPLE}[wearsic]${C_RESET} ${C_RED}✗ ERROR:${C_RESET} %s\n" "$*" >&2; exit 1; }
+
+# Animated spinner for background work. Non-tty: plain start line, the
+# matching ok/fail line on stop (logs stay readable).
+SPIN_PID=""; SPIN_MSG=""
+spinner_start() { # $1 = message
+  SPIN_MSG="$1"
+  if [ "$TTY_OUT" != "1" ]; then say "$1…"; return 0; fi
+  printf "${C_PURPLE}[wearsic]${C_RESET}  %s " "$1"
+  ( while :; do for f in ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏; do printf '\b%s' "$f"; sleep 0.08; done; done ) &
+  SPIN_PID=$!
+}
+spinner_stop() { # $1 = 0 ok / else fail, $2 = done message (default: start message)
+  local msg="${2:-$SPIN_MSG}"
+  if [ -n "$SPIN_PID" ]; then kill "$SPIN_PID" 2>/dev/null; wait "$SPIN_PID" 2>/dev/null; SPIN_PID=""; fi
+  if [ "$TTY_OUT" = "1" ]; then printf '\b'; fi
+  if [ "${1:-0}" = "0" ]; then ok "$msg"; else printf "${C_PURPLE}[wearsic]${C_RESET}  ${C_RED}✗${C_RESET} %s\n" "$msg"; fi
+  SPIN_MSG=""
+}
+
+# Download with a live █ progress bar (MB + %). Falls back to a spinner
+# when the server hides Content-Length. Returns curl's exit status.
+download_bar() { # $1 = url, $2 = out file, $3 = label
+  local url="$1" out="$2" label="${3:-download}"
+  local total=""
+  total="$(curl -fsSIL --max-time 15 "$url" 2>/dev/null | grep -i '^content-length:' | tail -1 | tr -d '\r' | awk '{print $2}')"
+  case "$total" in ''|*[!0-9]*) total="" ;; esac
+  if [ -z "$total" ] || [ "$TTY_OUT" != "1" ]; then
+    spinner_start "$label"
+    if curl -fL --retry 3 --retry-delay 2 -o "$out" "$url" >/dev/null 2>&1; then
+      spinner_stop 0 "$label ($(du -h "$out" 2>/dev/null | cut -f1))"
+    else
+      spinner_stop 1 "$label"; return 1
+    fi
+    return 0
+  fi
+  curl -fL --retry 3 --retry-delay 2 -o "$out" "$url" >/dev/null 2>&1 &
+  local pid=$! have=0 pct=0
+  while kill -0 "$pid" 2>/dev/null; do
+    have="$(wc -c < "$out" 2>/dev/null || echo 0)"
+    pct=$(( have * 100 / total ))
+    [ "$pct" -gt 100 ] && pct=100
+    draw_bar "$label" "$pct" "$have" "$total"
+    sleep 0.2
+  done
+  wait "$pid" || { printf '\n'; return 1; }
+  draw_bar "$label" 100 "$total" "$total"
+  printf '\n'
+  return 0
+}
+
+draw_bar() { # $1 label $2 pct $3 have-bytes $4 total-bytes
+  local label="$1" pct="$2" have="$3" total="$4" width=18 i bar=""
+  local filled=$(( pct * width / 100 ))
+  i=0; while [ "$i" -lt "$filled" ]; do bar="${bar}█"; i=$((i + 1)); done
+  while [ "$i" -lt "$width" ]; do bar="${bar}░"; i=$((i + 1)); done
+  printf "\r${C_PURPLE}[wearsic]${C_RESET}  %s ${C_CYAN}%s${C_RESET} %3d%%  ${C_DIM}%s / %s${C_RESET}" \
+    "$label" "$bar" "$pct" "$(human_bytes "$have")" "$(human_bytes "$total")"
+}
+
+human_bytes() { # $1 = bytes -> 12.4M
+  local b="${1:-0}"
+  case "$b" in ''|*[!0-9]*) b=0 ;; esac
+  if [ "$b" -ge 1048576 ]; then awk "BEGIN{printf \"%.1fM\", $b/1048576}";
+  elif [ "$b" -ge 1024 ]; then awk "BEGIN{printf \"%.0fK\", $b/1024}";
+  else printf '%sB' "$b"; fi
+}
+
+# Rounded box for the pairing card / big announcements.
+box_top()    { printf "${C_PURPLE}╭─ %s %s${C_RESET}\n" "$1" "$(box_rule "$1")"; }
+box_line()   { printf "${C_PURPLE}│${C_RESET} %s\n" "$1"; }
+box_bottom() { printf "${C_PURPLE}╰%s╯${C_RESET}\n" "$(box_rule "")"; }
+box_rule() { # pad a ── rule to ~52 cols after $1
+  local n=$(( 50 - ${#1} )); [ "$n" -lt 4 ] && n=4
+  local i=0 s=""; while [ "$i" -lt "$n" ]; do s="${s}─"; i=$((i + 1)); done
+  printf '%s' "$s"
+}
 
 # ── small utilities ─────────────────────────────────────────────────────────
 
@@ -137,18 +215,30 @@ else
   warn "Termux not detected ($ARCH_LABEL) — continuing (the server is a plain JVM app)"
 fi
 
-# ── 2. dependencies ─────────────────────────────────────────────────────────
+# ── 2. dependencies (runs in the BACKGROUND while we download) ─────────────
 step "2/7  Installing dependencies (Java, curl, unzip)…"
 
+PKG_BG=0
+PKG_START=$SECONDS
 if [ "$IS_TERMUX" = "1" ] && command -v pkg >/dev/null 2>&1; then
-  pkg update -y >/dev/null 2>&1 || warn "pkg update reported a problem — continuing"
+  # Skip the (slow) index refresh entirely when everything is present.
+  NEED_PKGS=""
   for p in openjdk-17 unzip curl; do
-    if ! pkg list-installed 2>/dev/null | grep -q "^${p}/"; then
-      say "     installing $p…"
-      pkg install -y "$p" >/dev/null 2>&1 || die "Failed to install '$p'. Run: pkg install -y openjdk-17 unzip curl"
-    fi
-    ok "$p"
+    pkg list-installed 2>/dev/null | grep -q "^${p}/" || NEED_PKGS="$NEED_PKGS $p"
   done
+  if [ -z "$NEED_PKGS" ]; then
+    ok "openjdk-17, unzip, curl (already installed — no download)"
+  else
+    # Backgrounded so the server zip downloads in parallel — the two slow
+    # network jobs overlap instead of adding up. Status reaped in step 4.
+    ( pkg update -y >/dev/null 2>&1
+      # shellcheck disable=SC2086
+      pkg install -y $NEED_PKGS >/dev/null 2>&1
+    ) >"$WORK/pkg.log" 2>&1 &
+    PKG_PID=$!
+    PKG_BG=1
+    say "     downloading packages in the background (Java is ~100MB on first install)…"
+  fi
 else
   for c in java unzip curl; do
     command -v "$c" >/dev/null 2>&1 \
@@ -214,33 +304,65 @@ else
 
   ZIP="$WORK/wearsic-server.zip"
   SHA="$WORK/wearsic-server.zip.sha256"
-  curl -fL --retry 3 --retry-delay 2 -o "$ZIP" "$ZIP_URL" \
+  download_bar "$ZIP_URL" "$ZIP" "downloading $(basename "$ZIP_URL")" \
     || die "Download failed: $ZIP_URL"
   [ -s "$ZIP" ] || die "Downloaded file is empty."
-  ok "downloaded ($(du -h "$ZIP" | cut -f1))"
 
+  spinner_start "fetching checksum"
   if ! curl -fsSL --retry 2 -o "$SHA" "$SHA_URL" 2>/dev/null || [ ! -s "$SHA" ]; then
-    die "No SHA-256 checksum found at $SHA_URL — refusing to install unverified code."
+    spinner_stop 1 "checksum"; die "No SHA-256 checksum found at $SHA_URL — refusing to install unverified code."
   fi
+  spinner_stop 0 "checksum"
 
   # Accept either "hash" or "hash  filename" formats.
   EXPECTED="$(awk '{print $1; exit}' "$SHA" | tr 'A-F' 'a-f')"
+  spinner_start "verifying SHA-256"
   if command -v sha256sum >/dev/null 2>&1; then
     ACTUAL="$(sha256sum "$ZIP" | awk '{print $1}')"
   else
     ACTUAL="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
   fi
   if [ "$EXPECTED" != "$ACTUAL" ]; then
-    die "SHA-256 MISMATCH — the download is corrupt or tampered. Nothing was installed."
+    spinner_stop 1 "SHA-256"; die "SHA-256 MISMATCH — the download is corrupt or tampered. Nothing was installed."
   fi
-  ok "SHA-256 verified"
+  spinner_stop 0 "SHA-256 verified"
 
   STAGE="$WORK/stage"
   mkdir -p "$STAGE"
-  unzip -t "$ZIP" >/dev/null 2>&1 || die "The downloaded file is not a valid ZIP (truncated download?)."
-  unzip -oq "$ZIP" -d "$STAGE" || die "Could not extract the server package."
+  spinner_start "extracting package"
+  if ! unzip -t "$ZIP" >/dev/null 2>&1; then
+    spinner_stop 1 "extracting package"; die "The downloaded file is not a valid ZIP (truncated download?)."
+  fi
+  if ! unzip -oq "$ZIP" -d "$STAGE"; then
+    spinner_stop 1 "extracting package"; die "Could not extract the server package."
+  fi
+  spinner_stop 0 "extracted"
   SRC="$STAGE/wearsic-server"
   [ -d "$SRC" ] || SRC="$STAGE"
+fi
+
+# ── reap the background dependency install from step 2 ─────────────────────
+if [ "$PKG_BG" = "1" ]; then
+  spinner_start "waiting for dependencies (Java, curl, unzip)"
+  if wait "$PKG_PID"; then
+    spinner_stop 0 "dependencies ready"
+  else
+    spinner_stop 1 "dependencies"
+    tail -5 "$WORK/pkg.log" 2>/dev/null
+    die "Failed to install dependencies. Run: pkg update -y && pkg install -y openjdk-17 unzip curl"
+  fi
+  for p in openjdk-17 unzip curl; do
+    if pkg list-installed 2>/dev/null | grep -q "^${p}/"; then
+      ok "$p"
+    else
+      die "Dependency '$p' is still missing after install. Run: pkg install -y $p"
+    fi
+  done
+  PKG_SECS=$(( SECONDS - PKG_START ))
+  if [ "$PKG_SECS" -gt 120 ]; then
+    warn "dependency download took ${PKG_SECS}s — your mirror may be slow."
+    warn "Try a faster one: termux-change-repo  (pick something nearby)"
+  fi
 fi
 
 # ── 5. stage + validate the package before touching anything ────────────────
@@ -267,8 +389,15 @@ mkdir -p "$DEST" "$DEST/wearsic-state" "$DEST/downloads"
 # Prepare COMPLETE replacement dirs first. Nothing active is touched until
 # both copies exist (an interruption here = nothing happened).
 rm -rf "$DEST/bin.new" "$DEST/lib.new"
-cp -r "$SRC/bin" "$DEST/bin.new" || die "Could not prepare the new engine (disk full?) — the current install is untouched."
-cp -r "$SRC/lib" "$DEST/lib.new" || { rm -rf "$DEST/bin.new"; die "Could not prepare the new engine (disk full?) — the current install is untouched."; }
+spinner_start "copying engine into place"
+if ! cp -r "$SRC/bin" "$DEST/bin.new"; then
+  spinner_stop 1 "copying engine"; die "Could not prepare the new engine (disk full?) — the current install is untouched."
+fi
+if ! cp -r "$SRC/lib" "$DEST/lib.new"; then
+  rm -rf "$DEST/bin.new"
+  spinner_stop 1 "copying engine"; die "Could not prepare the new engine (disk full?) — the current install is untouched."
+fi
+spinner_stop 0 "engine staged"
 
 # Swap by rename: the previous engine is kept as bin.prev/lib.prev for
 # rollback until the new one passes its health check (step 7).
@@ -344,13 +473,21 @@ if health_ok; then
 fi
 
 ( cd "$DEST" && nohup bash "$DEST/run-termux.sh" >/dev/null 2>&1 & )
-say "     waiting for the health check (cold JVM boots on phones can take minutes)…"
+spinner_start "waiting for first boot (cold JVM on phones takes minutes)"
 i=0
 while [ "$i" -lt 180 ]; do
   health_ok && break
   i=$((i + 1))
+  if [ "$((i % 30))" = "0" ]; then
+    say "     still booting… (${i}s — JVM warmup + first health check)"
+  fi
   sleep 1
 done
+if health_ok; then
+  spinner_stop 0 "server is up"
+else
+  spinner_stop 1 "server boot"
+fi
 
 if ! health_ok; then
   warn "The server did not become healthy in time."
@@ -378,16 +515,15 @@ else
 fi
 
 printf '\n'
-printf "${C_PURPLE}[wearsic]${C_RESET} ${C_BOLD}═══════════════════════════════════════════════════════════${C_RESET}\n"
-printf "${C_PURPLE}[wearsic]${C_RESET} ${C_BOLD}  Wearsic server is ready — connect your watch:${C_RESET}\n"
-printf "${C_PURPLE}[wearsic]${C_RESET}\n"
-printf "${C_PURPLE}[wearsic]${C_RESET}   Server URL : %s\n" "$SERVER_URL"
-printf "${C_PURPLE}[wearsic]${C_RESET}   API key    : %s\n" "$EFFECTIVE_KEY"
-printf "${C_PURPLE}[wearsic]${C_RESET}\n"
-printf "${C_PURPLE}[wearsic]${C_RESET}   Watch → Wearsic → Settings → Server URL   (paste the URL)\n"
-printf "${C_PURPLE}[wearsic]${C_RESET}                            → API Key        (paste the key)\n"
-printf "${C_PURPLE}[wearsic]${C_RESET}\n"
-printf "${C_PURPLE}[wearsic]${C_RESET}   ${C_DIM}Show these again:  wearsic url    ·   Check the setup:  wearsic doctor${C_RESET}\n"
-printf "${C_PURPLE}[wearsic]${C_RESET} ${C_BOLD}═══════════════════════════════════════════════════════════${C_RESET}\n"
+box_top "♪ Wearsic server is ready — connect your watch"
+box_line ""
+box_line "   ${C_BOLD}Server URL :${C_RESET} $SERVER_URL"
+box_line "   ${C_BOLD}API key    :${C_RESET} $EFFECTIVE_KEY"
+box_line ""
+box_line "   Watch → Wearsic → Settings → Server URL   (paste the URL)"
+box_line "                               → API Key        (paste the key)"
+box_line ""
+box_line "   ${C_DIM}Show these again:  wearsic url    ·   Check the setup:  wearsic doctor${C_RESET}"
+box_bottom
 printf '\n'
 say "Manage it with:  wearsic start | stop | restart | status | logs | health | url | api-key | update | doctor"

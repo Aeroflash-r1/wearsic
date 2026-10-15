@@ -133,8 +133,21 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     // Lifecycle
     // ============================================================================
 
-    override fun onCleared() {
+    /**
+     * Releases the [WearsicPlaybackController] (MediaController + its coroutine
+     * scope).
+     *
+     * Public because this ViewModel is constructed directly by
+     * WearsicPlayerViewModel rather than through a ViewModelStore, so the
+     * framework never calls [onCleared] on it — the parent has to drive
+     * teardown explicitly. Safe to call more than once.
+     */
+    fun release() {
         playbackController.release()
+    }
+
+    override fun onCleared() {
+        release()
         super.onCleared()
     }
 }

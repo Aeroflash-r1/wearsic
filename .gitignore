@@ -29,3 +29,9 @@ KEYSTORE_BASE64.txt
 *.db-shm
 *.db-wal
 /dist
+
+# Local secrets + logs (never commit)
+keystore.properties
+*.log
+wearsic-server/wearsic-server.log
+build-release.log

@@ -26,7 +26,6 @@ import com.wearsic.app.ui.screens.StorageStatsContent
 import com.wearsic.app.ui.screens.ArtistsScreen
 import com.wearsic.app.ui.screens.FavoritesScreen
 import com.wearsic.app.ui.screens.LibraryScreen
-import com.wearsic.app.ui.screens.PlaceholderScreen
 import com.wearsic.app.ui.screens.PlaylistDetailScreen
 import com.wearsic.app.ui.screens.PlaylistsScreen
 import com.wearsic.app.ui.screens.PlayerScreen
@@ -71,6 +70,7 @@ fun WearsicApp(
     val apiKey by settingsVM.apiKey.collectAsStateWithLifecycle()
     val storageStats by downloadsVM.storageStats.collectAsStateWithLifecycle()
     val sleepRemainingMs by playerViewModel.sleepRemainingMs.collectAsStateWithLifecycle()
+    val crossfadeMs by settingsVM.crossfadeMs.collectAsStateWithLifecycle()
     val albumsState by libraryVM.albumsState.collectAsStateWithLifecycle()
     val artistsState by libraryVM.artistsState.collectAsStateWithLifecycle()
     val recentTracks by libraryVM.recentTracks.collectAsStateWithLifecycle()
@@ -246,8 +246,12 @@ fun WearsicApp(
                 VolumeScreen(
                     currentOutputDevice = stablePlaybackState.outputDeviceName,
                     sleepRemainingMs = sleepRemainingMs,
+                    crossfadeMs = crossfadeMs,
                     onSleepTimerSet = { minutes ->
                         playerViewModel.setSleepTimer(minutes)
+                    },
+                    onCrossfadeMsChanged = { ms ->
+                        settingsVM.setCrossfadeMs(ms)
                     },
                     onOutputDeviceChanged = {
                         playbackVM.refreshOutputDevice()

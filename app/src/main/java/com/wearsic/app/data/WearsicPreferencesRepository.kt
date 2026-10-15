@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.wearsic.app.media.crossfade.CrossfadeLengths
 import com.wearsic.app.util.Validation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -28,6 +29,12 @@ class WearsicPreferencesRepository(private val context: Context) {
         val KEY_API_KEY = stringPreferencesKey("api_key")
         val KEY_HIDDEN_PLAYLISTS = stringSetPreferencesKey("hidden_playlists")
         val KEY_OFFLINE_LIMIT = intPreferencesKey("offline_song_limit")
+        /**
+         * Crossfade window between queue tracks, in milliseconds. Defaults to
+         * [CrossfadeLengths.OFF_MS] (the feature off) so installing an update
+         * never changes how playback sounds or what it costs on battery.
+         */
+        val KEY_CROSSFADE_MS = intPreferencesKey("crossfade_ms")
         /** No server is preconfigured; users enter their own URL in Settings. */
         const val DEFAULT_SERVER_URL = ""
         const val DEFAULT_OFFLINE_LIMIT = 15
@@ -72,6 +79,25 @@ class WearsicPreferencesRepository(private val context: Context) {
     suspend fun saveOfflineLimit(limitSongs: Int) {
         context.dataStore.edit { preferences ->
             preferences[KEY_OFFLINE_LIMIT] = limitSongs.coerceIn(5, 200)
+        }
+    }
+
+    /**
+     * Reads are sanitised on the way out, not on the way in: a value this build
+     * does not offer (written by another version, or a corrupted entry) must
+     * never reach the player as an arbitrary fade window.
+     */
+    val crossfadeMsFlow: Flow<Long> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            CrossfadeLengths.sanitize(
+                (preferences[KEY_CROSSFADE_MS] ?: CrossfadeLengths.DEFAULT_MS.toInt()).toLong()
+            )
+        }
+
+    suspend fun saveCrossfadeMs(ms: Long) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_CROSSFADE_MS] = CrossfadeLengths.sanitize(ms).toInt()
         }
     }
 

@@ -124,8 +124,19 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
     // Lifecycle
     // ============================================================================
 
-    override fun onCleared() {
+    /**
+     * Cancels in-flight download jobs and tears down the manager's scope.
+     *
+     * Public because this ViewModel is constructed directly by
+     * WearsicPlayerViewModel rather than through a ViewModelStore, so the
+     * framework never calls [onCleared] on it. Safe to call more than once.
+     */
+    fun release() {
         downloadManager.release()
+    }
+
+    override fun onCleared() {
+        release()
         super.onCleared()
     }
 }

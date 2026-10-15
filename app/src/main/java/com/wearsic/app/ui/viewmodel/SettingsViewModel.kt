@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wearsic.app.data.WearsicMusicRepository
 import com.wearsic.app.data.WearsicPreferencesRepository
+import com.wearsic.app.media.crossfade.CrossfadeLengths
 import com.wearsic.app.network.model.ConnectionTestState
 import com.wearsic.app.util.Validation
 import kotlinx.coroutines.Job
@@ -35,6 +36,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     val offlineLimit: StateFlow<Int> = preferencesRepository.offlineLimitFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), WearsicPreferencesRepository.DEFAULT_OFFLINE_LIMIT)
+
+    /** Crossfade window between queue tracks, in ms; OFF keeps the plain hand-off. */
+    val crossfadeMs: StateFlow<Long> = preferencesRepository.crossfadeMsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CrossfadeLengths.DEFAULT_MS)
 
     // ============================================================================
     // Connection Testing
@@ -90,6 +95,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         val clamped = limitSongs.coerceIn(5, 200)
         viewModelScope.launch {
             preferencesRepository.saveOfflineLimit(clamped)
+        }
+    }
+
+    /**
+     * The running playback service reads this preference straight from
+     * DataStore, so saving is the whole job — no command has to reach the
+     * media session for the next transition to pick it up.
+     */
+    fun setCrossfadeMs(ms: Long) {
+        viewModelScope.launch {
+            preferencesRepository.saveCrossfadeMs(ms)
         }
     }
 

@@ -60,26 +60,30 @@ import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
+import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
+import com.wearsic.app.media.crossfade.CrossfadeLengths
 
 /**
- * SOUND — output picker, volume and sleep timer.
+ * SOUND — output picker, volume, sleep timer and crossfade.
  *
  * Rebuilt flat and Wear-native: one solid accent (no multi-colour gradients),
  * an output row where the ACTIVE device is a filled accent pill with a dark
  * glyph (the same tinted-control language as the player) and the inactive one
  * is a glass pill, a big readable volume number over a rounded bar, and the
- * sleep timer as a row of chips.
+ * sleep timer / crossfade settings as rows of chips.
  */
 @Composable
 fun VolumeScreen(
     currentOutputDevice: String = "Watch Speaker",
     sleepRemainingMs: Long = 0L,
+    crossfadeMs: Long = CrossfadeLengths.DEFAULT_MS,
     onSleepTimerSet: (Int) -> Unit = {},
+    onCrossfadeMsChanged: (Long) -> Unit = {},
     onOutputDeviceChanged: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -226,16 +230,18 @@ fun VolumeScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         options.forEach { mins ->
                             val isActive = sleepRemainingMs > 0 && activeMinutes in (mins - 14)..mins
-                            SleepChip(
+                            OptionChip(
                                 label = "${mins}m",
                                 isActive = isActive,
-                                onClick = { onSleepTimerSet(mins) }
+                                onClick = { onSleepTimerSet(mins) },
+                                testTag = "sleep_timer_${mins}m"
                             )
                         }
-                        SleepChip(
+                        OptionChip(
                             label = "Off",
                             isActive = sleepRemainingMs == 0L,
-                            onClick = { onSleepTimerSet(0) }
+                            onClick = { onSleepTimerSet(0) },
+                            testTag = "sleep_timer_off"
                         )
                     }
                     if (sleepRemainingMs > 0) {
@@ -243,6 +249,39 @@ fun VolumeScreen(
                         Text(
                             text = "Sleep in ${sleepRemainingMs / 60000}m ${(sleepRemainingMs % 60000) / 1000}s",
                             color = WearsicAccentSky,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            // ── Crossfade ─────────────────────────────────────────────────
+            // Opt-in and last on the screen on purpose: it is the one control
+            // here that changes how music is decoded (two players overlap for
+            // the length of the fade), so it sits below the everyday controls
+            // instead of in front of them.
+            item {
+                Spacer(modifier = Modifier.height(4.dp))
+                SectionLabel("Crossfade")
+            }
+            item {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CrossfadeLengths.SELECTABLE_MS.forEach { ms ->
+                            OptionChip(
+                                label = CrossfadeLengths.label(ms),
+                                isActive = ms == crossfadeMs,
+                                onClick = { onCrossfadeMsChanged(ms) },
+                                testTag = "crossfade_${ms}ms"
+                            )
+                        }
+                    }
+                    if (crossfadeMs > CrossfadeLengths.OFF_MS) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Tracks fade into each other",
+                            color = WearsicTextSecondary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium
                         )
@@ -347,9 +386,17 @@ private fun VolumeBar(fraction: Float, modifier: Modifier = Modifier) {
     }
 }
 
-/** Sleep-timer chip: flat accent when active, glass when not. */
+/**
+ * Option chip (sleep timer, crossfade): flat accent when active, glass when
+ * not. One composable for both rows so the two groups cannot drift apart.
+ */
 @Composable
-private fun SleepChip(label: String, isActive: Boolean, onClick: () -> Unit) {
+private fun OptionChip(
+    label: String,
+    isActive: Boolean,
+    onClick: () -> Unit,
+    testTag: String = ""
+) {
     Box(
         modifier = Modifier
             .heightIn(min = WearsicDimens.TouchTarget)
@@ -362,6 +409,7 @@ private fun SleepChip(label: String, isActive: Boolean, onClick: () -> Unit) {
             )
             .wearsicClickable(pressedScale = 0.94f, onClick = onClick)
             .padding(horizontal = 11.dp, vertical = 7.dp)
+            .testTag(testTag)
     ) {
         Text(
             text = label,

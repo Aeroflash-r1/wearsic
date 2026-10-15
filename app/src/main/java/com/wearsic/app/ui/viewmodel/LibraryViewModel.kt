@@ -105,9 +105,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 errorMessage = favoritesResult.exceptionOrNull()?.message ?: "Could not load favorites"
             }
             val playlists = playlistsResult.getOrNull()
-            if (playlists != null) {
-                // no-op, applied below
-            } else {
+            if (playlists == null) {
                 errorMessage = playlistsResult.exceptionOrNull()?.message ?: errorMessage ?: "Could not load playlists"
             }
 

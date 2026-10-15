@@ -662,6 +662,13 @@ class WearsicPlaybackController(
     fun release() {
         initialConnectionKnown.complete(false)
         stopPositionTracker()
+        // The sleep-timer fade writes straight to the SESSION player's volume,
+        // and that player deliberately outlives this controller (it lives in
+        // WearsicMediaService). If teardown lands during the fade's last 10 s,
+        // the session would stay at e.g. 20% with nothing in the UI explaining
+        // why — the Sound screen only drives the system stream volume, so the
+        // user could not even see it. Restore full volume on the way out.
+        mediaController?.volume = 1f
         try {
             scope.cancel()
         } catch (_: Exception) {}

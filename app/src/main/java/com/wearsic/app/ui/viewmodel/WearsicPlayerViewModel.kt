@@ -6,7 +6,6 @@ import android.net.ConnectivityManager
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.wearsic.app.StartupDiagnostics
 import com.wearsic.app.WearsicApp
 import com.wearsic.app.data.WearsicDownloadRepository
 import com.wearsic.app.data.WearsicMusicRepository
@@ -72,14 +71,13 @@ class WearsicPlayerViewModel(
     val storageStats: StateFlow<DownloadsViewModel.StorageStats> get() = downloadsViewModel.storageStats
     val radioState: StateFlow<LibraryViewModel.RadioState> get() = libraryViewModel.radioState
     val sleepRemainingMs: StateFlow<Long> get() = _sleepRemainingMs
-    val startupHealth: StateFlow<String> get() = _startupHealth
+    // Delegates to the SettingsViewModel's flow: keeping a second copy meant
+    // reading the same startup log twice to produce one string.
+    val startupHealth: StateFlow<String> get() = settingsViewModel.startupHealth
 
     // Sleep timer state (kept here as it spans playback and UI)
     private val _sleepRemainingMs = MutableStateFlow(0L)
     private var sleepJob: Job? = null
-
-    // Startup health (kept here for backward compatibility)
-    private val _startupHealth = MutableStateFlow("")
 
     init {
         val container = (getApplication<WearsicApp>()).container
@@ -95,11 +93,6 @@ class WearsicPlayerViewModel(
             settingsViewModel.offlineLimit.collect { limit ->
                 downloadsViewModel.setMaxAutoCachedTracks(limit.coerceIn(5, 200))
             }
-        }
-
-        // Startup health
-        viewModelScope.launch(Dispatchers.IO) {
-            _startupHealth.value = StartupDiagnostics.lastStartupSummary(application.applicationContext)
         }
 
         // Auto-eviction setup
@@ -435,17 +428,8 @@ class WearsicPlayerViewModel(
             }
 
             result.onSuccess {
-                val updatedFavorites = if (targetFavorite) {
-                    if (favoritesState.value.tracks.none { it.id == track.id }) {
-                        favoritesState.value.tracks + track.copy(isFavorite = true)
-                    } else {
-                        favoritesState.value.tracks
-                    }
-                } else {
-                    favoritesState.value.tracks.filterNot { it.id == track.id }
-                }
                 libraryViewModel.refreshFavorites()
-            }.onFailure { err ->
+            }.onFailure {
                 playbackViewModel.setCurrentTrackFavorite(!targetFavorite)
             }
         }
@@ -462,6 +446,11 @@ class WearsicPlayerViewModel(
     }
 
     private fun maybeAutoCacheTrack(track: Track, evaluatedTrackIds: MutableSet<String>) {
+        // The playback state flow re-emits every ~2 s while playing, so this is
+        // reached on every tick once a track has been listened to long enough.
+        // Without this check the whole guard chain below re-ran — and
+        // startDownload was requested again — for a track already handled.
+        if (track.id in evaluatedTrackIds) return
         if (!settingsViewModel.autoCacheEnabled.value) return
         if (!track.mediaUri.startsWith("http")) return
         if (!isNetworkAvailable()) return
@@ -527,6 +516,12 @@ class WearsicPlayerViewModel(
 
     override fun onCleared() {
         sleepJob?.cancel()
+        // These child ViewModels are constructed directly rather than through a
+        // ViewModelStore, so the framework never calls their onCleared(). Without
+        // this the MediaController, its coroutine scope and any in-flight
+        // download jobs outlive the screen.
+        playbackViewModel.release()
+        downloadsViewModel.release()
         super.onCleared()
     }
 

@@ -107,6 +107,26 @@ class RangedUpstreamTest {
     }
 
     @Test
+    fun `refusals are counted for throttle visibility`() {
+        val before = UpstreamStats.rangeRefusals.get()
+        val bytes = ByteArray(1024) { 1 }
+        withFlakyOrigin(bytes, cutoff = 0L) { base ->
+            runBlocking {
+                val client = HttpClient(CIO)
+                try {
+                    client.fetchClosedChunks("$base/audio", 0, null) { _, _ -> }
+                } finally {
+                    client.close()
+                }
+            }
+        }
+        assertTrue(
+            UpstreamStats.rangeRefusals.get() > before,
+            "refused chunk must increment the throttle counter"
+        )
+    }
+
+    @Test
     fun `clean stream completes without refresh`() {
         val bytes = ByteArray(257 * 1024) { (it % 251).toByte() }
         withFlakyOrigin(bytes, cutoff = Long.MAX_VALUE) { base ->

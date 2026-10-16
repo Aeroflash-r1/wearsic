@@ -165,7 +165,7 @@ class WearsicPlaybackController(
                 ?.groupValues?.get(1)?.toIntOrNull()
             if (code == 503 || code == 401 || code == 403) {
                 return "Stream blocked ($code): YouTube is challenging the server. " +
-                    "Set a YouTube cookie in Settings."
+                    "Run `wearsic cookies` on the server, then retry."
             }
             cause = cause.cause
         }

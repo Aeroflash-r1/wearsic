@@ -22,13 +22,11 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Cookie
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.NetworkCheck
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.runtime.Composable
@@ -36,7 +34,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import com.wearsic.app.ui.viewmodel.SettingsViewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,14 +62,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.BuildConfig
 import com.wearsic.app.network.model.ConnectionTestState
 import com.wearsic.app.ui.components.WearsicScreenHeader
-import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicError
-import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicLavenderContainer
 import com.wearsic.app.ui.theme.WearsicSuccess
 import com.wearsic.app.ui.theme.WearsicSurface
@@ -97,9 +92,6 @@ fun SettingsScreen(
     onTestConnection: (String) -> Unit = {},
     apiKey: String = "",
     onApiKeyChanged: (String) -> Unit = {},
-    cookieState: SettingsViewModel.CookieUiState = SettingsViewModel.CookieUiState(),
-    onSaveCookie: (String) -> Unit = {},
-    onRefreshCookieStatus: () -> Unit = {},
     onOpenStorage: () -> Unit = {},
     autoCacheEnabled: Boolean = true,
     onAutoCacheToggled: (Boolean) -> Unit = {},
@@ -410,126 +402,6 @@ fun SettingsScreen(
                             cursorBrush = SolidColor(WearsicVibrantLavender),
                             modifier = Modifier.fillMaxWidth()
                         )
-                    }
-                }
-            }
-
-            // YouTube Cookie (bot-wall bypass). Write-only by design: the
-            // watch never reads the value back, the server only reports
-            // whether one is stored. Needed when songs fail with login /
-            // bot-check errors (common on mobile-data IPs).
-            item {
-                var typedCookie by remember { mutableStateOf("") }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(CircleShape)
-                        .background(WearsicSurface)
-                        .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                imageVector = if (cookieState.hasCookie) Icons.Rounded.CheckCircle else Icons.Rounded.Cookie,
-                                contentDescription = null,
-                                tint = if (cookieState.hasCookie) WearsicSuccess else WearsicTextMuted,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (cookieState.hasCookie) "YouTube cookie set" else "No YouTube cookie",
-                                color = WearsicTextPrimary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f)
-                            )
-                            WearsicSongRowActionButton(
-                                icon = Icons.Rounded.Refresh,
-                                contentDescription = "Refresh cookie status",
-                                onClick = onRefreshCookieStatus,
-                                testTag = "settings_cookie_refresh",
-                                tint = WearsicTextSecondary
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Paste cookie when songs fail with login errors. Stored on the server only.",
-                            color = WearsicTextMuted,
-                            fontSize = 9.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            BasicTextField(
-                                value = typedCookie,
-                                onValueChange = { typedCookie = it },
-                                singleLine = true,
-                                textStyle = TextStyle(color = WearsicTextPrimary, fontSize = 11.sp),
-                                visualTransformation = PasswordVisualTransformation(),
-                                keyboardOptions = KeyboardOptions(
-                                    imeAction = ImeAction.Done,
-                                    keyboardType = KeyboardType.Password
-                                ),
-                                cursorBrush = SolidColor(WearsicVibrantLavender),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("settings_cookie_input")
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (typedCookie.isNotBlank() && !cookieState.isWorking) WearsicVibrantLavender
-                                        else WearsicGlassFill
-                                    )
-                                    .wearsicClickable(
-                                        enabled = typedCookie.isNotBlank() && !cookieState.isWorking,
-                                        onClick = {
-                                            onSaveCookie(typedCookie)
-                                            typedCookie = ""
-                                        }
-                                    )
-                                    .padding(horizontal = 12.dp, vertical = 7.dp)
-                                    .testTag("settings_cookie_save"),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (cookieState.isWorking) {
-                                    CircularProgressIndicator(modifier = Modifier.size(13.dp))
-                                } else {
-                                    Text(
-                                        text = "Save",
-                                        color = WearsicTextPrimaryDark,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-                        if (cookieState.justSaved) {
-                            Text(
-                                text = "Cookie saved on the server.",
-                                color = WearsicSuccess,
-                                fontSize = 9.sp,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                        }
-                        cookieState.errorMessage?.let { err ->
-                            Text(
-                                text = err,
-                                color = WearsicError,
-                                fontSize = 9.sp,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                        }
                     }
                 }
             }

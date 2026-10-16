@@ -134,20 +134,6 @@ data class SearchResultsResponseDto(
     val results: List<TrackDto> = emptyList()
 )
 
-/**
- * YouTube login-cookie state (bot-wall bypass). The cookie itself is
- * write-only: the server only ever reports whether one is stored.
- */
-@Serializable
-data class YoutubeCookieStatusDto(
-    val hasCookie: Boolean = false
-)
-
-@Serializable
-data class YoutubeCookieRequestDto(
-    val cookie: String = ""
-)
-
 sealed interface ConnectionTestState {
     data object Idle : ConnectionTestState
     data object Testing : ConnectionTestState

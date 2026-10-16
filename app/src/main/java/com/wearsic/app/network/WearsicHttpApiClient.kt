@@ -17,8 +17,6 @@ import com.wearsic.app.network.model.SearchResultsResponseDto
 import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.network.model.SuggestionsResponseDto
 import com.wearsic.app.network.model.TrackDto
-import com.wearsic.app.network.model.YoutubeCookieRequestDto
-import com.wearsic.app.network.model.YoutubeCookieStatusDto
 import com.wearsic.app.util.Validation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -577,76 +575,6 @@ class WearsicHttpApiClient(
      */
     private fun List<TrackDto>.withStreamUrls(baseUrl: String): List<TrackDto> =
         map { it.copy(streamUrl = "$baseUrl/api/stream/${it.id}") }
-
-    override suspend fun getCookieStatus(baseUrl: String): Result<Boolean> = withContext(Dispatchers.IO) {
-        val urlValidation = validateBaseUrl(baseUrl)
-        if (urlValidation.isFailure) {
-            val error = urlValidation.exceptionOrNull() as? WearsicError
-            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
-        }
-        val sanitizedUrl = urlValidation.getOrThrow()
-
-        try {
-            val request = Request.Builder()
-                .url("$sanitizedUrl/api/config/youtube-cookie")
-                .get()
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(
-                        HttpError("$sanitizedUrl/api/config/youtube-cookie", response.code, "Server error: HTTP ${response.code}")
-                    )
-                }
-                val bodyString = response.body?.string() ?: "{}"
-                val dto = try {
-                    json.decodeFromString<YoutubeCookieStatusDto>(bodyString)
-                } catch (_: Exception) {
-                    YoutubeCookieStatusDto()
-                }
-                Result.success(dto.hasCookie)
-            }
-        } catch (e: Exception) {
-            Result.failure(UnknownError(e.message ?: "Could not load cookie status", e))
-        }
-    }
-
-    override suspend fun setCookie(baseUrl: String, cookie: String): Result<Boolean> = withContext(Dispatchers.IO) {
-        val urlValidation = validateBaseUrl(baseUrl)
-        if (urlValidation.isFailure) {
-            val error = urlValidation.exceptionOrNull() as? WearsicError
-            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
-        }
-        val sanitizedUrl = urlValidation.getOrThrow()
-
-        try {
-            val payload = json.encodeToString(
-                YoutubeCookieRequestDto.serializer(),
-                YoutubeCookieRequestDto(cookie = cookie)
-            )
-            val request = Request.Builder()
-                .url("$sanitizedUrl/api/config/youtube-cookie")
-                .post(payload.toRequestBody(JSON_MEDIA_TYPE))
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(
-                        HttpError("$sanitizedUrl/api/config/youtube-cookie", response.code, "Server error: HTTP ${response.code}")
-                    )
-                }
-                val bodyString = response.body?.string() ?: "{}"
-                val dto = try {
-                    json.decodeFromString<YoutubeCookieStatusDto>(bodyString)
-                } catch (_: Exception) {
-                    YoutubeCookieStatusDto()
-                }
-                Result.success(dto.hasCookie)
-            }
-        } catch (e: Exception) {
-            Result.failure(UnknownError(e.message ?: "Could not save cookie", e))
-        }
-    }
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

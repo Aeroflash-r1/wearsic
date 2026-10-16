@@ -270,9 +270,6 @@ fun WearsicApp(
 
             // 5. Settings Screen (Persistent Server URL, Cache & Downloads Management)
             composable(Screen.Settings.route) {
-                androidx.compose.runtime.LaunchedEffect(Unit) {
-                    settingsVM.refreshCookieStatus()
-                }
                 SettingsScreen(
                     serverUrl = serverUrl,
                     connectionTestState = connectionTestState,
@@ -285,13 +282,6 @@ fun WearsicApp(
                     apiKey = apiKey,
                     onApiKeyChanged = { key ->
                         settingsVM.saveApiKey(key)
-                    },
-                    cookieState = settingsVM.cookieState.collectAsStateWithLifecycle().value,
-                    onSaveCookie = { cookie ->
-                        settingsVM.saveCookie(cookie)
-                    },
-                    onRefreshCookieStatus = {
-                        settingsVM.refreshCookieStatus()
                     },
                     onOpenStorage = {
                         downloadsVM.refreshStorageStats()

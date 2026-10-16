@@ -28,9 +28,4 @@ interface WearsicApiClient {
     // Server-side playlists
     suspend fun createPlaylist(baseUrl: String, name: String): Result<PlaylistDto>
     suspend fun addTrackToPlaylist(baseUrl: String, playlistId: String, track: TrackDto): Result<Unit>
-
-    // YouTube login cookie (bot-wall bypass). Write-only: the server only
-    // reports whether a cookie is stored, never its value.
-    suspend fun getCookieStatus(baseUrl: String): Result<Boolean>
-    suspend fun setCookie(baseUrl: String, cookie: String): Result<Boolean>
 }

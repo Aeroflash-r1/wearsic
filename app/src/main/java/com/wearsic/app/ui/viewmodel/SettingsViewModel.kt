@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -79,50 +78,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun saveApiKey(key: String) {
         viewModelScope.launch {
             musicRepository.saveApiKey(key)
-        }
-    }
-
-    // ============================================================================
-    // YouTube Cookie (bot-wall bypass)
-    // ============================================================================
-
-    data class CookieUiState(
-        val hasCookie: Boolean = false,
-        val isWorking: Boolean = false,
-        val errorMessage: String? = null,
-        val justSaved: Boolean = false
-    )
-
-    private val _cookieState = MutableStateFlow(CookieUiState())
-    val cookieState: StateFlow<CookieUiState> = _cookieState.asStateFlow()
-
-    fun refreshCookieStatus() {
-        viewModelScope.launch {
-            musicRepository.getCookieStatus()
-                .onSuccess { has ->
-                    _cookieState.update { it.copy(hasCookie = has, errorMessage = null) }
-                }
-                .onFailure { err ->
-                    _cookieState.update { it.copy(errorMessage = err.message ?: "Could not load cookie status") }
-                }
-        }
-    }
-
-    fun saveCookie(cookie: String) {
-        val trimmed = cookie.trim()
-        if (trimmed.isEmpty()) return
-        if (_cookieState.value.isWorking) return
-        _cookieState.update { it.copy(isWorking = true, errorMessage = null, justSaved = false) }
-        viewModelScope.launch {
-            musicRepository.setCookie(trimmed)
-                .onSuccess { has ->
-                    _cookieState.update { it.copy(hasCookie = has, isWorking = false, justSaved = true) }
-                }
-                .onFailure { err ->
-                    _cookieState.update {
-                        it.copy(isWorking = false, errorMessage = err.message ?: "Could not save cookie")
-                    }
-                }
         }
     }
 

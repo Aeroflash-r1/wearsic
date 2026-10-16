@@ -71,7 +71,7 @@ class AudioProxy(
         // pass it through untouched with zero CPU cost.
         if (transcoder.needsTranscode(target.mimeType)) {
             val refreshForTranscode: suspend () -> String? = {
-                (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId)?.url
+                (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)?.url
             }
             when (val result = transcoder.handle(call, target.url, rangeHeader, refreshForTranscode)) {
                 is Transcoder.TranscodeResult.Streamed,
@@ -88,7 +88,7 @@ class AudioProxy(
                     }
                     // Dead URL on the transcode path: same self-heal as the
                     // passthrough path — one fresh re-resolve, then stream it.
-                    val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId)
+                    val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)
                     if (fresh != null) {
                         logger.info("Self-healed stale transcode URL for {}", videoId)
                         when (val retry = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode)) {
@@ -130,7 +130,7 @@ class AudioProxy(
                 // or was revoked upstream (it can die well inside the 1h cache
                 // TTL). Drop the stale entry, re-resolve once, and stream the
                 // fresh URL — the watch gets audio instead of an error.
-                val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId)
+                val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)
                 if (fresh != null) {
                     logger.info("Self-healed stale stream URL for {}", videoId)
                     when (val retry = streamFresh(call, fresh, rangeHeader, videoId)) {
@@ -166,7 +166,7 @@ class AudioProxy(
     ): ProxyOutcome {
         if (transcoder.needsTranscode(fresh.mimeType)) {
             val refreshForTranscode: suspend () -> String? = {
-                (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId)?.url
+                (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, fresh.itag)?.url
             }
             return when (val r = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode)) {
                 is Transcoder.TranscodeResult.Streamed -> ProxyOutcome.Streamed
@@ -221,7 +221,7 @@ class AudioProxy(
                     target.url, start, lastByte, blockBytes = chunkBytes,
                     emit = { buf, n -> writeFully(buf, 0, n) },
                     refreshUrl = {
-                        (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId)?.url
+                        (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)?.url
                     },
                 )
             }

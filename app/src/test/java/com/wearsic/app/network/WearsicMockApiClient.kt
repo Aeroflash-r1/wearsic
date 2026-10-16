@@ -31,6 +31,10 @@ class WearsicMockApiClient(private val context: Context) : WearsicApiClient {
     }
 
     override suspend fun searchTracks(baseUrl: String, query: String): Result<SearchResponseDto> {
+        return searchTracks(baseUrl, query, 10)
+    }
+
+    override suspend fun searchTracks(baseUrl: String, query: String, limit: Int): Result<SearchResponseDto> {
         delay(500) // Realistic search response delay
         val packageName = context.packageName
         val track1Uri = "${ContentResolver.SCHEME_ANDROID_RESOURCE}://$packageName/${R.raw.test_track_1}"
@@ -97,7 +101,7 @@ class WearsicMockApiClient(private val context: Context) : WearsicApiClient {
             }
         }
 
-        return Result.success(SearchResponseDto(query = query, tracks = filtered))
+        return Result.success(SearchResponseDto(query = query, tracks = filtered.take(limit.coerceIn(1, 25))))
     }
 
     override suspend fun getFavorites(baseUrl: String): Result<List<TrackDto>> {

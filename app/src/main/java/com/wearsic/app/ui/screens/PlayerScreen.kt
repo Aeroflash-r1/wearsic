@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -219,11 +220,14 @@ fun PlayerScreen(
                     }
                 }
 
-                // One generous touch target for the sub-screen, not two tiny dots.
-                Row(
+                // Page dots live on the trailing edge, NOT over the transport:
+                // the old bottom-center row sat exactly on the play/pause
+                // button's touch area on short viewports. One generous touch
+                // target for the sub-screen, vertical to match the edge.
+                Column(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .heightIn(min = WearsicDimens.TouchTarget)
+                        .align(Alignment.CenterEnd)
+                        .widthIn(min = WearsicDimens.TouchTarget)
                         .semantics {
                             contentDescription =
                                 if (pagerState.currentPage == 0) "Show player actions" else "Show now playing"
@@ -232,14 +236,14 @@ fun PlayerScreen(
                             scope.launch { pagerState.animateScrollToPage(1 - pagerState.currentPage) }
                         }
                         .testTag("player_page_switch"),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     repeat(2) { index ->
                         val active = pagerState.currentPage == index
                         Box(
                             modifier = Modifier
-                                .size(width = if (active) 11.dp else 5.dp, height = 4.dp)
+                                .size(width = 4.dp, height = if (active) 11.dp else 5.dp)
                                 .clip(CircleShape)
                                 .background(
                                     if (active) artworkColors.accent else Color.White.copy(alpha = 0.32f)

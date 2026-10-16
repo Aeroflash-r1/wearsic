@@ -51,6 +51,19 @@ class WearsicPlaybackController(
     private var lastTrackIndex = -1
 
     /**
+     * Last stable playback snapshot (index, id, position, duration) seen
+     * while playing — the evidence for the early-end guard in
+     * onMediaItemTransition. Position updates every state emission, so this
+     * lags reality by at most one tick (~2s): plenty for a 15s threshold.
+     */
+    private var lastStable = Quad(-1, "", 0L, 0L)
+
+    /** Item ids already replayed once by the early-end guard (per queue). */
+    private val earlyEndRetried = mutableSetOf<String>()
+
+    private data class Quad(val index: Int, val id: String, val pos: Long, val dur: Long)
+
+    /**
      * Queue order before shuffle was enabled — retained so toggling shuffle
      * off can restore the original order instead of leaving the shuffled one.
      */
@@ -111,6 +124,31 @@ class WearsicPlaybackController(
             updateStateFromPlayer(player)
         }
 
+        /**
+         * Truncated streams look like clean endings: the CDN stops mid-song
+         * (throttle refusal), ExoPlayer sees EOS and happily advances — the
+         * "song skips itself halfway" bug. If the item that just ended was
+         * still far from its known duration, pull it BACK and replay once
+         * (fresh HTTP request; throttle windows are seconds-long) instead
+         * of skipping. Second early end falls through to the normal path.
+         */
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) return
+            val controller = mediaController ?: return
+            val (prevIndex, prevId, prevPos, prevDur) = lastStable
+            if (prevIndex < 0 || prevId.isBlank()) return
+            if (prevDur <= 30_000L) return // too short to judge
+            if (prevDur - prevPos <= 15_000L) return // genuine end
+            if (!earlyEndRetried.add(prevId)) return // already retried once
+            if (prevIndex >= controller.mediaItemCount) return
+            controller.seekTo(prevIndex, 0L)
+            controller.prepare()
+            controller.play()
+            _uiState.update {
+                it.copy(isBuffering = true, playbackError = null)
+            }
+        }
+
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (isPlaying) {
                 startPositionTracker()
@@ -142,23 +180,43 @@ class WearsicPlaybackController(
             }
             playbackRetryAttempts = 0
 
-            // Walk the cause chain to the root for a useful diagnostic.
-            var deepest: Throwable? = error.cause
-            while (deepest?.cause != null) deepest = deepest.cause
-            val detail = deepest?.message
-                ?: error.cause?.message
-                ?: error.message
             _uiState.update { current ->
                 current.copy(
                     isPlaying = false,
                     isBuffering = false,
-                    playbackError = if (!detail.isNullOrBlank()) {
-                        "Playback error (${error.errorCodeName}): ${detail.substringBefore('\n')}"
-                    } else {
-                        "Playback error: ${error.errorCodeName}"
-                    }
+                    playbackError = friendlyPlaybackError(error)
                 )
             }
+        }
+    }
+
+    /**
+     * HTTP-aware error text. A 503/401/403 from /api/stream means YouTube is
+     * bot-challenging the server — retrying won't help, but a login cookie
+     * usually does. Say THAT instead of a raw error code.
+     */
+    private fun friendlyPlaybackError(error: PlaybackException): String {
+        var cause: Throwable? = error
+        while (cause != null) {
+            val code = Regex("Response code: (\\d{3})")
+                .find(cause.message ?: "")
+                ?.groupValues?.get(1)?.toIntOrNull()
+            if (code == 503 || code == 401 || code == 403) {
+                return "Stream blocked ($code): YouTube is challenging the server. " +
+                    "Run `wearsic cookies` on the server, then retry."
+            }
+            cause = cause.cause
+        }
+        // Walk the cause chain to the root for a useful diagnostic.
+        var deepest: Throwable? = error.cause
+        while (deepest?.cause != null) deepest = deepest.cause
+        val detail = deepest?.message
+            ?: error.cause?.message
+            ?: error.message
+        return if (!detail.isNullOrBlank()) {
+            "Playback error (${error.errorCodeName}): ${detail.substringBefore('\n')}"
+        } else {
+            "Playback error: ${error.errorCodeName}"
         }
     }
 
@@ -322,6 +380,15 @@ class WearsicPlaybackController(
             // every collector recompose, which burns battery on the watch.
             if (next != current) next else current
         }
+        // Snapshot for the early-end guard while genuinely progressing.
+        if (isPlaying && currentPos > 0) {
+            val id = if (currentIdx in activePlaylist.indices) {
+                activePlaylist[currentIdx].id
+            } else {
+                currentMediaItem?.mediaId.orEmpty()
+            }
+            lastStable = Quad(currentIdx, id, currentPos, duration)
+        }
     }
 
     private fun startPositionTracker() {
@@ -378,6 +445,9 @@ class WearsicPlaybackController(
         pendingPlay = null
         playbackRetryAttempts = 0
         pendingPreviousTap = false
+        // Fresh queue, fresh early-end budget.
+        earlyEndRetried.clear()
+        lastStable = Quad(-1, "", 0L, 0L)
 
         // A fresh queue is not shuffled — drop any retained pre-shuffle order.
         originalQueueOrder = emptyList()

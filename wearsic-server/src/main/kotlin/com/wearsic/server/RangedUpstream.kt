@@ -27,8 +27,6 @@ internal sealed interface ChunkedUpstream {
     /** Upstream refused the FIRST chunk — caller maps to self-heal/error. */
     data class Refused(val status: Int) : ChunkedUpstream
 }
-
-/** `"bytes=N-"` / `"bytes=N-M"` → start + inclusive end (null = open). */
 internal fun parseRangeHeader(header: String?): Pair<Long, Long?> {
     if (header.isNullOrBlank()) return 0L to null
     val m = Regex("bytes=(\\d+)-(\\d*)").find(header.trim()) ?: return 0L to null
@@ -69,25 +67,29 @@ internal suspend fun HttpClient.probeUpstreamLength(url: String, atByte: Long): 
  * Streams [startByte]..[endByteInclusive] (null = to EOF) through [emit]
  * using only CLOSED upstream ranges. Returns [ChunkedUpstream.Done] after
  * a clean EOF, [ChunkedUpstream.Refused] when the FIRST chunk is refused.
- * A refusal mid-stream ends the stream where it stands (throttle windows
- * pass; the next tap re-resolves). Throws when [emit] throws (caller gone)
- * so callers map it to their aborted outcome.
+ * A mid-stream refusal re-resolves via [refreshUrl] and RESUMES at the same
+ * byte (at most [maxRefreshes] times) instead of truncating the song.
+ * Throws when [emit] throws (caller gone) so callers map it to aborted.
  */
 internal suspend fun HttpClient.fetchClosedChunks(
     url: String,
     startByte: Long,
     endByteInclusive: Long?,
     blockBytes: Int = 64 * 1024,
+    refreshUrl: (suspend () -> String?)? = null,
+    maxRefreshes: Int = 2,
     emit: suspend (ByteArray, Int) -> Unit,
 ): ChunkedUpstream {
     require(blockBytes > 0) { "blockBytes must be positive" }
+    var currentUrl = url
     var pos = startByte.coerceAtLeast(0L)
+    var refreshes = 0
+    var zeroStreak = 0
     while (endByteInclusive == null || pos <= endByteInclusive) {
         val chunkEnd = minOf(pos + UPSTREAM_CHUNK_BYTES - 1, endByteInclusive ?: Long.MAX_VALUE)
-        val asked = chunkEnd - pos + 1
         var status = 0
         var got = 0L
-        prepareGet(url) {
+        prepareGet(currentUrl) {
             header(HttpHeaders.Range, "bytes=$pos-$chunkEnd")
         }.execute { resp ->
             status = resp.status.value
@@ -108,14 +110,33 @@ internal suspend fun HttpClient.fetchClosedChunks(
         if (status == HttpStatusCode.RequestedRangeNotSatisfiable.value) break // past EOF: clean end
         if (status != HttpStatusCode.PartialContent.value) {
             // Refused. First chunk (nothing emitted yet) = dead URL signal
-            // for the caller's self-heal; mid-stream = end what we have.
+            // for the caller's self-heal.
             if (pos == startByte.coerceAtLeast(0L) && got == 0L) {
                 return ChunkedUpstream.Refused(status)
+            }
+            // Mid-stream refusal (throttle 403): refresh the URL and RESUME
+            // at the same byte — the client's song continues instead of
+            // dying halfway. Bounded, then end what we have.
+            val fresh = if (refreshUrl != null && refreshes < maxRefreshes) {
+                refreshes++
+                runCatching { refreshUrl() }.getOrNull()?.takeIf { it.isNotBlank() }
+            } else null
+            if (fresh != null && fresh != currentUrl) {
+                currentUrl = fresh
+                continue
             }
             break
         }
         pos += got
-        if (got < asked) break // short read = EOF
+        // Zero-byte 206s in a row mean a wedged connection, not EOF (EOF
+        // arrives as 416 or a short read followed by 416). Without this the
+        // loop re-requests the same range forever.
+        if (got == 0L) {
+            zeroStreak++
+            if (zeroStreak >= 3) break
+        } else {
+            zeroStreak = 0
+        }
     }
     return ChunkedUpstream.Done
 }

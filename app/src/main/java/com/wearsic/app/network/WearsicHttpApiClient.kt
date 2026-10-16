@@ -85,7 +85,11 @@ class WearsicHttpApiClient(
         }
     }
 
-    override suspend fun searchTracks(baseUrl: String, query: String): Result<SearchResponseDto> = withContext(Dispatchers.IO) {
+    override suspend fun searchTracks(baseUrl: String, query: String): Result<SearchResponseDto> {
+        return searchTracks(baseUrl, query, SEARCH_PAGE_SIZE)
+    }
+
+    override suspend fun searchTracks(baseUrl: String, query: String, limit: Int): Result<SearchResponseDto> = withContext(Dispatchers.IO) {
         val urlValidation = validateBaseUrl(baseUrl)
         if (urlValidation.isFailure) {
             val error = urlValidation.exceptionOrNull() as? WearsicError
@@ -98,7 +102,8 @@ class WearsicHttpApiClient(
             return@withContext Result.failure(error ?: com.wearsic.app.model.EmptyInputError("query"))
         }
         val encodedQuery = URLEncoder.encode(queryValidation.getOrThrow(), "UTF-8")
-        val searchUrl = "$sanitizedUrl/api/search?q=$encodedQuery"
+        val page = limit.coerceIn(1, SEARCH_MAX_LIMIT)
+        val searchUrl = "$sanitizedUrl/api/search?q=$encodedQuery&limit=$page"
 
         try {
             val request = Request.Builder()
@@ -573,5 +578,11 @@ class WearsicHttpApiClient(
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+        /** First search page: fast, enough to choose from. */
+        const val SEARCH_PAGE_SIZE = 10
+
+        /** Expanded page ("Show more"): server clamps to the same ceiling. */
+        const val SEARCH_MAX_LIMIT = 25
     }
 }

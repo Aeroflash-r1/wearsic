@@ -10,6 +10,8 @@ import com.wearsic.app.network.model.TrackDto
 interface WearsicApiClient {
     suspend fun checkHealth(baseUrl: String): Result<ServerHealthDto>
     suspend fun searchTracks(baseUrl: String, query: String): Result<SearchResponseDto>
+    /** Same search with an explicit page size (1..25, server-clamped). */
+    suspend fun searchTracks(baseUrl: String, query: String, limit: Int): Result<SearchResponseDto>
     suspend fun getFavorites(baseUrl: String): Result<List<TrackDto>>
     suspend fun addFavorite(baseUrl: String, track: TrackDto): Result<Unit>
     suspend fun removeFavorite(baseUrl: String, videoId: String): Result<Unit>

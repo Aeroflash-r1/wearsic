@@ -2,9 +2,13 @@ package com.wearsic.app.data
 
 import android.content.Context
 import com.wearsic.app.model.Album
+import com.wearsic.app.model.DnsError
 import com.wearsic.app.model.EmptyInputError
+import com.wearsic.app.model.HostUnreachableError
+import com.wearsic.app.model.HttpError
 import com.wearsic.app.model.InvalidUrlError
 import com.wearsic.app.model.Playlist
+import com.wearsic.app.model.TimeoutError
 import com.wearsic.app.model.Track
 import com.wearsic.app.model.UnknownError
 import com.wearsic.app.model.WearsicError
@@ -63,10 +67,35 @@ class WearsicMusicRepository(
             is WearsicError -> error.getDisplayMessage()
             else -> error?.message ?: "Connection failed"
         }
-        return ConnectionTestState.Error(errorMsg)
+        return ConnectionTestState.Error(withConnectionHint(url, error, errorMsg))
     }
 
-    suspend fun searchMusic(query: String): Result<List<Track>> {
+    /**
+     * Turns cryptic connectivity failures into fixes. The two cases that
+     * bite every Funnel user: (1) a .ts.net address only resolves when the
+     * WATCH itself runs Tailscale on the same tailnet — otherwise DNS fails;
+     * (2) enabling Funnel forces an API key on the server, so a watch with
+     * a stale/empty key gets 401 on an address that otherwise works.
+     */
+    private fun withConnectionHint(url: String, error: Throwable?, base: String): String {
+        val host = try {
+            java.net.URI(url).host?.lowercase().orEmpty()
+        } catch (_: Exception) {
+            ""
+        }
+        if (host.endsWith(".ts.net") &&
+            (error is HostUnreachableError || error is DnsError ||
+                error is TimeoutError || error is UnknownError)
+        ) {
+            return "$base — Tailscale address: the watch must run Tailscale, logged into the SAME tailnet"
+        }
+        if (error is HttpError && error.statusCode == 401) {
+            return "$base — wrong API key: run `wearsic api-key` on the server and paste it here"
+        }
+        return base
+    }
+
+    suspend fun searchMusic(query: String, limit: Int = 10): Result<List<Track>> {
         val queryValidation = Validation.validateQuery(query)
         if (queryValidation.isFailure) {
             val error = queryValidation.exceptionOrNull() as? WearsicError
@@ -74,7 +103,7 @@ class WearsicMusicRepository(
         }
         val currentUrl = getServerUrl()
         
-        val httpResult = httpApiClient.searchTracks(currentUrl, queryValidation.getOrThrow())
+        val httpResult = httpApiClient.searchTracks(currentUrl, queryValidation.getOrThrow(), limit)
         if (httpResult.isSuccess) {
             val dtoList = httpResult.getOrThrow().tracks
             val domainTracks = dtoList.map { it.toDomainTrack() }

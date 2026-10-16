@@ -70,7 +70,10 @@ class AudioProxy(
         // audio. When YouTube already offers AAC (audio/mp4 — the common case),
         // pass it through untouched with zero CPU cost.
         if (transcoder.needsTranscode(target.mimeType)) {
-            when (val result = transcoder.handle(call, target.url, rangeHeader)) {
+            val refreshForTranscode: suspend () -> String? = {
+                (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId)?.url
+            }
+            when (val result = transcoder.handle(call, target.url, rangeHeader, refreshForTranscode)) {
                 is Transcoder.TranscodeResult.Streamed,
                 is Transcoder.TranscodeResult.Unavailable,
                 is Transcoder.TranscodeResult.Aborted,
@@ -88,7 +91,7 @@ class AudioProxy(
                     val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId)
                     if (fresh != null) {
                         logger.info("Self-healed stale transcode URL for {}", videoId)
-                        when (val retry = transcoder.handle(call, fresh.url, rangeHeader)) {
+                        when (val retry = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode)) {
                             is Transcoder.TranscodeResult.UpstreamError -> call.respond(
                                 HttpStatusCode.BadGateway,
                                 ErrorResponse("Upstream audio unavailable (HTTP ${retry.status})")
@@ -111,7 +114,7 @@ class AudioProxy(
         // Passthrough path. proxyTarget no longer commits error responses
         // itself: it returns the outcome so we can retry once on dead URLs
         // BEFORE anything is sent (double-respond would throw).
-        when (val outcome = proxyTarget(call, target, rangeHeader)) {
+        when (val outcome = proxyTarget(call, target, rangeHeader, videoId)) {
             is ProxyOutcome.Streamed -> return
             is ProxyOutcome.Aborted -> return
             is ProxyOutcome.UpstreamError -> {
@@ -130,7 +133,7 @@ class AudioProxy(
                 val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId)
                 if (fresh != null) {
                     logger.info("Self-healed stale stream URL for {}", videoId)
-                    when (val retry = streamFresh(call, fresh, rangeHeader)) {
+                    when (val retry = streamFresh(call, fresh, rangeHeader, videoId)) {
                         is ProxyOutcome.UpstreamError -> call.respond(
                             HttpStatusCode.BadGateway,
                             ErrorResponse("Upstream audio unavailable (HTTP ${retry.status})")
@@ -159,16 +162,20 @@ class AudioProxy(
         call: ApplicationCall,
         fresh: StreamTarget,
         rangeHeader: String?,
+        videoId: String,
     ): ProxyOutcome {
         if (transcoder.needsTranscode(fresh.mimeType)) {
-            return when (val r = transcoder.handle(call, fresh.url, rangeHeader)) {
+            val refreshForTranscode: suspend () -> String? = {
+                (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId)?.url
+            }
+            return when (val r = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode)) {
                 is Transcoder.TranscodeResult.Streamed -> ProxyOutcome.Streamed
                 is Transcoder.TranscodeResult.Aborted -> ProxyOutcome.Aborted
                 is Transcoder.TranscodeResult.Unavailable -> ProxyOutcome.Streamed // 503 already sent
                 is Transcoder.TranscodeResult.UpstreamError -> ProxyOutcome.UpstreamError(r.status)
             }
         }
-        return proxyTarget(call, fresh, rangeHeader)
+        return proxyTarget(call, fresh, rangeHeader, videoId)
     }
 
     /**
@@ -180,6 +187,7 @@ class AudioProxy(
         call: ApplicationCall,
         target: StreamTarget,
         rangeHeader: String?,
+        videoId: String,
     ): ProxyOutcome {
         return try {
             val (start, end) = parseRangeHeader(rangeHeader)
@@ -206,10 +214,16 @@ class AudioProxy(
                 status = HttpStatusCode.PartialContent
             ) {
                 // Stitch 1 MB closed-range chunks into one client stream, in
-                // large copy blocks (see STREAM_CHUNK_BYTES).
-                client.fetchClosedChunks(target.url, start, lastByte, blockBytes = chunkBytes) { buf, n ->
-                    writeFully(buf, 0, n)
-                }
+                // large copy blocks (see STREAM_CHUNK_BYTES). A throttle 403
+                // mid-song re-resolves and RESUMES at the same byte — the
+                // song plays through instead of dying halfway.
+                client.fetchClosedChunks(
+                    target.url, start, lastByte, blockBytes = chunkBytes,
+                    emit = { buf, n -> writeFully(buf, 0, n) },
+                    refreshUrl = {
+                        (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId)?.url
+                    },
+                )
             }
             ProxyOutcome.Streamed
         } catch (e: Exception) {

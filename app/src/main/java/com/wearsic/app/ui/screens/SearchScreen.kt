@@ -105,6 +105,7 @@ fun SearchScreen(
     onAddToQueue: (Track) -> Unit = {},
     onToggleFavorite: (Track) -> Unit = {},
     favoriteTrackIds: Set<String> = emptySet(),
+    onLoadMore: () -> Unit = {},
     playlists: List<com.wearsic.app.model.Playlist> = emptyList(),
     onCreatePlaylistAndAdd: (String, Track) -> Unit = { _, _ -> },
     onAddToPlaylist: (String, Track) -> Unit = { _, _ -> },
@@ -325,6 +326,45 @@ fun SearchScreen(
                     onDownload = { onDownloadTrack(track) },
                     onAddToQueue = { onAddToQueue(track) }
                 )
+            }
+
+            // Show more: expanded page loads behind the visible list.
+            if (searchState.isLoadingMore) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(CircleShape)
+                            .background(WearsicGlassFill)
+                            .border(1.dp, WearsicGlassBorder, CircleShape)
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                            .testTag("search_loading_more"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                    }
+                }
+            } else if (searchState.canLoadMore && searchState.results.isNotEmpty() && !searchState.isSearching) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(CircleShape)
+                            .background(WearsicGlassFill)
+                            .border(1.dp, WearsicGlassBorder, CircleShape)
+                            .wearsicClickable(onClick = onLoadMore)
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                            .testTag("search_show_more"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Show more",
+                            color = WearsicVibrantLavender,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
             }
 
             // Bottom Spacing

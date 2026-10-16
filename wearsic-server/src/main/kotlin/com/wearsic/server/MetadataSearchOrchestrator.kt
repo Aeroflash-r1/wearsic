@@ -99,7 +99,7 @@ class MetadataSearchOrchestrator(
             } else {
                 fallbackCount.incrementAndGet()
                 val fallback = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
-                    youtube.search(normalized)
+                    youtube.search(normalized, take)
                 } ?: emptyList()
                 fallback.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(take)
             }

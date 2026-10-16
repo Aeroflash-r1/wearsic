@@ -1,15 +1,5 @@
 package com.wearsic.server
 
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.request.headers
-import io.ktor.client.request.parameter
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -45,6 +35,12 @@ private data class YtmSearchRequest(
 )
 
 @Serializable
+private data class YtmContinuationRequest(
+    val context: YtmContext,
+    val continuation: String,
+)
+
+@Serializable
 private data class YtmContext(val client: YtmClientInfo)
 
 @Serializable
@@ -63,8 +59,14 @@ private data class YtmClientInfo(
  * Failures degrade to empty list so orchestrator falls back to NewPipe.
  */
 class YTMusicService(
-    private val client: HttpClient = defaultClient(),
-    private val ownsClient: Boolean = true,
+    /**
+     * HTTP transport seam. Production sends through the JDK client: Ktor
+     * CIO's TLS fingerprint gets 400-walled ("Precondition check failed")
+     * by InnerTube while the JDK stack passes with byte-identical requests
+     * (verified live). Tests inject canned pages here and never touch the
+     * network.
+     */
+    private val postJson: (suspend (url: String, body: String) -> String)? = null,
 ) : MetadataSource, AutoCloseable {
 
     companion object {
@@ -79,14 +81,6 @@ class YTMusicService(
         private const val USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0"
         private val DURATION_REGEX = Regex("""^(\d+:)?\d{1,3}:\d{2}$""")
-
-        fun defaultClient(): HttpClient = HttpClient(CIO) {
-            install(HttpTimeout) {
-                connectTimeoutMillis = 8_000
-                requestTimeoutMillis = 15_000
-                socketTimeoutMillis = 15_000
-            }
-        }
 
         internal fun clientVersion(): String = runCatching {
             "1." + LocalDate.now(ZoneOffset.UTC)
@@ -113,32 +107,60 @@ class YTMusicService(
         if (query.isBlank()) return emptyList()
         val key = query.trim()
         val now = System.currentTimeMillis()
+        // The cache holds the BIGGEST page fetched for this query: serve from
+        // it whenever it covers the request, refetch only when the caller
+        // wants more rows than we have (Show more after a 10-row page).
         searchCache.get(key)?.let { (cachedAt, cached) ->
-            if (now - cachedAt < SEARCH_CACHE_TTL_MS) return cached
+            if (now - cachedAt < SEARCH_CACHE_TTL_MS && cached.size >= limit) {
+                return cached.take(limit)
+            }
         }
+        var fetchedPages = 0
         val tracks = runCatching {
-            val body = json.encodeToString(
+            val out = mutableListOf<YtmTrack>()
+            var body = json.encodeToString(
                 YtmSearchRequest(
                     context = YtmContext(YtmClientInfo(clientVersion = clientVersion())),
                     query = key,
                 )
             )
-            val raw = client.post(BASE_URL) {
-                parameter("alt", "json")
-                parameter("key", API_KEY)
-                contentType(ContentType.Application.Json)
-                headers {
-                    append("Origin", "https://music.youtube.com")
-                    append("User-Agent", USER_AGENT)
+            var url = "$BASE_URL?alt=json&key=$API_KEY"
+            var pages = 0
+            while (out.size < limit && pages < 3) {
+                pages++
+                fetchedPages = pages
+                val raw = postInnerTube(url, body)
+                val page = parseSearchResponse(raw, limit - out.size)
+                    .filter { it.title != null && it.artist != null }
+                if (out.isEmpty() && page.isEmpty()) {
+                    System.err.println("YTMUSIC empty page (${raw.length} chars): ${raw.take(200)}")
                 }
-                setBody(body)
-            }.bodyAsText()
-            parseSearchResponse(raw, limit)
-                .filter { it.title != null && it.artist != null }
+                System.err.println("YTMUSIC page: ${raw.length} chars -> ${page.size} songs")
+                for (t in page) {
+                    if (out.none { it.videoId == t.videoId }) out.add(t)
+                    if (out.size >= limit) break
+                }
+                // Next page? YTM appends a continuation token when the shelf
+                // holds more rows than the first response carried.
+                val token = findContinuationToken(raw)
+                if (out.size >= limit || token == null) break
+                body = json.encodeToString(
+                    YtmContinuationRequest(
+                        context = YtmContext(YtmClientInfo(clientVersion = clientVersion())),
+                        continuation = token,
+                    )
+                )
+                pages++
+            }
+            out
         }.onFailure { e ->
             if (e is kotlinx.coroutines.CancellationException) throw e
-            System.err.println("YTMUSIC search failed: ${e.javaClass.simpleName}")
+            val safeMsg = (e.message ?: e.javaClass.simpleName).replace(Regex("key=[^&\\s]*"), "key=…")
+            System.err.println("YTMUSIC search failed: ${e.javaClass.simpleName}: $safeMsg")
         }.getOrDefault(emptyList())
+        // One line per search: page counts make "Show more returned nothing"
+        // debuggable without guessing (cache hit vs short shelf vs no token).
+        System.err.println("YTMUSIC search '$key' limit=$limit -> ${tracks.size} tracks ($fetchedPages pages)")
         // Only cache usable results: a transient YTM failure must not serve
         // an empty page for the next 5 minutes (the NewPipe fallback would
         // never get its chance).
@@ -154,8 +176,98 @@ class YTMusicService(
         thumbnailUrl = track.thumbnailUrl,
     )
 
+    private val jdkHttp: java.net.http.HttpClient by lazy {
+        java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(8))
+            .build()
+    }
+
+    /**
+     * music.youtube.com 400-walls JVM TLS fingerprints ("Precondition check
+     * failed") while curl/OpenSSL pass with byte-identical requests. This
+     * client reorders cipher suites Chrome-style, which is the dominant
+     * JA3 signal. Isolated from the player-API client (which already
+     * passes) so a failed experiment can't regress working paths.
+     */
+    private val ytmHttp: java.net.http.HttpClient by lazy {
+        val params = javax.net.ssl.SSLParameters().apply {
+            cipherSuites = arrayOf(
+                "TLS_AES_128_GCM_SHA256",
+                "TLS_AES_256_GCM_SHA384",
+                "TLS_CHACHA20_POLY1305_SHA256",
+                "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+                "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+                "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+                "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+                "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+                "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256"
+            )
+            protocols = arrayOf("TLSv1.2", "TLSv1.3")
+        }
+        java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(8))
+            .sslParameters(params)
+            .build()
+    }
+
+    private suspend fun postInnerTube(url: String, body: String): String {
+        postJson?.let { return it(url, body) }
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val builder = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
+                .timeout(java.time.Duration.ofMillis(15_000))
+                .header("Content-Type", "application/json")
+                .header("Accept", "*/*")
+                .header("Origin", "https://music.youtube.com")
+                .header("User-Agent", USER_AGENT)
+            // Logged-in requests pass bot-walls that reject anonymous ones.
+            YoutubeSession.cookie?.let { builder.header("Cookie", it) }
+            val req = builder
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
+                .build()
+            val resp = ytmHttp.send(req, java.net.http.HttpResponse.BodyHandlers.ofString())
+            if (resp.statusCode() != 200) throw java.io.IOException("YTM HTTP ${resp.statusCode()}")
+            resp.body()
+        }
+    }
+
     override fun close() {
-        if (ownsClient) runCatching { client.close() }
+    }
+
+    /**
+     * Next-page token for "Show more": YTM appends it when the shelf holds
+     * more rows than the first response carried (nextContinuationData /
+     * continuationCommand continuations). Matches ONLY the key
+     * `continuation` — siblings like clickTrackingParams are long base64
+     * too but must never be mistaken for a page token.
+     */
+    internal fun findContinuationToken(body: String): String? {
+        val root = runCatching { json.parseToJsonElement(body) }.getOrNull() ?: return null
+        return findContinuationTokenIn(root)
+    }
+
+    private fun findContinuationTokenIn(element: kotlinx.serialization.json.JsonElement): String? {
+        val obj = runCatching { element.jsonObject }.getOrNull()
+        if (obj != null) {
+            // Direct hit first (depth-first would otherwise return a nested
+            // token before the shelf-level one — both page the same shelf,
+            // so either is fine, but prefer the shallowest).
+            obj["continuation"]?.let {
+                runCatching { it.jsonPrimitive.content }.getOrNull()
+                    ?.takeIf { token -> token.length > 10 }
+                    ?.let { return it }
+            }
+            for ((key, child) in obj.entries) {
+                if (key == "continuation") continue
+                findContinuationTokenIn(child)?.let { return it }
+            }
+            return null
+        }
+        runCatching { element.jsonArray } .getOrNull()?.let { arr ->
+            for (item in arr) {
+                findContinuationTokenIn(item)?.let { return it }
+            }
+        }
+        return null
     }
 
     internal fun parseSearchResponse(body: String, limit: Int): List<YtmTrack> {

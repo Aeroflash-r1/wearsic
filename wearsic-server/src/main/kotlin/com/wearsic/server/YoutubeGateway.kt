@@ -182,6 +182,39 @@ class YoutubeGateway(
     }
 
     /**
+     * Limit-aware search for Show more: first page plus the extractor's
+     * second page when the caller wants more rows than one page holds.
+     * Page 2 is best-effort (a second fetchPage costs seconds) and only
+     * fires when page 1 was full but short of the wish.
+     */
+    override suspend fun search(query: String, limit: Int): List<TrackDto> {
+        val want = limit.coerceIn(1, 25)
+        val first = search(query)
+        if (first.size >= want) return first.take(want)
+        return searchSingleFlight.run("search-p2:$query") {
+            val second = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) { searchSecondPage(query) }
+            } ?: emptyList()
+            (first + second).distinctBy { it.videoId }.take(want)
+        }
+    }
+
+    private fun searchSecondPage(query: String): List<TrackDto> {
+        val extractor = ServiceList.YouTube.getSearchExtractor(query, listOf("music_songs"), "")
+        return try {
+            extractor.fetchPage()
+            val next = extractor.initialPage.nextPage ?: return emptyList()
+            extractor.getPage(next).items
+                .filterIsInstance<StreamInfoItem>()
+                .mapNotNull { it.toTrackDtoOrNull() }
+                .distinctBy { it.videoId }
+        } catch (e: Exception) {
+            logger.info("Search page 2 failed for '{}': {}", query, e.message)
+            emptyList()
+        }
+    }
+
+    /**
      * Music-filtered search first; unfiltered only if filtered comes back
      * empty. The old code fired BOTH concurrently for every fallback search,
      * paying 2x HTTP/CPU/bot-wall exposure even when filtered already had

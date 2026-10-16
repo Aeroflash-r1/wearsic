@@ -21,6 +21,8 @@ import io.ktor.utils.io.readAvailable
  */
 internal const val UPSTREAM_CHUNK_BYTES: Long = 1024L * 1024L
 
+private val chunkLogger = org.slf4j.LoggerFactory.getLogger("RangedUpstream")
+
 internal sealed interface ChunkedUpstream {
     data object Done : ChunkedUpstream
 
@@ -122,9 +124,11 @@ internal suspend fun HttpClient.fetchClosedChunks(
                 runCatching { refreshUrl() }.getOrNull()?.takeIf { it.isNotBlank() }
             } else null
             if (fresh != null && fresh != currentUrl) {
+                chunkLogger.info("Upstream refused mid-stream ({}), resuming at byte {} with a fresh URL", status, pos)
                 currentUrl = fresh
                 continue
             }
+            chunkLogger.info("Upstream refused mid-stream ({}) at byte {}, ending stream", status, pos)
             break
         }
         pos += got

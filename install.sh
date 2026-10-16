@@ -148,6 +148,30 @@ $1"; fi
 }
 box_end() {
   local w line plain spaces i
+  local cols="${COLUMNS:-80}"
+  case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
+  [ "$cols" -lt 30 ] && cols=30
+  local maxw=$(( cols - 6 ))
+  w=${#BOX_TITLE}
+  local wrapped=""
+  while IFS= read -r line; do
+    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    if [ "${#plain}" -le "$maxw" ]; then
+      wrapped="$wrapped
+$line"
+    else
+      local rest="$plain" chunk
+      while [ -n "$rest" ]; do
+        chunk="$(printf '%s' "$rest" | cut -c1-"$maxw")"
+        rest="$(printf '%s' "$rest" | cut -c$((maxw + 1))-)"
+        wrapped="$wrapped
+$chunk"
+      done
+    fi
+  done <<EOF
+$BOX_BODY
+EOF
+  BOX_BODY="$(printf '%s' "$wrapped" | tail -n +2)"
   w=${#BOX_TITLE}
   while IFS= read -r line; do
     plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"

@@ -98,9 +98,45 @@ download_bar() { # $1 = url, $2 = out file, $3 = label
   return 0
 }
 
-# Rounded box for pairing cards and verdicts.
+# Rounded box for pairing cards and verdicts. Buffered: content decides
+# the width, so long funnel URLs can never stick out past the border.
+# Titles must be plain text (no color codes — width is measured from them).
+BOX_TITLE=""; BOX_BODY=""; BOX_N=0
+box_begin() { BOX_TITLE="$1"; BOX_BODY=""; BOX_N=0; }
+box_line() {
+  if [ "$BOX_N" = "0" ]; then BOX_BODY="$1"; else BOX_BODY="$BOX_BODY
+$1"; fi
+  BOX_N=$((BOX_N + 1))
+}
+box_end() {
+  local w line plain spaces i
+  w=${#BOX_TITLE}
+  while IFS= read -r line; do
+    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    [ "${#plain}" -gt "$w" ] && w=${#plain}
+  done <<EOF
+$BOX_BODY
+EOF
+  [ "$w" -lt 20 ] && w=20
+  printf '\033[38;5;114m╭─ %s ' "$BOX_TITLE"
+  i=$(( ${#BOX_TITLE} + 4 )); while [ "$i" -lt "$((w + 4))" ]; do printf '─'; i=$((i + 1)); done
+  printf '\033[0m\n'
+  while IFS= read -r line; do
+    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    spaces=$(( w - ${#plain} ))
+    printf '\033[38;5;114m│\033[0m %s' "$line"
+    i=0; while [ "$i" -lt "$spaces" ]; do printf ' '; i=$((i + 1)); done
+    printf ' \033[38;5;114m│\033[0m\n'
+  done <<EOF
+$BOX_BODY
+EOF
+  printf '\033[38;5;114m╰'
+  i=0; while [ "$i" -lt "$((w + 4))" ]; do printf '─'; i=$((i + 1)); done
+  printf '\033[0m\n'
+  BOX_TITLE=""; BOX_BODY=""; BOX_N=0
+}
+# Legacy one-shot wrappers (kept for callers that print single lines).
 box_top()    { printf '\033[38;5;114m╭─ %s %s\033[0m\n' "$1" "$(box_rule "$1")"; }
-box_line()   { printf '\033[38;5;114m│\033[0m %s\n' "$1"; }
 box_bottom() { printf '\033[38;5;114m╰%s╯\033[0m\n' "$(box_rule "")"; }
 box_rule() {
   local n=$(( 50 - ${#1} )); [ "$n" -lt 4 ] && n=4
@@ -200,14 +236,14 @@ server_url() {
 }
 
 show_pairing() {
-  box_top "♪ Connect your watch"
+  box_begin "♪ Connect your watch"
   box_line ""
-  box_line "   Server URL : $(server_url)"
-  box_line "   API key    : $(api_key)"
+  box_line "   Server : $(server_url)"
+  box_line "   Key    : $(api_key)"
   box_line ""
-  box_line "   Watch → Wearsic → Settings → Server URL   (paste the URL)"
-  box_line "                            → API Key        (paste the key)"
-  box_bottom
+  box_line "   On the watch, open Wearsic → Settings,"
+  box_line "   type the Server line, then the Key line."
+  box_end
 }
 
 cmd_start() {
@@ -978,16 +1014,18 @@ cmd_doctor() {
 
   say "────────────────────────"
   if [ "$fails" -eq 0 ]; then
-    box_top "✓ READY ($warns warning(s))"
+    box_begin "✓ READY ($warns warning(s))"
     box_line ""
-    box_line "   Next: wearsic url — connect your watch; wearsic logs — playback issues"
-    box_bottom
+    box_line "   wearsic url = connect the watch"
+    box_line "   wearsic logs = playback issues"
+    box_end
     return 0
   fi
-  box_top "✗ NOT READY ($fails problem(s), $warns warning(s))"
+  box_begin "✗ NOT READY ($fails problem(s), $warns warning(s))"
   box_line ""
-  box_line "   Next: resolve the ✗ items above, then run wearsic doctor again"
-  box_bottom
+  box_line "   Fix the ✗ lines above,"
+  box_line "   then run wearsic doctor again."
+  box_end
   return 1
 }
 

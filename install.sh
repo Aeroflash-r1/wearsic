@@ -137,14 +137,41 @@ human_bytes() { # $1 = bytes -> 12.4M
   else printf '%sB' "$b"; fi
 }
 
-# Rounded box for the pairing card / big announcements.
-box_top()    { printf "${C_ACC}╭─ %s %s${C_RESET}\n" "$1" "$(box_rule "$1")"; }
-box_line()   { printf "${C_ACC}│${C_RESET} %s\n" "$1"; }
-box_bottom() { printf "${C_ACC}╰%s╯${C_RESET}\n" "$(box_rule "")"; }
-box_rule() { # pad a ── rule to ~52 cols after $1
-  local n=$(( 50 - ${#1} )); [ "$n" -lt 4 ] && n=4
-  local i=0 s=""; while [ "$i" -lt "$n" ]; do s="${s}─"; i=$((i + 1)); done
-  printf '%s' "$s"
+# Rounded box for the pairing card / big announcements. Buffered: content
+# decides the width, so long URLs can never stick out past the border.
+BOX_TITLE=""; BOX_BODY=""; BOX_N=0
+box_begin() { BOX_TITLE="$1"; BOX_BODY=""; BOX_N=0; }
+box_line() {
+  if [ "$BOX_N" = "0" ]; then BOX_BODY="$1"; else BOX_BODY="$BOX_BODY
+$1"; fi
+  BOX_N=$((BOX_N + 1))
+}
+box_end() {
+  local w line plain spaces i
+  w=${#BOX_TITLE}
+  while IFS= read -r line; do
+    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    [ "${#plain}" -gt "$w" ] && w=${#plain}
+  done <<EOF
+$BOX_BODY
+EOF
+  [ "$w" -lt 20 ] && w=20
+  printf "${C_ACC}╭─ %s " "$BOX_TITLE"
+  i=$(( ${#BOX_TITLE} + 4 )); while [ "$i" -lt "$((w + 4))" ]; do printf '─'; i=$((i + 1)); done
+  printf "${C_RESET}\n"
+  while IFS= read -r line; do
+    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    spaces=$(( w - ${#plain} ))
+    printf "${C_ACC}│${C_RESET} %s" "$line"
+    i=0; while [ "$i" -lt "$spaces" ]; do printf ' '; i=$((i + 1)); done
+    printf ' ${C_ACC}│${C_RESET}\n'
+  done <<EOF
+$BOX_BODY
+EOF
+  printf "${C_ACC}╰"
+  i=0; while [ "$i" -lt "$((w + 4))" ]; do printf '─'; i=$((i + 1)); done
+  printf "${C_RESET}\n"
+  BOX_TITLE=""; BOX_BODY=""; BOX_N=0
 }
 
 # ── small utilities ─────────────────────────────────────────────────────────
@@ -541,15 +568,15 @@ else
 fi
 
 printf '\n'
-box_top "♪ Wearsic server is ready — connect your watch"
+box_begin "♪ Wearsic server is ready — connect your watch"
 box_line ""
-box_line "   ${C_BOLD}Server URL :${C_RESET} $SERVER_URL"
-box_line "   ${C_BOLD}API key    :${C_RESET} $EFFECTIVE_KEY"
+box_line "   ${C_BOLD}Server :${C_RESET} $SERVER_URL"
+box_line "   ${C_BOLD}Key    :${C_RESET} $EFFECTIVE_KEY"
 box_line ""
-box_line "   Watch → Wearsic → Settings → Server URL   (paste the URL)"
-box_line "                               → API Key        (paste the key)"
+box_line "   On the watch, open Wearsic → Settings,"
+box_line "   type the Server line, then the Key line."
 box_line ""
-box_line "   ${C_DIM}Show these again:  wearsic url    ·   Check the setup:  wearsic doctor${C_RESET}"
-box_bottom
+box_line "   ${C_DIM}Again anytime:  wearsic url    ·    wearsic doctor${C_RESET}"
+box_end
 printf '\n'
 say "Manage it with:  wearsic start | stop | restart | status | logs | health | url | api-key | update | doctor"

@@ -404,13 +404,25 @@ cmd_api_key() {
 
 cmd_cookies() {
   installed
-  local cookie port_ key_
+  local cookie port_ key_ line
   cookie="${1:-}"
   if [ -z "$cookie" ]; then
-    printf 'Paste the YouTube cookie string (SID=...; HSID=...): '
+    say "Paste the YouTube cookie (all lines), then an EMPTY line (or Ctrl+D):"
+    say "  (DevTools → Application → Cookies → youtube.com → copy the values)"
+    cookie=""
     # -s: never echo the credential to the terminal.
-    read -rs cookie || return 1
+    while IFS= read -rs line || [ -n "$line" ]; do
+      # Trim; a blank line ends input. Non-empty lines are joined with
+      # "; " — cookie exports come as one pair per line ("SID=…") or a
+      # single ;-separated line; both normalize to a valid header.
+      line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      [ -z "$line" ] && break
+      if [ -z "$cookie" ]; then cookie="$line"; else cookie="$cookie; $line"; fi
+    done
     printf '\n'
+    # Collapse ";;" from lines that already ended in ";" — empty pairs are
+    # ignored by servers, but stay tidy.
+    cookie="$(printf '%s' "$cookie" | sed 's/;[[:space:]]*;/;/g')"
   fi
   [ -n "$cookie" ] || die "Empty cookie."
   port_="$(port)"

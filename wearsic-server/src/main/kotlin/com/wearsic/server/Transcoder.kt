@@ -87,7 +87,18 @@ class Transcoder(
         data object Aborted : TranscodeResult
     }
 
-    suspend fun handle(call: ApplicationCall, sourceUrl: String, rangeHeader: String?): TranscodeResult {
+    suspend fun handle(
+        call: ApplicationCall,
+        sourceUrl: String,
+        rangeHeader: String?,
+        /**
+         * Fresh-URL supplier for mid-stream throttle refusals (see
+         * fetchClosedChunks): resume the ffmpeg feed from a new URL
+         * instead of truncating the song. Null = end the feed where
+         * it stands (callers without a resolver, e.g. tests).
+         */
+        refreshUrl: (suspend () -> String?)? = null,
+    ): TranscodeResult {
         if (!available) {
             call.respond(
                 HttpStatusCode.ServiceUnavailable,
@@ -160,7 +171,8 @@ class Transcoder(
                         val pump = launch(Dispatchers.IO) {
                             try {
                                 val outcome: ChunkedUpstream = client.fetchClosedChunks(
-                                    sourceUrl, 0, null
+                                    sourceUrl, 0, null,
+                                    refreshUrl = refreshUrl,
                                 ) { buf: ByteArray, n: Int ->
                                     stdin.write(buf, 0, n)
                                 }

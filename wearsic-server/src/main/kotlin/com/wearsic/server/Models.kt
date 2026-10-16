@@ -117,6 +117,10 @@ data class HealthResponse(
     // means "none recorded", not "none happened before capture existed".
     val crashCount: Int = 0,
     val lastCrashAtMillis: Long = 0,
+    // Throttle visibility: CDN range refusals since boot (see UpstreamStats).
+    // High counts with failing streams = throttled network (cookie/wait),
+    // not a broken engine (update).
+    val upstreamRefusals: Int = 0,
 )
 
 @Serializable

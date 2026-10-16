@@ -21,6 +21,16 @@ import io.ktor.utils.io.readAvailable
  */
 internal const val UPSTREAM_CHUNK_BYTES: Long = 1024L * 1024L
 
+/**
+ * Throttle visibility: every upstream range refusal (throttle 403s, dead
+ * 404/410s) increments [rangeRefusals]. Surfaced in /health so `doctor`
+ * can tell "YouTube is throttling this network" apart from "engine broken"
+ * — the remedies differ (cookie/wait vs update).
+ */
+internal object UpstreamStats {
+    val rangeRefusals = java.util.concurrent.atomic.AtomicInteger()
+}
+
 private val chunkLogger = org.slf4j.LoggerFactory.getLogger("RangedUpstream")
 
 internal sealed interface ChunkedUpstream {
@@ -111,6 +121,7 @@ internal suspend fun HttpClient.fetchClosedChunks(
         }
         if (status == HttpStatusCode.RequestedRangeNotSatisfiable.value) break // past EOF: clean end
         if (status != HttpStatusCode.PartialContent.value) {
+            UpstreamStats.rangeRefusals.incrementAndGet()
             // Refused. First chunk (nothing emitted yet) = dead URL signal
             // for the caller's self-heal.
             if (pos == startByte.coerceAtLeast(0L) && got == 0L) {

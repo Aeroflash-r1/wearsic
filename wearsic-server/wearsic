@@ -989,6 +989,11 @@ cmd_doctor() {
     if [ -n "$crashes" ] && [ "$crashes" -gt 0 ] 2>/dev/null; then
       doctor_line "Crashes" "!" "$crashes recorded — see state/crashes + wearsic-server.log"; warns=$((warns+1))
     fi
+    local refusals
+    refusals="$(printf '%s' "$health" | sed -n 's/.*"upstreamRefusals"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')"
+    if [ -n "$refusals" ] && [ "$refusals" -ge 10 ] 2>/dev/null; then
+      doctor_line "CDN throttle" "!" "$refusals refused ranges — throttled network, not a broken engine (cookie + wait, not update)"; warns=$((warns+1))
+    fi
   fi
 
   local ip; ip="$(lan_ip)"

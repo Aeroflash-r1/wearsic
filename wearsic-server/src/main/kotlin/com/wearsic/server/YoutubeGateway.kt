@@ -350,10 +350,12 @@ class YoutubeGateway(
             // Fast path first: one player POST, no mutex (pure HTTP, no global
             // state). Most taps skip the serialized extraction queue entirely;
             // only login-gated/ciphered/throttled videos pay for full fetchPage.
-            val lean = withContext(Dispatchers.IO) { resolveLeanPlayer(videoId) }
+            val ranked = withContext(Dispatchers.IO) { resolveLeanFormats(videoId) }
+            val lean = ranked?.firstOrNull()
             if (lean != null) {
                 healthMeter?.recordSuccess()
-                val target = StreamTarget(url = lean.url, mimeType = lean.mimeType)
+                if (ranked.size > 1) stashFormatFallbacks(videoId, ranked)
+                val target = StreamTarget(url = lean.url, mimeType = lean.mimeType, itag = lean.itag)
                 streamCache.put(
                     videoId,
                     CachedStreamTarget(target, System.currentTimeMillis() + STREAM_CACHE_TTL_MILLIS)
@@ -410,11 +412,24 @@ class YoutubeGateway(
 
     /**
      * Dead-URL self-heal: the proxy observed the CDN rejecting this video's
-     * resolved URL (403/404/410). Drop the stale entry so the next resolution
-     * does fresh extraction, then return the new target (null = re-resolve
-     * also failed; the proxy answers the error it already has).
+     * resolved URL (403/404/410). First tries an untried FORMAT from the
+     * same resolution (different CDN edge — the throttled one is usually
+     * format-specific). Same-itag formats come before cross-itag ones: a
+     * resumed DOWNLOAD appends bytes at an offset, which is only valid for
+     * the identical encoding — cross-itag bytes would silently corrupt it.
+     * Only then drops the cache entry for a full re-resolve.
      */
-    suspend fun invalidateStreamTarget(videoId: String): StreamTarget? {
+    suspend fun invalidateStreamTarget(videoId: String, preferItag: Int = 0): StreamTarget? {
+        popFormatFallback(videoId, preferItag)?.let { next ->
+            logger.info("Failing over {} to alternate format {} (itag {})", videoId, next.mimeType, next.itag)
+            healthMeter?.recordSuccess()
+            val target = StreamTarget(url = next.url, mimeType = next.mimeType, itag = next.itag)
+            streamCache.put(
+                videoId,
+                CachedStreamTarget(target, System.currentTimeMillis() + STREAM_CACHE_TTL_MILLIS)
+            )
+            return target
+        }
         streamCache.remove(videoId)
         logger.info("Invalidated stale stream target for {} — re-resolving", videoId)
         return streamTarget(videoId)
@@ -446,9 +461,45 @@ class YoutubeGateway(
      * Pure HTTP, no global state: needs NO mutex. Null on ANY failure —
      * the caller falls back to full NewPipe extraction.
      */
-    private data class LeanAudio(val url: String, val mimeType: String, val bitrateKbps: Int)
+    private data class LeanAudio(val url: String, val mimeType: String, val bitrateKbps: Int, val itag: Int)
 
-    private fun resolveLeanPlayer(videoId: String): LeanAudio? {
+    /**
+     * Untried alternate formats per video (populated on every lean hit).
+     * When the CDN throttles one format's edge past ~1MB, the next format
+     * usually lives on a DIFFERENT edge that still serves — failover across
+     * formats beats re-resolving the same dead one. Guarded by its own lock
+     * (short in-memory ops only, never I/O).
+     */
+    private val formatFallbacks = mutableMapOf<String, ArrayDeque<LeanAudio>>()
+    private val formatFallbacksLock = Any()
+
+    private fun stashFormatFallbacks(videoId: String, ranked: List<LeanAudio>) {
+        val rest = ranked.drop(1)
+        synchronized(formatFallbacksLock) {
+            if (rest.isEmpty()) formatFallbacks.remove(videoId)
+            else formatFallbacks[videoId] = ArrayDeque(rest)
+        }
+    }
+
+    private fun popFormatFallback(videoId: String, preferItag: Int = 0): LeanAudio? =
+        synchronized(formatFallbacksLock) {
+            val q = formatFallbacks[videoId] ?: return null
+            // Same encoding first: byte offsets stay valid for resumed
+            // downloads. Cross-encoding only when nothing else remains.
+            val idx = if (preferItag != 0) {
+                q.indexOfFirst { it.itag == preferItag }.takeIf { it >= 0 }
+            } else null
+            val next = if (idx != null) q.removeAt(idx) else q.removeFirstOrNull()
+            if (q.isEmpty()) formatFallbacks.remove(videoId)
+            next
+        }
+
+    /**
+     * All directly-playable audio formats, best first (AAC near 128k, then
+     * everything else by distance from the target tier). The caller plays
+     * [0] and stashes the rest for format failover.
+     */
+    private fun resolveLeanFormats(videoId: String): List<LeanAudio>? {
         if (!VIDEO_ID_RE.matches(videoId)) return null
         return try {
             val payload =
@@ -481,18 +532,22 @@ class YoutubeGateway(
                 val mime = o["mimeType"]?.jsonPrimitive?.contentOrNull ?: ""
                 if (!mime.contains("audio", ignoreCase = true)) return@mapNotNull null
                 val br = o["bitrate"]?.jsonPrimitive?.intOrNull ?: 0
-                LeanAudio(url, mime, br / 1000)
+                LeanAudio(url, mime, br / 1000, o["itag"]?.jsonPrimitive?.intOrNull ?: 0)
             }
             if (audios.isEmpty()) return null
-            // Same preference as the extractor path: AAC-LC (hardware-decoded
-            // on the watch, low battery) near the 128k target tier.
-            val aac = audios.filter { it.mimeType.contains("mp4", ignoreCase = true) }
-            val pool = if (aac.isNotEmpty()) aac else audios
-            val known = pool.filter { it.bitrateKbps > 0 }
-            val selectable = if (known.isNotEmpty()) known else pool
-            selectable.minByOrNull {
-                kotlin.math.abs(it.bitrateKbps - TARGET_AUDIO_BITRATE_KBPS)
-            }
+            // Same preference as the extractor path, as a RANKING so the
+            // caller can fail over across formats: AAC-LC (hardware-decoded
+            // on the watch, low battery) near the 128k target tier first,
+            // then everything else by distance from the tier.
+            return audios.sortedWith(
+                compareBy(
+                    { if (it.mimeType.contains("mp4", ignoreCase = true)) 0 else 1 },
+                    {
+                        if (it.bitrateKbps > 0) kotlin.math.abs(it.bitrateKbps - TARGET_AUDIO_BITRATE_KBPS)
+                        else Int.MAX_VALUE
+                    }
+                )
+            )
         } catch (e: Exception) {
             logger.info("Lean player lookup failed for {}: {}", videoId, e.message)
             null
@@ -562,7 +617,7 @@ class YoutubeGateway(
 }
 
 /** A resolved, playable audio target: CDN URL plus MIME type. */
-data class StreamTarget(val url: String, val mimeType: String)
+data class StreamTarget(val url: String, val mimeType: String, val itag: Int = 0)
 
 /** Cache entry: the resolved CDN URL plus its expiry (URLs expire upstream). */
 data class CachedStreamTarget(val target: StreamTarget, val expiresAtMillis: Long)

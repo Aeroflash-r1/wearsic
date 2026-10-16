@@ -27,6 +27,11 @@ import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.slf4j.event.Level
 import java.io.File
 import java.security.MessageDigest
@@ -128,6 +133,19 @@ fun main() {
             "WARNING: WEARSIC_API_KEY is not set — the server is OPEN to anyone who can reach it. " +
                 "Fine for private LAN/Tailscale use; REQUIRED for any public/tunnel deployment."
         )
+    }
+
+    // Boot warm-up: favorites are the most-tapped songs on the watch. Their
+    // streams resolve here, 30s after boot (never competing with startup),
+    // so the first tap on a favorite hits a hot cache. Lean path, no mutex,
+    // and foreground playback preempts this work automatically.
+    CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+        delay(30_000)
+        runCatching {
+            searchOrchestrator.prefetchVideoIds(
+                database.listFavorites().take(10).map { it.videoId }
+            )
+        }
     }
 
     embeddedServer(ServerCIO, port = port, host = "0.0.0.0") {
@@ -238,6 +256,7 @@ fun Application.module(
                     update = update,
                     crashCount = crashReporter?.crashCount() ?: 0,
                     lastCrashAtMillis = crashReporter?.lastCrash()?.atMillis ?: 0,
+                    upstreamRefusals = UpstreamStats.rangeRefusals.get(),
                 )
             )
         }
@@ -368,7 +387,7 @@ fun Application.module(
                 val related = gateway.related(realVideoId)
                 // Radio plays its top results back-to-back: warm the first few
                 // streams so the hand-off between songs is instant.
-                searchOrchestrator.prefetchVideoIds(related.take(2).map { it.videoId })
+                searchOrchestrator.prefetchVideoIds(related.take(3).map { it.videoId })
                 call.respond(RelatedResponse(related))
             }
 
@@ -397,7 +416,7 @@ fun Application.module(
                     // tracks' streams while the watch renders the list, so
                     // the tap on track 1 hits a hot cache instead of queueing
                     // a cold extraction (the single biggest play-latency win).
-                    searchOrchestrator.prefetchVideoIds(result.tracks.take(2).map { it.videoId })
+                    searchOrchestrator.prefetchVideoIds(result.tracks.take(3).map { it.videoId })
                     call.respond(result)
                 }
             }

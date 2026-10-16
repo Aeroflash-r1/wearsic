@@ -39,12 +39,13 @@ class MetadataSearchOrchestrator(
 ) {
     companion object {
         /**
-         * Only the top-2 results are pre-resolved: the user taps one of them
-         * ~80% of the time, and each prefetch holds the global extraction
-         * mutex for seconds. 6 prefetches held it for 12-24s and made the
-         * actual tap queue behind background work — the opposite of instant.
+         * Only the top-3 results are pre-resolved: the user taps one of them
+         * most of the time, and each prefetch used to hold the global
+         * extraction mutex for seconds. The lean player path needs NO mutex
+         * (pure HTTP), so 3 concurrent warms are cheap; the NewPipe fallback
+         * still serializes, and foreground playback preempts background work.
          */
-        private const val PREFETCH_COUNT = 2
+        private const val PREFETCH_COUNT = 3
 
 
         /** Prefix used by the removed iTunes layer; kept for legacy replay. */

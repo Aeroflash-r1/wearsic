@@ -408,15 +408,29 @@ cmd_cookies() {
   cookie="${1:-}"
   if [ -z "$cookie" ]; then
     say "Paste the YouTube cookie (all lines), then an EMPTY line (or Ctrl+D):"
-    say "  (DevTools → Application → Cookies → youtube.com → copy the values)"
+    say "  Accepts plain pairs (SID=…; HSID=…) or Netscape exports."
+    say "  DevTools → Application → Cookies → youtube.com → copy the values."
+    local TAB; TAB="$(printf '\t')"
     cookie=""
     # -s: never echo the credential to the terminal.
     while IFS= read -rs line || [ -n "$line" ]; do
-      # Trim; a blank line ends input. Non-empty lines are joined with
-      # "; " — cookie exports come as one pair per line ("SID=…") or a
-      # single ;-separated line; both normalize to a valid header.
+      # Trim; a blank line ends input.
       line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
       [ -z "$line" ] && break
+      # Netscape export? Tab-separated, name/value are fields 6 and 7
+      # (".youtube.com  TRUE  /  FALSE  123  SID  abc…"). Lines starting
+      # with #HttpOnly are DATA (HttpOnly cookies like SID live there) —
+      # only other #-lines are comments.
+      case "$line" in
+        "#HttpOnly"*) line="${line#"#HttpOnly"}" ;;
+        \#*) continue ;;
+      esac
+      case "$line" in *"$TAB"*"$TAB"*"$TAB"*"$TAB"*"$TAB"*"$TAB"*)
+        line="$(printf '%s' "$line" | awk -F'\t' '{print $6"="$7}')"
+        case "$line" in "="|*=) continue ;; esac
+        ;;
+      esac
+      # Plain pairs, one per line ("SID=…") or one ;-separated line.
       if [ -z "$cookie" ]; then cookie="$line"; else cookie="$cookie; $line"; fi
     done
     printf '\n'

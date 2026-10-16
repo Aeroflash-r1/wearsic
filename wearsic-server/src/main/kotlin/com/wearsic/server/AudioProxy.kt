@@ -78,7 +78,7 @@ class AudioProxy(
             val refreshForTranscode: suspend () -> String? = {
                 (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)?.url
             }
-            when (val result = transcoder.handle(call, target.url, rangeHeader, refreshForTranscode)) {
+            when (val result = transcoder.handle(call, target.url, rangeHeader, refreshForTranscode, videoId)) {
                 is Transcoder.TranscodeResult.Streamed,
                 is Transcoder.TranscodeResult.Unavailable,
                 is Transcoder.TranscodeResult.Aborted,
@@ -173,7 +173,7 @@ class AudioProxy(
             val refreshForTranscode: suspend () -> String? = {
                 (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, fresh.itag)?.url
             }
-            return when (val r = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode)) {
+            return when (val r = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode, videoId)) {
                 is Transcoder.TranscodeResult.Streamed -> ProxyOutcome.Streamed
                 is Transcoder.TranscodeResult.Aborted -> ProxyOutcome.Aborted
                 is Transcoder.TranscodeResult.Unavailable -> ProxyOutcome.Streamed // 503 already sent

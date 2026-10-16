@@ -93,7 +93,9 @@ fun main() {
 
     // Detect ffmpeg so songs without native AAC can be converted server-side.
     // Without it those rare songs answer 503 with install guidance instead.
-    val transcoder = Transcoder(proxyClient)
+    // Completed transcodes are cached under the state dir (bounded LRU) so
+    // repeat plays and ExoPlayer's range requests share one ffmpeg run.
+    val transcoder = Transcoder(proxyClient, cacheDir = java.io.File(stateDir, "transcode-cache"))
     if (!transcoder.available) {
         System.err.println("WARNING: ffmpeg not found on PATH — songs YouTube only offers in Opus/WebM " +
             "will return 503. Install it in Termux with: pkg install ffmpeg")

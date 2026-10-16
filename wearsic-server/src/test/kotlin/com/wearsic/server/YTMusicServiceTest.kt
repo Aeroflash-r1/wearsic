@@ -1,5 +1,6 @@
 package com.wearsic.server
 
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -97,7 +98,35 @@ class YTMusicServiceTest {
         assertEquals(0, service.parseSearchResponse(SEARCH_FIXTURE, 0).size)
     }
 
+    @Test
+    fun `findContinuationToken reads the shelf token`() {
+        val body = TWO_PAGE_FIXTURE_P1
+        assertEquals("TOKEN12345678901234567890", service.findContinuationToken(body))
+        assertEquals(null, service.findContinuationToken("{}"))
+        assertEquals(null, service.findContinuationToken("not json"))
+    }
+
+    @Test
+    fun `searchSongs follows continuations past the first page`() = runBlocking {
+        var posts = 0
+        val svc = YTMusicService(postJson = { _, sent ->
+            posts++
+            if ("TOKEN12345678901234567890" in sent) TWO_PAGE_FIXTURE_P2
+            else TWO_PAGE_FIXTURE_P1
+        })
+        val tracks = svc.searchSongs("anything", 25)
+        assertEquals(2, posts, "expected page 1 + one continuation fetch")
+        assertEquals(listOf("AAA111AAAAA", "BBB222BBBBB"), tracks.map { it.videoId })
+        svc.close()
+    }
+
     companion object {
+        private fun songRow(id: String, title: String): String =
+            """{"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "$title", "navigationEndpoint": {"watchEndpoint": {"videoId": "$id"}}}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Artist"}, {"text": " • "}, {"text": "3:33"}]}}}]}}"""
+
+        private val TWO_PAGE_FIXTURE_P1 = """{"contents": {"sectionListRenderer": {"contents": [{"musicShelfRenderer": {"contents": [${songRow("AAA111AAAAA", "Song One")}], "continuations": [{"nextContinuationData": {"continuation": "TOKEN12345678901234567890", "clickTrackingParams": "abc"}}]}}]}}}"""
+
+        private val TWO_PAGE_FIXTURE_P2 = """{"continuationContents": {"musicShelfContinuation": {"contents": [${songRow("BBB222BBBBB", "Song Two")}]}}}"""
         private const val SONG_ROW_1 = """{"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Weather With You", "navigationEndpoint": {"watchEndpoint": {"videoId": "NZ3Ck43m_ZY"}}}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Crowded House"}, {"text": " \u2022 "}, {"text": "3:45"}]}}}], "playlistItemData": {"videoId": "NZ3Ck43m_ZY"}}}"""
         private const val SONG_ROW_2 = """{"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Dont Dream Its Over", "navigationEndpoint": {"watchEndpoint": {"videoId": "H7UMRkp7m80"}}}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Crowded House"}, {"text": " \u2022 "}, {"text": "3:57"}]}}}]}}"""
         private const val ALBUM_CARD_ROW = """{"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Rumours", "navigationEndpoint": {"browseEndpoint": {"browseId": "MPREb_album"}}}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Fleetwood Mac"}, {"text": " \u2022 "}, {"text": "1977"}]}}}], "overlay": {"musicItemThumbnailOverlayRenderer": {"content": {"musicPlayButtonRenderer": {"playNavigationEndpoint": {"watchEndpoint": {"videoId": "ALBUMFIRST1"}}}}}}, "playlistItemData": {"videoId": "ALBUMFIRST1"}}}"""

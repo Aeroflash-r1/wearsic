@@ -28,6 +28,7 @@ import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import java.io.File
+import java.nio.file.Files
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -158,8 +159,55 @@ class TranscoderTest {
     }
 
     @Test
-    fun `missing ffmpeg yields actionable 503`() = runBlocking {
-        // Injected unavailable instance — no global state mutated, so this
+    fun `second identical transcode is served from disk with the origin dead`() = runBlocking {
+        val fake = fakeFfmpeg()
+        val cacheDir = Files.createTempDirectory("wearsic-tcache").toFile()
+        val transcoder = Transcoder(
+            HttpClient(CIO), ffmpegBinary = fake.absolutePath,
+            availability = true, cacheDir = cacheDir,
+        )
+        val upstream = startUpstream()
+        val port = upstream.resolvedConnectors().first().port
+        val upstreamUrl = "http://127.0.0.1:$port/source"
+
+        try {
+            testApplication {
+                application {
+                    routing {
+                        routeGet("/stream") {
+                            transcoder.handle(
+                                call, upstreamUrl,
+                                call.request.headers[HttpHeaders.Range], cacheKey = "vid123",
+                            )
+                        }
+                    }
+                }
+
+                // First request transcodes (fake ffmpeg echoes stdin) and
+                // must leave exactly one cached .aac behind.
+                val first = client.get("/stream")
+                assertEquals(HttpStatusCode.OK, first.status)
+                assertTrue(first.body<ByteArray>().contentEquals(sourceBytes))
+                val cached = cacheDir.listFiles { f -> f.extension == "aac" }
+                assertEquals(1, cached?.size, "expected one cached transcode")
+
+                // Kill the origin entirely: the song must still stream,
+                // proving the bytes came from disk, not the network.
+                upstream.stop(100, 500)
+                val second = client.get("/stream")
+                assertEquals(HttpStatusCode.OK, second.status)
+                assertTrue(
+                    second.body<ByteArray>().contentEquals(sourceBytes),
+                    "cached transcode must equal the source bytes",
+                )
+            }
+        } finally {
+            runCatching { upstream.stop(100, 500) }
+        }
+    }
+
+    @Test
+    fun `missing ffmpeg yields actionable 503`() = runBlocking {        // Injected unavailable instance — no global state mutated, so this
         // test is independent of the test above regardless of execution order.
         val transcoder = Transcoder(HttpClient(CIO), ffmpegBinary = "/nonexistent/ffmpeg", availability = false)
         assertFalse(transcoder.available)

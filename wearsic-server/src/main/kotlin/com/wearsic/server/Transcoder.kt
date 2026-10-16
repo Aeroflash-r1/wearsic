@@ -9,6 +9,7 @@ import io.ktor.server.request.header
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytesWriter
+import io.ktor.server.response.respondFile
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -17,9 +18,15 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * On-the-fly Opus/Vorbis -> AAC-LC converter for songs YouTube doesn't offer
@@ -43,6 +50,15 @@ class Transcoder(
      * `detect()` used to provide at server startup).
      */
     availability: Boolean = detectBinary(ffmpegBinary),
+    /**
+     * Completed transcodes are stored here (one .aac per cache key) so the
+     * ~15 range requests ExoPlayer makes per song share ONE ffmpeg run
+     * instead of each spawning its own full re-transcode — the actual cause
+     * of mid-song stalls on transcoded tracks. Null disables caching
+     * (tests). Bounded LRU, crash-safe (temp + atomic rename).
+     */
+    private val cacheDir: File? = null,
+    private val maxCacheBytes: Long = 200L * 1024L * 1024L,
 ) {
 
     private val logger = LoggerFactory.getLogger(Transcoder::class.java)
@@ -74,6 +90,49 @@ class Transcoder(
     fun needsTranscode(mimeType: String): Boolean =
         !mimeType.contains("mp4", ignoreCase = true)
 
+    // ---------------- Transcode file cache ----------------
+
+    /** In-flight transcodes by cache key (dedupes ExoPlayer's parallel ranges). */
+    private val ongoingTranscodes = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+
+    private fun cacheFileFor(cacheKey: String): File? {
+        val dir = cacheDir ?: return null
+        val safe = cacheKey.replace(Regex("[^A-Za-z0-9_-]"), "_").take(64)
+        if (safe.isBlank()) return null
+        return File(dir, "$safe.aac")
+    }
+
+    /** Serves a COMPLETED cached transcode (ranges handled by Ktor). */
+    private suspend fun serveCached(call: ApplicationCall, file: File): Boolean {
+        if (!file.isFile || file.length() <= 0) return false
+        return try {
+            runCatching { file.setLastModified(System.currentTimeMillis()) }
+            call.respondFile(file)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Evicts oldest files until the cache fits [maxCacheBytes]. */
+    private fun evictCache() {
+        val dir = cacheDir ?: return
+        try {
+            var total = dir.listFiles()?.filter { it.isFile && !it.name.endsWith(".part") }
+                ?.sumOf { it.length() } ?: 0L
+            if (total <= maxCacheBytes) return
+            dir.listFiles()
+                ?.filter { it.isFile && !it.name.endsWith(".part") }
+                ?.sortedBy { it.lastModified() }
+                ?.forEach {
+                    if (total <= maxCacheBytes) return@forEach
+                    total -= it.length()
+                    runCatching { it.delete() }
+                }
+        } catch (_: Exception) {
+        }
+    }
+
     /**
      * Transcode result — returned WITHOUT committing an error response for
      * upstream failures so the caller ([AudioProxy]) can still self-heal
@@ -98,6 +157,12 @@ class Transcoder(
          * it stands (callers without a resolver, e.g. tests).
          */
         refreshUrl: (suspend () -> String?)? = null,
+        /**
+         * Cache identity (normally the videoId): completed transcodes are
+         * stored and re-served from disk, so ExoPlayer's ~15 range requests
+         * per song share ONE ffmpeg run. Null disables caching (tests).
+         */
+        cacheKey: String? = null,
     ): TranscodeResult {
         if (!available) {
             call.respond(
@@ -105,6 +170,20 @@ class Transcoder(
                 ErrorResponse("This song needs server-side AAC conversion, but ffmpeg isn't installed. In Termux run: pkg install ffmpeg")
             )
             return TranscodeResult.Unavailable
+        }
+
+        // Cache hit (or a concurrent transcode that just finished): serve
+        // the file — ranges handled by Ktor, zero ffmpeg cost.
+        val cacheFile = cacheKey?.let { cacheFileFor(it) }
+        if (cacheFile != null) {
+            // Another request is transcoding this right now: wait for it
+            // (bounded), then serve the file instead of starting a second
+            // ffmpeg for the same bytes.
+            ongoingTranscodes[cacheKey]?.let { inFlight ->
+                val done = withTimeoutOrNull(5 * 60 * 1000L) { inFlight.await() } ?: false
+                if (done && serveCached(call, cacheFile)) return TranscodeResult.Streamed
+            }
+            if (serveCached(call, cacheFile)) return TranscodeResult.Streamed
         }
 
         // Streaming conversion honors byte offsets by discarding that much
@@ -118,6 +197,27 @@ class Transcoder(
         var aborted = false
 
         sharedSlots.withPermit {
+            // Winner of the sliver race (see the pre-check above): only the
+            // primary worker writes the cache file — a loser that slipped
+            // through transcodes uncached rather than corrupting the part.
+            var primaryWorker: CompletableDeferred<Boolean>? = null
+            var cacheWriter: java.io.BufferedOutputStream? = null
+            var cachePart: File? = null
+            if (cacheFile != null && cacheKey != null) {
+                val mine = CompletableDeferred<Boolean>()
+                if (ongoingTranscodes.putIfAbsent(cacheKey, mine) == null) {
+                    primaryWorker = mine
+                    cachePart = File(cacheFile.parentFile, "${cacheFile.name}.part")
+                    cacheWriter = runCatching {
+                        cacheFile.parentFile?.mkdirs()
+                        cachePart!!.outputStream().buffered()
+                    }.getOrNull()
+                }
+            }
+            // True only when the upstream feed ran to a clean EOF (not a
+            // refusal, not an abort): the file is complete and cacheable.
+            // Written by the pump coroutine, read after pump.join().
+            val upstreamDone = java.util.concurrent.atomic.AtomicBoolean(false)
             var process: Process? = null
             try {
                 process = ProcessBuilder(
@@ -177,8 +277,8 @@ class Transcoder(
                                     stdin.write(buf, 0, n)
                                 }
                                 when (outcome) {
-                                    is ChunkedUpstream.Refused,
-                                    is ChunkedUpstream.Done -> Unit
+                                    is ChunkedUpstream.Done -> upstreamDone.set(true)
+                                    is ChunkedUpstream.Refused -> Unit
                                 }
                             } catch (e: Exception) {
                                 // Upstream died; ffmpeg sees EOF and flushes what it has.
@@ -193,6 +293,7 @@ class Transcoder(
                         while (skipped < startByte) {
                             val n = withContext(Dispatchers.IO) { stdout.read(buf) }
                             if (n < 0) break
+                            runCatching { cacheWriter?.write(buf, 0, n) }
                             skipped += n
                             if (skipped > startByte) {
                                 // Chunk straddles the offset: keep the tail.
@@ -206,6 +307,7 @@ class Transcoder(
                         while (true) {
                             val n = withContext(Dispatchers.IO) { stdout.read(buf) }
                             if (n < 0) break
+                            runCatching { cacheWriter?.write(buf, 0, n) }
                             writeFully(buf, 0, n)
                         }
                         pump.join()
@@ -226,6 +328,32 @@ class Transcoder(
                         process!!.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
                     }
                 } catch (_: Exception) {
+                }
+                // Publish the cache file ONLY on a provably complete run:
+                // clean upstream EOF + no abort + no upstream failure.
+                // Anything else leaves a partial file that must never pass
+                // as a full song.
+                runCatching { cacheWriter?.close() }
+                if (primaryWorker != null && cacheFile != null && cachePart != null) {
+                    var ok = false
+                    try {
+                        if (!aborted && upstreamFailure == null && upstreamDone.get() &&
+                            cachePart.isFile && cachePart.length() > 0
+                        ) {
+                            Files.move(
+                                cachePart.toPath(), cacheFile.toPath(),
+                                StandardCopyOption.REPLACE_EXISTING
+                            )
+                            evictCache()
+                            ok = true
+                        } else {
+                            runCatching { cachePart.delete() }
+                        }
+                    } catch (_: Exception) {
+                        runCatching { cachePart.delete() }
+                    }
+                    primaryWorker.complete(ok)
+                    ongoingTranscodes.remove(cacheKey, primaryWorker)
                 }
             }
         }

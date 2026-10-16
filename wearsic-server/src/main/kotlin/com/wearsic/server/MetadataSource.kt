@@ -31,6 +31,12 @@ interface YoutubeMetadataClient {
     /** YouTube search with the same dedup/caching semantics as production. */
     suspend fun search(query: String): List<TrackDto>
 
+    /**
+     * Same search with a page-size wish ( Show more ). Default keeps every
+     * existing caller on first-page behavior.
+     */
+    suspend fun search(query: String, limit: Int): List<TrackDto> = search(query)
+
     /** Resolve a playable stream target for [videoId] (URL + MIME type). */
     suspend fun streamTarget(videoId: String): StreamTarget?
 

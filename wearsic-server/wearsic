@@ -110,6 +110,35 @@ $1"; fi
 }
 box_end() {
   local w line plain spaces i
+  # Never wider than the terminal: a 60-char funnel URL on a narrow
+  # split-screen must wrap inside the box, not blow its borders out.
+  local cols="${COLUMNS:-80}"
+  case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
+  [ "$cols" -lt 30 ] && cols=30
+  local maxw=$(( cols - 6 ))
+  w=${#BOX_TITLE}
+  local wrapped=""
+  while IFS= read -r line; do
+    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    if [ "${#plain}" -le "$maxw" ]; then
+      wrapped="$wrapped
+$line"
+    else
+      # Hard-wrap long lines (URLs) at the box edge, keeping color codes
+      # out of the width math by wrapping the PLAIN text. Color on
+      # wrapped URL lines is dropped — readability over decoration.
+      local rest="$plain" chunk
+      while [ -n "$rest" ]; do
+        chunk="$(printf '%s' "$rest" | cut -c1-"$maxw")"
+        rest="$(printf '%s' "$rest" | cut -c$((maxw + 1))-)"
+        wrapped="$wrapped
+$chunk"
+      done
+    fi
+  done <<EOF
+$BOX_BODY
+EOF
+  BOX_BODY="$(printf '%s' "$wrapped" | tail -n +2)"
   w=${#BOX_TITLE}
   while IFS= read -r line; do
     plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"

@@ -107,7 +107,7 @@ class WearsicMusicRepository(
         return base
     }
 
-    suspend fun searchMusic(query: String): Result<List<Track>> {
+    suspend fun searchMusic(query: String, limit: Int = 10): Result<List<Track>> {
         val queryValidation = Validation.validateQuery(query)
         if (queryValidation.isFailure) {
             val error = queryValidation.exceptionOrNull() as? WearsicError
@@ -115,7 +115,7 @@ class WearsicMusicRepository(
         }
         val currentUrl = getServerUrl()
         
-        val httpResult = httpApiClient.searchTracks(currentUrl, queryValidation.getOrThrow())
+        val httpResult = httpApiClient.searchTracks(currentUrl, queryValidation.getOrThrow(), limit)
         if (httpResult.isSuccess) {
             val dtoList = httpResult.getOrThrow().tracks
             val domainTracks = dtoList.map { it.toDomainTrack() }

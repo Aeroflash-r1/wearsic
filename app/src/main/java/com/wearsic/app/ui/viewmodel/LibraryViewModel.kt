@@ -295,7 +295,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         val isSearching: Boolean = false,
         val errorMessage: String? = null,
         val hasSearched: Boolean = false,
-        val suggestions: List<String> = emptyList()
+        val suggestions: List<String> = emptyList(),
+        /** Expanded page in flight (first page stays visible meanwhile). */
+        val isLoadingMore: Boolean = false,
+        /** True while a bigger page could add rows (first page full, no error). */
+        val canLoadMore: Boolean = false
     )
 
     private val _searchState = MutableStateFlow(SearchUiState())
@@ -315,7 +319,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         results = tracks,
                         isSearching = false,
                         errorMessage = null,
-                        hasSearched = true
+                        hasSearched = true,
+                        // A full first page means the server likely has more.
+                        canLoadMore = tracks.size >= com.wearsic.app.network.WearsicHttpApiClient.SEARCH_PAGE_SIZE
                     )
                 }
             }.onFailure { err ->
@@ -324,7 +330,46 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         results = emptyList(),
                         isSearching = false,
                         errorMessage = err.message ?: "Search failed",
-                        hasSearched = true
+                        hasSearched = true,
+                        canLoadMore = false
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * "Show more": re-asks the server with the expanded page and merges new
+     * rows behind the existing ones (dedupe by id — page boundaries can
+     * shift between calls). First page stays on screen the whole time.
+     */
+    fun loadMoreResults() {
+        val state = _searchState.value
+        if (state.isSearching || state.isLoadingMore || !state.canLoadMore) return
+        if (state.query.isBlank()) return
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            _searchState.update { it.copy(isLoadingMore = true, errorMessage = null) }
+            val result = musicRepository.searchMusic(
+                state.query,
+                com.wearsic.app.network.WearsicHttpApiClient.SEARCH_MAX_LIMIT
+            )
+            result.onSuccess { tracks ->
+                val known = state.results.map { it.id }.toSet()
+                _searchState.update {
+                    it.copy(
+                        results = it.results + tracks.filter { t -> t.id !in known },
+                        isLoadingMore = false,
+                        errorMessage = null,
+                        canLoadMore = false
+                    )
+                }
+            }.onFailure { err ->
+                _searchState.update {
+                    it.copy(
+                        isLoadingMore = false,
+                        errorMessage = err.message ?: "Could not load more",
+                        canLoadMore = false
                     )
                 }
             }

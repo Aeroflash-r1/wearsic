@@ -200,6 +200,9 @@ fun WearsicApp(
                     onCreatePlaylistAndAdd = { name, track ->
                         libraryVM.createPlaylistAndAdd(name, track)
                     },
+                    onLoadMore = {
+                        libraryVM.loadMoreResults()
+                    },
                     onAddToPlaylist = { playlistId, track ->
                         libraryVM.addToPlaylist(playlistId, track)
                     }

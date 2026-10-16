@@ -34,16 +34,41 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # ── output helpers ──────────────────────────────────────────────────────────
-C_RESET='\033[0m'; C_BOLD='\033[1m'; C_PURPLE='\033[1;35m'
-C_GREEN='\033[1;32m'; C_YELLOW='\033[1;33m'; C_RED='\033[1;31m'; C_DIM='\033[2m'; C_CYAN='\033[1;36m'
+# Theme: quiet green. The tag stays dim (grep-able, not shouty); content
+# speaks in soft green (114) with bright (157) accents; titles get a
+# white→green gradient. Animations off when piped so logs stay clean.
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_PURPLE='\033[38;5;114m'
+C_GREEN='\033[1;32m'; C_YELLOW='\033[1;33m'; C_RED='\033[1;31m'; C_DIM='\033[2m'; C_CYAN='\033[38;5;157m'
+C_TAG='\033[2m'; C_ACC='\033[38;5;114m'
 
 TTY_OUT=0; [ -t 1 ] && TTY_OUT=1   # animations off when piped/logged
 
-say()  { printf "${C_PURPLE}[wearsic]${C_RESET} %s\n" "$*"; }
-step() { printf "\n${C_PURPLE}[wearsic]${C_RESET} ${C_BOLD}━━━ %s ━━━${C_RESET}\n" "$*"; }
-ok()   { printf "${C_PURPLE}[wearsic]${C_RESET}  ${C_GREEN}✓${C_RESET} %s\n" "$*"; }
-warn() { printf "${C_PURPLE}[wearsic]${C_RESET}  ${C_YELLOW}!${C_RESET} %s\n" "$*"; }
-die()  { printf "${C_PURPLE}[wearsic]${C_RESET} ${C_RED}✗ ERROR:${C_RESET} %s\n" "$*" >&2; exit 1; }
+say()  { printf "${C_TAG}[wearsic]${C_RESET} %s\n" "$*"; }
+step() { printf "\n${C_TAG}[wearsic]${C_RESET} %s\n" "$(grad_line "━━━ $* ━━━")"; }
+ok()   { printf "${C_TAG}[wearsic]${C_RESET}  ${C_GREEN}✓${C_RESET} %s\n" "$*"; }
+warn() { printf "${C_TAG}[wearsic]${C_RESET}  ${C_YELLOW}!${C_RESET} %s\n" "$*"; }
+die()  { printf "${C_TAG}[wearsic]${C_RESET} ${C_RED}✗ ERROR:${C_RESET} %s\n" "$*" >&2; exit 1; }
+
+# White→green gradient for short titles (256-palette ramp, per character).
+grad_line() { # $1 = text
+  local text="$1" len i=0 out="" shade ch
+  len=${#text}
+  if [ "$len" -le 0 ]; then printf ''; return 0; fi
+  while [ "$i" -lt "$len" ]; do
+    # 255 (white) → 114 (soft green) across the string, quantized so
+    # terminals render it as a smooth ramp instead of mud.
+    if [ "$len" -le 1 ]; then shade=114;
+    else shade=$(( 255 - (255 - 114) * i / (len - 1) )); fi
+    if [ "$shade" -gt 200 ]; then shade=255
+    elif [ "$shade" -gt 170 ]; then shade=158
+    elif [ "$shade" -gt 145 ]; then shade=120
+    else shade=114; fi
+    ch="$(printf '%s' "$text" | cut -c$((i + 1)))"
+    out="${out}\033[38;5;${shade}m${ch}"
+    i=$((i + 1))
+  done
+  printf '%s\033[0m' "$out"
+}
 
 # Animated spinner for background work. Non-tty: plain start line, the
 # matching ok/fail line on stop (logs stay readable).
@@ -51,15 +76,16 @@ SPIN_PID=""; SPIN_MSG=""
 spinner_start() { # $1 = message
   SPIN_MSG="$1"
   if [ "$TTY_OUT" != "1" ]; then say "$1…"; return 0; fi
-  printf "${C_PURPLE}[wearsic]${C_RESET}  %s " "$1"
-  ( while :; do for f in ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏; do printf '\b%s' "$f"; sleep 0.08; done; done ) &
+  printf "${C_TAG}[wearsic]${C_RESET}  %s " "$1"
+  # Dots drift white→green→white: quiet motion, never a solid block.
+  ( while :; do for f in "[38;5;255m⠋" "[38;5;158m⠙" "[38;5;120m⠹" "[38;5;114m⠸" "[38;5;114m⠼" "[38;5;120m⠴" "[38;5;158m⠦" "[38;5;255m⠧" "[38;5;158m⠇" "[38;5;120m⠏"; do printf '\b%s[0m' "$f"; sleep 0.09; done; done ) &
   SPIN_PID=$!
 }
 spinner_stop() { # $1 = 0 ok / else fail, $2 = done message (default: start message)
   local msg="${2:-$SPIN_MSG}"
   if [ -n "$SPIN_PID" ]; then kill "$SPIN_PID" 2>/dev/null; wait "$SPIN_PID" 2>/dev/null; SPIN_PID=""; fi
   if [ "$TTY_OUT" = "1" ]; then printf '\b'; fi
-  if [ "${1:-0}" = "0" ]; then ok "$msg"; else printf "${C_PURPLE}[wearsic]${C_RESET}  ${C_RED}✗${C_RESET} %s\n" "$msg"; fi
+  if [ "${1:-0}" = "0" ]; then ok "$msg"; else printf "${C_TAG}[wearsic]${C_RESET}  ${C_RED}✗${C_RESET} %s\n" "$msg"; fi
   SPIN_MSG=""
 }
 
@@ -99,7 +125,7 @@ draw_bar() { # $1 label $2 pct $3 have-bytes $4 total-bytes
   local filled=$(( pct * width / 100 ))
   i=0; while [ "$i" -lt "$filled" ]; do bar="${bar}█"; i=$((i + 1)); done
   while [ "$i" -lt "$width" ]; do bar="${bar}░"; i=$((i + 1)); done
-  printf "\r${C_PURPLE}[wearsic]${C_RESET}  %s ${C_CYAN}%s${C_RESET} %3d%%  ${C_DIM}%s / %s${C_RESET}" \
+  printf "\r${C_TAG}[wearsic]${C_RESET}  %s ${C_CYAN}%s${C_RESET} %3d%%  ${C_DIM}%s / %s${C_RESET}" \
     "$label" "$bar" "$pct" "$(human_bytes "$have")" "$(human_bytes "$total")"
 }
 
@@ -112,9 +138,9 @@ human_bytes() { # $1 = bytes -> 12.4M
 }
 
 # Rounded box for the pairing card / big announcements.
-box_top()    { printf "${C_PURPLE}╭─ %s %s${C_RESET}\n" "$1" "$(box_rule "$1")"; }
-box_line()   { printf "${C_PURPLE}│${C_RESET} %s\n" "$1"; }
-box_bottom() { printf "${C_PURPLE}╰%s╯${C_RESET}\n" "$(box_rule "")"; }
+box_top()    { printf "${C_ACC}╭─ %s %s${C_RESET}\n" "$1" "$(box_rule "$1")"; }
+box_line()   { printf "${C_ACC}│${C_RESET} %s\n" "$1"; }
+box_bottom() { printf "${C_ACC}╰%s╯${C_RESET}\n" "$(box_rule "")"; }
 box_rule() { # pad a ── rule to ~52 cols after $1
   local n=$(( 50 - ${#1} )); [ "$n" -lt 4 ] && n=4
   local i=0 s=""; while [ "$i" -lt "$n" ]; do s="${s}─"; i=$((i + 1)); done

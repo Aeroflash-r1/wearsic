@@ -76,20 +76,21 @@ class MetadataSearchOrchestrator(
     val youtubeFallbackCount: Int get() = fallbackCount.get()
     private val searchFlight = SingleFlight<String, List<TrackDto>>()
 
-    suspend fun search(query: String): List<TrackDto> {
+    suspend fun search(query: String, limit: Int = 10): List<TrackDto> {
         val normalized = query.trim().replace(Regex("\\s+"), " ")
         if (normalized.length < 2) return emptyList()
         require(normalized.length <= 200) { "Search query is too long" }
-        return searchFlight.run(normalized) {
+        val take = limit.coerceIn(1, 25)
+        return searchFlight.run("$normalized|$take") {
             val tracks = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
                 try {
-                    metadata.searchSongs(normalized)
+                    metadata.searchSongs(normalized, take)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
                     emptyList()
                 }
-            }?.filter { it.videoId.isNotBlank() }?.distinctBy { it.videoId }?.take(10)
+            }?.filter { it.videoId.isNotBlank() }?.distinctBy { it.videoId }?.take(take)
                 ?: emptyList()
             if (tracks.isNotEmpty()) {
                 prefetch(tracks.take(PREFETCH_COUNT))
@@ -99,7 +100,7 @@ class MetadataSearchOrchestrator(
                 val fallback = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
                     youtube.search(normalized)
                 } ?: emptyList()
-                fallback.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(10)
+                fallback.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(take)
             }
         }
     }

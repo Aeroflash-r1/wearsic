@@ -1,6 +1,9 @@
 package com.wearsic.server
 
 import io.ktor.client.HttpClient
+import io.ktor.client.request.header
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -8,7 +11,9 @@ import io.ktor.server.request.header
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytesWriter
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
+import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
 
 /**
@@ -213,17 +218,19 @@ class AudioProxy(
                 contentType = io.ktor.http.ContentType.parse(target.mimeType),
                 status = HttpStatusCode.PartialContent
             ) {
-                // Stitch 1 MB closed-range chunks into one client stream, in
-                // large copy blocks (see STREAM_CHUNK_BYTES). A throttle 403
-                // mid-song re-resolves and RESUMES at the same byte — the
-                // song plays through instead of dying halfway.
-                client.fetchClosedChunks(
-                    target.url, start, lastByte, blockBytes = chunkBytes,
-                    emit = { buf, n -> writeFully(buf, 0, n) },
-                    refreshUrl = {
-                        (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)?.url
-                    },
-                )
+                // Prefer ONE open-ended stream (the old behavior): a single
+                // request means a single throttle decision and zero chunk
+                // seams. Only when the network refuses it do we fall back
+                // to stitched closed-range chunks with mid-song resume.
+                if (!tryOpenStream(target.url, start)) {
+                    client.fetchClosedChunks(
+                        target.url, start, lastByte, blockBytes = chunkBytes,
+                        emit = { buf, n -> writeFully(buf, 0, n) },
+                        refreshUrl = {
+                            (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)?.url
+                        },
+                    )
+                }
             }
             ProxyOutcome.Streamed
         } catch (e: Exception) {
@@ -231,6 +238,45 @@ class AudioProxy(
             // not worth a scary 500, this happens routinely on track skips.
             logger.info("Stream proxy ended early: {}", e.message)
             ProxyOutcome.Aborted
+        }
+    }
+
+    /**
+     * Single open-ended upstream fetch (`bytes=start-`, the pre-chunking
+     * behavior). Returns true when the whole remainder streamed cleanly.
+     * False on ANY refusal/failure — the caller then falls back to closed
+     * chunks. Throws when the caller goes away (mapped to Aborted above).
+     */
+    private suspend fun io.ktor.utils.io.ByteWriteChannel.tryOpenStream(url: String, start: Long): Boolean {
+        return try {
+            var ok = false
+            client.prepareGet(url) {
+                header(HttpHeaders.Range, "bytes=$start-")
+            }.execute { upstream ->
+                if (upstream.status != HttpStatusCode.PartialContent &&
+                    upstream.status != HttpStatusCode.OK
+                ) {
+                    return@execute
+                }
+                val channel = upstream.bodyAsChannel()
+                val buf = ByteArray(chunkBytes)
+                while (true) {
+                    val n = channel.readAvailable(buf)
+                    if (n < 0) break
+                    if (n == 0) {
+                        channel.awaitContent()
+                        continue
+                    }
+                    writeFully(buf, 0, n)
+                }
+                ok = true
+            }
+            ok
+        } catch (e: Exception) {
+            // Caller gone (cancellation) must propagate as Aborted, not
+            // silently fall back to chunks on a dead call.
+            if (e is CancellationException) throw e
+            false
         }
     }
 }

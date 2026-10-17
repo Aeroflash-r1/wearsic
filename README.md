@@ -202,6 +202,9 @@ The Wearsic watch application is a **lightweight streaming client**. To protect 
    source-built ZIP (`wearsic-server-termux-<tag>.zip`) and its
    **SHA-256 checksum** (`wearsic-server-termux-<tag>.zip.sha256` — the
    server's auto-updater refuses to install any release without one).
+   The watch APK ships its own **SHA-256** (`Wearsic-<tag>.apk.sha256`);
+   `wearsic sideload` (Termux CLI) verifies it before installing the app
+   onto the watch over adb.
 
 ### Pre-releases
 

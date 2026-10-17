@@ -294,6 +294,35 @@ class TranscoderTest {
         Transcoder.detectBinary("ffmpeg") // must not throw regardless of host
     }
 
+    @Test
+    fun `ffmpeg appearing after boot turns conversion on without a restart`() = runBlocking {
+        val stub = File.createTempFile("fake-ffmpeg", ".sh")
+        stub.writeText("#!/bin/sh\nexit 0\n")
+        stub.setExecutable(true)
+        stub.deleteOnExit()
+        val transcoder = Transcoder(
+            HttpClient(CIO),
+            ffmpegBinary = stub.absolutePath,
+            availability = false,
+            recheckIntervalMs = 0,
+        )
+        assertFalse(transcoder.available)
+        assertTrue(transcoder.ensureAvailability(), "a later-visible binary must be picked up")
+        assertTrue(transcoder.available)
+    }
+
+    @Test
+    fun `missing ffmpeg stays unavailable on re-probe`() = runBlocking {
+        val transcoder = Transcoder(
+            HttpClient(CIO),
+            ffmpegBinary = "/nonexistent/ffmpeg-recheck",
+            availability = false,
+            recheckIntervalMs = 0,
+        )
+        assertFalse(transcoder.ensureAvailability())
+        assertFalse(transcoder.available)
+    }
+
     /**
      * THE byte-level regression this guards: when the CDN feed dies mid-transcode
      * the response may NOT end cleanly (OkHttp would pass a clean EOF to

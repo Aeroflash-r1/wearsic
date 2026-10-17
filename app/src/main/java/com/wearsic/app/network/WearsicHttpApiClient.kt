@@ -242,6 +242,8 @@ class WearsicHttpApiClient(
                         HttpError("$sanitizedUrl/api/favorites", response.code, "Server error: HTTP ${response.code}")
                     )
                 }
+                // Cached list reads must not re-serve the old favorites.
+                WearsicHttp.noteMutation()
                 Result.success(Unit)
             }
         } catch (e: Exception) {
@@ -274,6 +276,8 @@ class WearsicHttpApiClient(
                         HttpError("$sanitizedUrl/api/favorites", response.code, "Server error: HTTP ${response.code}")
                     )
                 }
+                // Cached list reads must not re-serve the removed favorite.
+                WearsicHttp.noteMutation()
                 Result.success(Unit)
             }
         } catch (e: Exception) {
@@ -372,6 +376,8 @@ class WearsicHttpApiClient(
                         HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
                     )
                 }
+                // Cached playlist reads must not re-serve the removed track.
+                WearsicHttp.noteMutation()
                 Result.success(Unit)
             }
         } catch (e: Exception) {
@@ -556,6 +562,8 @@ class WearsicHttpApiClient(
                             HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
                         )
                     }
+                    // Cached list reads must not miss the new playlist.
+                    WearsicHttp.noteMutation()
                     val bodyString = response.body?.string() ?: "{}"
                     val dto = try {
                         json.decodeFromString<PlaylistDto>(bodyString)
@@ -589,6 +597,8 @@ class WearsicHttpApiClient(
                             HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
                         )
                     }
+                    // Cached playlist reads must not miss the added track.
+                    WearsicHttp.noteMutation()
                     Result.success(Unit)
                 }
             } catch (e: Exception) {

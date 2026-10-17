@@ -27,7 +27,9 @@ import io.ktor.server.routing.get as routeGet
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import io.ktor.utils.io.writeFully
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
@@ -292,6 +294,35 @@ class TranscoderTest {
         Transcoder.detectBinary("ffmpeg") // must not throw regardless of host
     }
 
+    @Test
+    fun `ffmpeg appearing after boot turns conversion on without a restart`() = runBlocking {
+        val stub = File.createTempFile("fake-ffmpeg", ".sh")
+        stub.writeText("#!/bin/sh\nexit 0\n")
+        stub.setExecutable(true)
+        stub.deleteOnExit()
+        val transcoder = Transcoder(
+            HttpClient(CIO),
+            ffmpegBinary = stub.absolutePath,
+            availability = false,
+            recheckIntervalMs = 0,
+        )
+        assertFalse(transcoder.available)
+        assertTrue(transcoder.ensureAvailability(), "a later-visible binary must be picked up")
+        assertTrue(transcoder.available)
+    }
+
+    @Test
+    fun `missing ffmpeg stays unavailable on re-probe`() = runBlocking {
+        val transcoder = Transcoder(
+            HttpClient(CIO),
+            ffmpegBinary = "/nonexistent/ffmpeg-recheck",
+            availability = false,
+            recheckIntervalMs = 0,
+        )
+        assertFalse(transcoder.ensureAvailability())
+        assertFalse(transcoder.available)
+    }
+
     /**
      * THE byte-level regression this guards: when the CDN feed dies mid-transcode
      * the response may NOT end cleanly (OkHttp would pass a clean EOF to
@@ -303,7 +334,19 @@ class TranscoderTest {
     @Test
     fun `truncated upstream feed aborts the response and delivers only a clean prefix`() {
         val fake = fakeFfmpeg()
-        val transcoder = Transcoder(HttpClient(CIO), ffmpegBinary = fake.absolutePath, availability = true)
+        // The fake origin leaves its connection half-open after the partial
+        // write, so the stalled read only ends when THIS client's request
+        // timeout fires. Keep it short (4s): the proxy's give-up path
+        // (reconnect at the same byte -> origin 416 on the live range ->
+        // retries exhausted -> truncated abort, logged at ~5s) then always
+        // completes inside the observer's 10s window below. With the 15s
+        // engine default that phase raced the observer's old 15s deadline
+        // and flaked on a loaded CI runner (run 39042002466).
+        val transcoder = Transcoder(
+            HttpClient(CIO) { engine { requestTimeout = 4_000 } },
+            ffmpegBinary = fake.absolutePath,
+            availability = true,
+        )
         // A long-enough source; the origin serves exactly 400_000 bytes for
         // a bytes=0- chunk, then kills the connection mid-stream (as a
         // throttled googlevideo connection behaves).
@@ -341,7 +384,10 @@ class TranscoderTest {
                 }
             }.start(wait = false)
             val proxyPort = proxy.resolvedConnectors().first().port
-            val client = HttpClient(CIO)
+            // Outer safety only: the read loop bounds itself with an explicit
+            // 10s window (see below), so this engine deadline is never
+            // expected to fire — keep it well above the window.
+            val client = HttpClient(CIO) { engine { requestTimeout = 60_000 } }
             try {
                 val received = mutableListOf<Byte>()
                 var abnormalClose = false
@@ -350,11 +396,23 @@ class TranscoderTest {
                     val channel = resp.bodyAsChannel()
                     val buf = ByteArray(16 * 1024)
                     try {
-                        while (true) {
-                            val n = channel.readAvailable(buf)
-                            if (n < 0) break
-                            repeat(n) { received.add(buf[it]) }
+                        // Bound the observation explicitly: under CIO the
+                        // proxy's truncation-abort may surface as an IO error,
+                        // a plain EOF, or a silent stall that only a client
+                        // read timeout ends (observed locally). Owning the
+                        // deadline here keeps pass/fail independent of which
+                        // engine timer fires first — the bytes collected so
+                        // far still face the exact-prefix and truncated-length
+                        // asserts below.
+                        withTimeout(10_000) {
+                            while (true) {
+                                val n = channel.readAvailable(buf)
+                                if (n < 0) break
+                                repeat(n) { received.add(buf[it]) }
+                            }
                         }
+                    } catch (_: TimeoutCancellationException) {
+                        abnormalClose = true
                     } catch (_: Throwable) {
                         abnormalClose = true
                     }

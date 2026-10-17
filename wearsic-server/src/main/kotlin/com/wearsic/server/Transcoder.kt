@@ -25,6 +25,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -59,12 +60,50 @@ class Transcoder(
      */
     private val cacheDir: File? = null,
     private val maxCacheBytes: Long = 200L * 1024L * 1024L,
+    /**
+     * Throttle for re-probing a MISSING binary (see [ensureAvailability]).
+     * 0 disables the throttle (tests).
+     */
+    private val recheckIntervalMs: Long = RECHECK_INTERVAL_MS,
 ) {
 
     private val logger = LoggerFactory.getLogger(Transcoder::class.java)
 
-    /** True when this instance's `ffmpeg` binary was found. */
-    val available: Boolean = availability
+    /**
+     * Latched once found. Starts from the construction-time probe but can
+     * flip to true later via [ensureAvailability] when `ffmpeg` appears.
+     */
+    @Volatile
+    private var availabilityState: Boolean = availability
+
+    /** Last missing-binary probe attempt (throttles re-probing). */
+    private val lastProbeMs = AtomicLong(System.currentTimeMillis())
+
+    /** True when this instance's `ffmpeg` binary has been found. */
+    val available: Boolean get() = availabilityState
+
+    /**
+     * Re-probes a MISSING binary (throttled + single-flight) so a
+     * transiently failed boot probe — or an `ffmpeg` installed while the
+     * server is already running — heals WITHOUT a restart. Before this,
+     * one slow 5s probe at boot condemned every non-AAC song to a
+     * "ffmpeg isn't installed" 503 for the whole process lifetime, and a
+     * background install never took effect until the next restart.
+     */
+    suspend fun ensureAvailability(): Boolean {
+        if (availabilityState) return true
+        val now = System.currentTimeMillis()
+        val last = lastProbeMs.get()
+        if (now - last < recheckIntervalMs) return false
+        // Lost the CAS: another request is already probing — report current state.
+        if (!lastProbeMs.compareAndSet(last, now)) return false
+        val found = withContext(Dispatchers.IO) { detectBinary(ffmpegBinary) }
+        if (found) {
+            availabilityState = true
+            logger.info("ffmpeg found — server-side conversion is now ON (no restart needed)")
+        }
+        return found
+    }
 
     companion object {
         /**
@@ -74,6 +113,9 @@ class Transcoder(
          * concurrent ffmpeg processes.
          */
         private val sharedSlots = Semaphore(2)
+
+        /** Throttle for re-probing a missing ffmpeg while the server stays up. */
+        internal const val RECHECK_INTERVAL_MS = 30_000L
 
         /** Probe [binary] without mutating any global state. */
         fun detectBinary(binary: String = "ffmpeg"): Boolean = runCatching {
@@ -164,7 +206,7 @@ class Transcoder(
          */
         cacheKey: String? = null,
     ): TranscodeResult {
-        if (!available) {
+        if (!ensureAvailability()) {
             call.respond(
                 HttpStatusCode.ServiceUnavailable,
                 ErrorResponse("This song needs server-side AAC conversion, but ffmpeg isn't installed. In Termux run: pkg install ffmpeg")

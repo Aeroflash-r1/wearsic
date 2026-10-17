@@ -37,6 +37,11 @@ dependencies {
     // Range handling for file responses (cached transcodes): byte-exact
     // 206s instead of re-transferring the whole song per range request.
     implementation("io.ktor:ktor-server-partial-content-jvm:$ktorVersion")
+    // gzip for JSON responses. Over Tailscale Funnel (relayed link, 50-150ms
+    // RTT) bytes are the scarce resource: list payloads shrink ~3-5x. An
+    // allow-list keeps audio streams out of the compressor — they are already
+    // compressed and Range requests must stay byte-exact.
+    implementation("io.ktor:ktor-server-compression-jvm:$ktorVersion")
     implementation("io.ktor:ktor-serialization-kotlinx-json-jvm:$ktorVersion")
 
     // --- Ktor client (CIO engine — used for BOTH NewPipe extraction requests

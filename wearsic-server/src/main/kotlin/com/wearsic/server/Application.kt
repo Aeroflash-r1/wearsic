@@ -3,6 +3,9 @@ package com.wearsic.server
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -14,13 +17,21 @@ import io.ktor.server.cio.CIO as ServerCIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.callloging.CallLogging
+import io.ktor.server.plugins.compression.Compression
+import io.ktor.server.plugins.compression.gzip
+import io.ktor.server.plugins.compression.matchContentType
+import io.ktor.server.plugins.compression.minimumSize
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.application.log
 import io.ktor.server.plugins.origin
 import io.ktor.server.request.header
+import io.ktor.server.request.httpMethod
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.request.uri
+import io.ktor.server.response.ApplicationSendPipeline
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -43,6 +54,17 @@ import java.security.MessageDigest
 
 /** Boot-time messages (before/around the HTTP server going live). */
 private val bootLog = LoggerFactory.getLogger("boot")
+
+// Cache-Control values for the API read path (see route("/api")). These feed
+// the watch app's OkHttp disk cache: over Tailscale Funnel a relayed round
+// trip costs 50-150ms, so a cache hit (zero network) is the difference
+// between "instant" and "laggy" screen opens.
+// - Content: YouTube-derived lists that change slowly; 5 minutes is safe.
+// - User state: favorites/playlists the app itself mutates; kept at 5s and
+//   paired with the app's post-mutation `Cache-Control: no-cache` burst
+//   (6s > 5s), so a user can never be served their own pre-mutation list.
+private const val CONTENT_CACHE_CONTROL = "private, max-age=300"
+private const val USER_STATE_CACHE_CONTROL = "private, max-age=5"
 
 /** First site-local IPv4 address, for the startup banner. null when offline. */
 private fun lanAddress(): String? = runCatching {
@@ -279,6 +301,18 @@ fun Application.module(
         maxRangeCount = 32
     }
 
+    // JSON is what crosses Tailscale Funnel most (search results, album and
+    // playlist listings, favorites), and a relayed link is latency-bound AND
+    // bandwidth-capped: gzip shrinks list payloads ~3-5x. The explicit
+    // content-type allow-list keeps audio out of the compressor (already
+    // compressed, and Range responses must stay byte-exact); the size floor
+    // skips tiny bodies where encoding overhead is not worth it.
+    install(Compression) {
+        gzip { priority = 1.0 }
+        matchContentType(ContentType.Application.Json)
+        minimumSize(512)
+    }
+
     // Consistent JSON error surface for every failure mode — malformed JSON
     // bodies, unknown routes, and unexpected exceptions all respond with the
     // project's ErrorResponse DTO instead of an empty 500.
@@ -397,6 +431,40 @@ fun Application.module(
                     if (!ok) {
                         call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Missing or invalid API key"))
                         finish()
+                    }
+                }
+
+                // Coarse read-path Cache-Control for the watch app's OkHttp
+                // disk cache (app >= 1.9.1). Only GETs are considered, and
+                // only the paths below — streams, config, health and errors
+                // keep the previous no-header behavior, which OkHttp treats
+                // as "do not cache".
+                if (call.request.httpMethod == HttpMethod.Get) {
+                    val path = call.request.path()
+                    val cacheControl = when {
+                        path == "/api/search" ||
+                            path.startsWith("/api/search/") ||
+                            path == "/api/suggestions" ||
+                            path.startsWith("/api/related/") ||
+                            path == "/api/playlist" -> CONTENT_CACHE_CONTROL
+
+                        path == "/api/favorites" ||
+                            path == "/api/playlists" ||
+                            path.startsWith("/api/playlists/") -> USER_STATE_CACHE_CONTROL
+
+                        else -> null
+                    }
+                    if (cacheControl != null) {
+                        // Attach in the send pipeline, gated on a 2xx status:
+                        // a transient 404 (e.g. a failed playlist resolve)
+                        // must never reach the watch as "cache this failure
+                        // for the next N minutes".
+                        call.response.pipeline.intercept(ApplicationSendPipeline.Before) {
+                            val status = call.response.status()
+                            if (status == null || status.value in 200..299) {
+                                call.response.header(HttpHeaders.CacheControl, cacheControl)
+                            }
+                        }
                     }
                 }
             }

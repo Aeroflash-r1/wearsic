@@ -221,10 +221,14 @@ class AudioProxy(
                 // Prefer ONE open-ended stream (the old behavior): a single
                 // request means a single throttle decision and zero chunk
                 // seams. Only when the network refuses it do we fall back
-                // to stitched closed-range chunks with mid-song resume.
-                if (!tryOpenStream(target.url, start)) {
+                // to stitched closed-range chunks — resuming EXACTLY at the
+                // last byte already written, never replaying a prefix into
+                // a live response (a replay would corrupt the byte window
+                // the watch already accepted and stall/blur the stream).
+                val (openDone, openWritten) = tryOpenStream(target.url, start)
+                if (!openDone) {
                     client.fetchClosedChunks(
-                        target.url, start, lastByte, blockBytes = chunkBytes,
+                        target.url, start + openWritten, lastByte, blockBytes = chunkBytes,
                         emit = { buf, n -> writeFully(buf, 0, n) },
                         refreshUrl = {
                             (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)?.url
@@ -243,18 +247,34 @@ class AudioProxy(
 
     /**
      * Single open-ended upstream fetch (`bytes=start-`, the pre-chunking
-     * behavior). Returns true when the whole remainder streamed cleanly.
-     * False on ANY refusal/failure — the caller then falls back to closed
-     * chunks. Throws when the caller goes away (mapped to Aborted above).
+     * behavior). Returns (completed, bytesWritten):
+     *   completed  — true when the WHOLE remainder streamed cleanly to EOF.
+     *   bytesWritten — bytes actually flushed to the watch; an upstream
+     *     connection can die mid-song, and the caller must resume the
+     *     fallback at exactly that byte (a restart from `start` would
+     *     replay already-delivered bytes and corrupt the response).
+     * The upstream request carries streaming timeouts: an idle stall is
+     * noticed in ≤60s, while a slow-but-alive stream is NEVER killed at an
+     * arbitrary total elapsed time (that was the old fixed 20s cap).
+     * Throws when the caller goes away (mapped to Aborted above).
      */
-    private suspend fun io.ktor.utils.io.ByteWriteChannel.tryOpenStream(url: String, start: Long): Boolean {
+    private suspend fun io.ktor.utils.io.ByteWriteChannel.tryOpenStream(url: String, start: Long): Pair<Boolean, Long> {
+        var written = 0L
         return try {
             var ok = false
             client.prepareGet(url) {
                 header(HttpHeaders.Range, "bytes=$start-")
+                // Timeout policy is CLIENT-level on Application.streamClient
+                // (per-request `timeout {}` demands the plugin; test clients
+                // run bare). See AudioProxy doc header.
             }.execute { upstream ->
+                // `start > 0` bytes mean the response body MUST begin at
+                // that byte. A 200 answer starts at byte 0 (range ignored):
+                // accepting it here would inject the song's opening bytes
+                // into the declared window — byte corruption. Closed chunks
+                // (which re-send the exact range) are the safe fallback.
                 if (upstream.status != HttpStatusCode.PartialContent &&
-                    upstream.status != HttpStatusCode.OK
+                    (start > 0 || upstream.status != HttpStatusCode.OK)
                 ) {
                     return@execute
                 }
@@ -268,15 +288,16 @@ class AudioProxy(
                         continue
                     }
                     writeFully(buf, 0, n)
+                    written += n
                 }
                 ok = true
             }
-            ok
+            ok to written
         } catch (e: Exception) {
             // Caller gone (cancellation) must propagate as Aborted, not
             // silently fall back to chunks on a dead call.
             if (e is CancellationException) throw e
-            false
+            false to written
         }
     }
 }

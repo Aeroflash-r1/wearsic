@@ -34,6 +34,9 @@ dependencies {
     implementation("io.ktor:ktor-server-call-logging-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-status-pages-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-host-common-jvm:$ktorVersion")
+    // Range handling for file responses (cached transcodes): byte-exact
+    // 206s instead of re-transferring the whole song per range request.
+    implementation("io.ktor:ktor-server-partial-content-jvm:$ktorVersion")
     implementation("io.ktor:ktor-serialization-kotlinx-json-jvm:$ktorVersion")
 
     // --- Ktor client (CIO engine — used for BOTH NewPipe extraction requests

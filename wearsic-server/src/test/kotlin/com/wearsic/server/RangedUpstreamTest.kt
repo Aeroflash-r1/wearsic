@@ -148,4 +148,69 @@ class RangedUpstreamTest {
             assertEquals(0, refreshes, "no refresh should fire on a clean stream")
         }
     }
+
+    /**
+     * BYTE-LEVEL CONTRACT: a connection that dies mid-chunk must resume at
+     * the exact delivered byte — the final stream is the source, not the
+     * source with any window replayed into the middle (a replay lands as
+     * static/garbage on the watch and reads as a stall when buffers drain).
+     */
+    @Test
+    fun `connection dying mid-chunk resumes exactly at the written byte`() {
+        val bytes = ByteArray(3 * 1024 * 1024) { (it % 251).toByte() }
+        // Fails ONCE mid-body (at 700KB of the current chunk), then serves
+        // ranges normally on reconnect — a realistic CDN blip.
+        var deliveries = java.util.concurrent.atomic.AtomicInteger()
+        val server = embeddedServer(ServerCIO, port = 0, host = "127.0.0.1") {
+            routing {
+                get("/audio") {
+                    val (start, end) = parseRangeHeader(call.request.headers[HttpHeaders.Range])
+                    val last = minOf(end ?: (bytes.size - 1).toLong(), bytes.size - 1L)
+                    // Only the 0- chunk and only its first attempt is booby-trapped.
+                    if (start == 0L && deliveries.incrementAndGet() <= 1) {
+                        call.response.header(HttpHeaders.ContentRange, "bytes $start-$last/${bytes.size}")
+                        call.respondBytesWriter(
+                            contentType = ContentType.parse("audio/mp4"),
+                            status = HttpStatusCode.PartialContent
+                        ) {
+                            writeFully(bytes, 0, 700_000)
+                            throw java.io.IOException("cdn dropped mid-body")
+                        }
+                    }
+                    call.response.header(HttpHeaders.ContentRange, "bytes $start-$last/${bytes.size}")
+                    call.respondBytesWriter(
+                        contentType = ContentType.parse("audio/mp4"),
+                        status = HttpStatusCode.PartialContent
+                    ) {
+                        writeFully(bytes, start.toInt(), (last - start + 1).toInt())
+                    }
+                }
+            }
+        }.start(wait = false)
+        val port = runBlocking { server.resolvedConnectors().first().port }
+        try {
+            val received = runBlocking {
+                val out = mutableListOf<Byte>()
+                val client = HttpClient(CIO)
+                try {
+                    val outcome = client.fetchClosedChunks("http://127.0.0.1:$port/audio", 0, (bytes.size - 1).toLong()) { buf, n ->
+                        repeat(n) { out.add(buf[it]) }
+                    }
+                    org.junit.jupiter.api.Assertions.assertTrue(
+                        outcome is ChunkedUpstream.Done,
+                        "recovered stream must reach a verified end, got $outcome"
+                    )
+                } finally {
+                    client.close()
+                }
+                out.toByteArray()
+            }
+            assertContentEquals(
+                bytes, received,
+                "resumed stream must equal the source byte-for-byte (no duplicate window, no truncation)"
+            )
+        } finally {
+            server.stop(500, 1_000)
+        }
+    }
 }

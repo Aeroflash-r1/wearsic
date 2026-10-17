@@ -7,6 +7,7 @@ import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.utils.io.readAvailable
+import kotlinx.coroutines.CancellationException
 
 /**
  * Closed-range chunk size for upstream CDN fetches.
@@ -33,12 +34,40 @@ internal object UpstreamStats {
 
 private val chunkLogger = org.slf4j.LoggerFactory.getLogger("RangedUpstream")
 
+/**
+ * STREAMING CLIENT TIMEOUTS (audio bodies):
+ * Ktor's per-request `timeout { }` requires the HttpTimeout plugin to be
+ * installed on the client, so instead the streaming client carries them as
+ * CLIENT-level config (see Application.streamClient):
+ *   requestTimeout = INFINITE — a song streamed through one open-ended
+ *     request routinely runs 30s+; the old 20s limit killed the upstream
+ *     mid-song, the watch's buffer drained, and playback stopped exactly
+ *     at "halfway". Streaming is governed by the INACTIVITY watchdog
+ *     (socketTimeout) instead: bytes may trickle for minutes, a dead
+ *     connection is noticed within 60s.
+ *   connectTimeout 10s / socketTimeout 60s.
+ */
+
 internal sealed interface ChunkedUpstream {
     data object Done : ChunkedUpstream
 
     /** Upstream refused the FIRST chunk — caller maps to self-heal/error. */
     data class Refused(val status: Int) : ChunkedUpstream
 }
+
+/**
+ * Mid-stream upstream death that a resume/fresh-URL could not recover
+ * within the retry budget. Thrown (not returned) precisely so the proxy's
+ * already-committed response is ABORTED instead of being closed as a clean
+ * end-of-body: OkHttp/data-source layers treat abrupt connection death as
+ * an error and ExoPlayer retries the remaining range with a fresh request,
+ * whereas a clean EOF reads as "song finished" at byte N — the exact
+ * "stalls halfway, silently" bug.
+ */
+internal class UpstreamTruncatedException(
+    val atByte: Long,
+    cause: Throwable? = null,
+) : java.io.IOException("upstream truncated un-recoverably at byte $atByte", cause)
 internal fun parseRangeHeader(header: String?): Pair<Long, Long?> {
     if (header.isNullOrBlank()) return 0L to null
     val m = Regex("bytes=(\\d+)-(\\d*)").find(header.trim()) ?: return 0L to null
@@ -97,29 +126,77 @@ internal suspend fun HttpClient.fetchClosedChunks(
     var pos = startByte.coerceAtLeast(0L)
     var refreshes = 0
     var zeroStreak = 0
+    var socketRetries = 2
     while (endByteInclusive == null || pos <= endByteInclusive) {
         val chunkEnd = minOf(pos + UPSTREAM_CHUNK_BYTES - 1, endByteInclusive ?: Long.MAX_VALUE)
         var status = 0
         var got = 0L
-        prepareGet(currentUrl) {
-            header(HttpHeaders.Range, "bytes=$pos-$chunkEnd")
-        }.execute { resp ->
-            status = resp.status.value
-            if (resp.status != HttpStatusCode.PartialContent) return@execute
-            val channel = resp.bodyAsChannel()
-            val buf = ByteArray(blockBytes)
-            while (true) {
-                val n = channel.readAvailable(buf)
-                if (n < 0) break
-                if (n == 0) {
-                    channel.awaitContent()
+        try {
+            prepareGet(currentUrl) {
+                header(HttpHeaders.Range, "bytes=$pos-$chunkEnd")
+            }.execute { resp ->                status = resp.status.value
+                if (resp.status != HttpStatusCode.PartialContent) return@execute
+                val channel = resp.bodyAsChannel()
+                val buf = ByteArray(blockBytes)
+                while (true) {
+                    val n = channel.readAvailable(buf)
+                    if (n < 0) break
+                    if (n == 0) {
+                        channel.awaitContent()
+                        continue
+                    }
+                    emit(buf, n)
+                    got += n
+                }
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            // Mid-chunk network death (socket timeout / reset). Bytes up to
+            // (pos + got) are already with the caller. Reconnect at that
+            // exact byte before declaring the stream truncated — a CDN
+            // throttle usually resolves on reconnect or a fresh URL.
+            if (socketRetries > 0) {
+                socketRetries--
+                val fresh = if (refreshUrl != null && refreshes < maxRefreshes) {
+                    refreshes++
+                    runCatching { refreshUrl() }.getOrNull()?.takeIf { it.isNotBlank() }
+                } else currentUrl
+                if (fresh != null && fresh != currentUrl) currentUrl = fresh
+                pos += got
+                chunkLogger.info("Upstream connection died mid-chunk at byte {}, reconnecting ({} retries left)", pos, socketRetries)
+                kotlinx.coroutines.delay(200)
+                continue
+            }
+            throw UpstreamTruncatedException(pos + got, e)
+        }
+        if (status == HttpStatusCode.RequestedRangeNotSatisfiable.value) {
+            // 416 usually means past-EOF (clean end) — but a RESUMED range
+            // (pos <= known end) answered 416 means the CDN lost the body
+            // or is lying about state; treating it as EOF would declare the
+            // song complete at the cutoff. Re-resolve + retry, then treat
+            // like a mid-stream refusal (aborted connection, never a fake
+            // clean end).
+            val suspicious416 = endByteInclusive != null && pos <= endByteInclusive
+            if (suspicious416) {
+                val fresh = if (refreshUrl != null && refreshes < maxRefreshes) {
+                    refreshes++
+                    runCatching { refreshUrl() }.getOrNull()?.takeIf { it.isNotBlank() }
+                } else null
+                if (fresh != null && fresh != currentUrl) {
+                    chunkLogger.info("416 on live range at byte {} — resuming with a fresh URL", pos)
+                    currentUrl = fresh
                     continue
                 }
-                emit(buf, n)
-                got += n
+                if (socketRetries > 0) {
+                    socketRetries--
+                    chunkLogger.info("416 on live range at byte {} — retrying same range", pos)
+                    kotlinx.coroutines.delay(200)
+                    continue
+                }
+                throw UpstreamTruncatedException(pos + got)
             }
+            break // genuinely past EOF: clean end
         }
-        if (status == HttpStatusCode.RequestedRangeNotSatisfiable.value) break // past EOF: clean end
         if (status != HttpStatusCode.PartialContent.value) {
             UpstreamStats.rangeRefusals.incrementAndGet()
             // Refused. First chunk (nothing emitted yet) = dead URL signal
@@ -129,7 +206,8 @@ internal suspend fun HttpClient.fetchClosedChunks(
             }
             // Mid-stream refusal (throttle 403): refresh the URL and RESUME
             // at the same byte — the client's song continues instead of
-            // dying halfway. Bounded, then end what we have.
+            // dying halfway. Bounded: beyond the budget the stream becomes
+            // an ABORTED connection, never a fake clean EOF.
             val fresh = if (refreshUrl != null && refreshes < maxRefreshes) {
                 refreshes++
                 runCatching { refreshUrl() }.getOrNull()?.takeIf { it.isNotBlank() }
@@ -139,8 +217,8 @@ internal suspend fun HttpClient.fetchClosedChunks(
                 currentUrl = fresh
                 continue
             }
-            chunkLogger.info("Upstream refused mid-stream ({}) at byte {}, ending stream", status, pos)
-            break
+            chunkLogger.info("Upstream refused mid-stream ({}) at byte {}, out of resume budget", status, pos)
+            throw UpstreamTruncatedException(pos + got)
         }
         pos += got
         // Zero-byte 206s in a row mean a wedged connection, not EOF (EOF

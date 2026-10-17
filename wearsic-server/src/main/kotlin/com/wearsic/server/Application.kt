@@ -2,6 +2,7 @@ package com.wearsic.server
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -85,6 +86,37 @@ fun main() {
         }
         expectSuccess = false
     }
+    /**
+     * DEDICATED CDN STREAMING client (audio proxy + transcoder source
+     * feeds) — separate from [proxyClient] because the timeout semantics
+     * of streaming are OPPOSITE to everything else:
+     *   - requestTimeout INFINITE: a song streamed through one request
+     *     runs 30s+; a whole-call cap (the old 20s one) killed the upstream
+     *     mid-body, the watch's buffer drained, and playback stopped
+     *     silently at the halfway mark of the song.
+     *   - The only bound is the socket INACTIVITY watchdog (60s): a
+     *     connection that stops delivering bytes entirely is noticed
+     *     within a minute; slow-but-alive links never time out.
+     *   - connectTimeout 10s: dead hosts fail fast, before buffering.
+     * The engine pool mirrors proxyClient so the two clients share the
+     * same physical-connection budget rather than doubling it.
+     */
+    val streamClient = HttpClient(CIO) {
+        engine {
+            maxConnectionsCount = 20
+            endpoint.apply {
+                maxConnectionsPerRoute = 10
+                keepAliveTime = 60_000
+                connectAttempts = 2
+            }
+        }
+        install(HttpTimeout) {
+            connectTimeoutMillis = 10_000
+            requestTimeoutMillis = HttpTimeout.INFINITE_TIMEOUT_MS
+            socketTimeoutMillis = 60_000
+        }
+        expectSuccess = false
+    }
     val healthMeter = ExtractionHealthMeter()
     val gateway = YoutubeGateway(
         downloader = NewPipeDownloader(proxyClient),
@@ -95,13 +127,15 @@ fun main() {
     // Without it those rare songs answer 503 with install guidance instead.
     // Completed transcodes are cached under the state dir (bounded LRU) so
     // repeat plays and ExoPlayer's range requests share one ffmpeg run.
-    val transcoder = Transcoder(proxyClient, cacheDir = java.io.File(stateDir, "transcode-cache"))
+    // Both the proxy and the transcoder pump use streamClient: whole-life
+    // song streaming, inactivity-watchdog only.
+    val transcoder = Transcoder(streamClient, cacheDir = java.io.File(stateDir, "transcode-cache"))
     if (!transcoder.available) {
         System.err.println("WARNING: ffmpeg not found on PATH — songs YouTube only offers in Opus/WebM " +
             "will return 503. Install it in Termux with: pkg install ffmpeg")
     }
 
-    val audioProxy = AudioProxy(gateway, proxyClient, transcoder)
+    val audioProxy = AudioProxy(gateway, streamClient, transcoder)
     val apiKey = System.getenv("WEARSIC_API_KEY")?.trim()?.takeIf { it.isNotEmpty() }
 
     // Self-healing: canary watchdog + engine auto-update pipeline.
@@ -168,6 +202,7 @@ fun main() {
             runCatching { searchOrchestrator.shutdown() }
             runCatching { ytmusic.close() }
             runCatching { proxyClient.close() }
+            runCatching { streamClient.close() }
             runCatching { database.close() }
         }, "wearsic-shutdown"))
     }.start(wait = true)
@@ -189,6 +224,14 @@ fun Application.module(
         json(Json { ignoreUnknownKeys = true; encodeDefaults = true })
     }
     install(CallLogging) { level = Level.INFO }
+
+    // Range requests for FILE responses: without this plugin, respondFile
+    // (used for cached transcodes) 200s the ENTIRE file and ignores the
+    // watch's Range header — every seek/re-read would re-transfer the
+    // whole song. With it, 206 + Content-Range come out byte-exact.
+    install(io.ktor.server.plugins.partialcontent.PartialContent) {
+        maxRangeCount = 32
+    }
 
     // Consistent JSON error surface for every failure mode — malformed JSON
     // bodies, unknown routes, and unexpected exceptions all respond with the

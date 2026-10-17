@@ -5,6 +5,10 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
+import io.ktor.utils.io.readAvailable
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -145,7 +149,7 @@ class TranscoderTest {
                     header(HttpHeaders.Range, "bytes=5000-")
                 }
                 assertEquals(HttpStatusCode.PartialContent, partial.status)
-                assertEquals("bytes 5000-*", partial.headers[HttpHeaders.ContentRange])
+                assertEquals("bytes 5000-*/*", partial.headers[HttpHeaders.ContentRange])
                 val partialBody = partial.body<ByteArray>()
                 assertEquals(sourceBytes.size - 5000, partialBody.size)
                 assertTrue(
@@ -159,8 +163,7 @@ class TranscoderTest {
     }
 
     @Test
-    fun `second identical transcode is served from disk with the origin dead`() = runBlocking {
-        val fake = fakeFfmpeg()
+    fun `second identical transcode is served from disk with the origin dead`() = runBlocking {        val fake = fakeFfmpeg()
         val cacheDir = Files.createTempDirectory("wearsic-tcache").toFile()
         val transcoder = Transcoder(
             HttpClient(CIO), ffmpegBinary = fake.absolutePath,
@@ -287,5 +290,101 @@ class TranscoderTest {
         assertFalse(Transcoder.detectBinary("/nonexistent/ffmpeg-path"))
         // The real production binary is probed but never mutates instance state.
         Transcoder.detectBinary("ffmpeg") // must not throw regardless of host
+    }
+
+    /**
+     * THE byte-level regression this guards: when the CDN feed dies mid-transcode
+     * the response may NOT end cleanly (OkHttp would pass a clean EOF to
+     * ExoPlayer, which then stops at "halfway" silently believing the song
+     * ended). The stream must ABORT mid-body so the data source layer errors
+     * and retries; the bytes already delivered must be EXACTLY the source
+     * prefix — never a duplicated/replayed window.
+     */
+    @Test
+    fun `truncated upstream feed aborts the response and delivers only a clean prefix`() {
+        val fake = fakeFfmpeg()
+        val transcoder = Transcoder(HttpClient(CIO), ffmpegBinary = fake.absolutePath, availability = true)
+        // A long-enough source; the origin serves exactly 400_000 bytes for
+        // a bytes=0- chunk, then kills the connection mid-stream (as a
+        // throttled googlevideo connection behaves).
+        val dyingBytes = ByteArray(5 * 1024 * 1024) { (it % 251).toByte() }
+        val prefix = 400_000
+        runBlocking {
+            val origin = embeddedServer(ServerCIO, port = 0) {
+                routing {
+                    routeGet("/dying") {
+                        val (start, end) = parseRangeHeader(call.request.headers[HttpHeaders.Range])
+                        if (start > 0) {
+                            call.respond(HttpStatusCode.RequestedRangeNotSatisfiable, "gone")
+                            return@routeGet
+                        }
+                        val last = minOf(end ?: (dyingBytes.size - 1).toLong(), prefix.toLong() - 1)
+                        call.response.header(HttpHeaders.ContentRange, "bytes $start-$last/${dyingBytes.size}")
+                        call.respondBytesWriter(
+                            contentType = ContentType.parse("audio/webm"),
+                            status = HttpStatusCode.PartialContent
+                        ) {
+                            writeFully(dyingBytes, 0, (last - start + 1).toInt())
+                            // Emulate the CDN connection dying before the next
+                            // chunk boundary: abrupt, no terminal flush.
+                            throw java.io.IOException("cdn hung up mid-body")
+                        }
+                    }
+                }
+            }.start(wait = false)
+            val originPort = origin.resolvedConnectors().first().port
+            val proxy = embeddedServer(ServerCIO, port = 0) {
+                routing {
+                    routeGet("/stream") {
+                        transcoder.handle(call, "http://127.0.0.1:$originPort/dying", call.request.headers[HttpHeaders.Range])
+                    }
+                }
+            }.start(wait = false)
+            val proxyPort = proxy.resolvedConnectors().first().port
+            val client = HttpClient(CIO)
+            try {
+                val received = mutableListOf<Byte>()
+                var abnormalClose = false
+                client.prepareGet("http://127.0.0.1:$proxyPort/stream").execute { resp ->
+                    assertEquals(HttpStatusCode.OK, resp.status)
+                    val channel = resp.bodyAsChannel()
+                    val buf = ByteArray(16 * 1024)
+                    try {
+                        while (true) {
+                            val n = channel.readAvailable(buf)
+                            if (n < 0) break
+                            repeat(n) { received.add(buf[it]) }
+                        }
+                    } catch (_: Throwable) {
+                        abnormalClose = true
+                    }
+                }
+                val bytes = received.toByteArray()
+                // Only the fed prefix may have been served — the ffmpeg echo
+                // outputs exactly what arrived, so byte i must be source[i].
+                assertTrue(
+                    bytes.size in 1 until (sourceBytes.size),
+                    "stream must neither complete nor deliver nothing (got ${bytes.size})"
+                )
+                for (i in bytes.indices) {
+                    if (bytes[i] != dyingBytes[i]) {
+                        throw AssertionError("byte $i corrupted: ${bytes[i]} != ${dyingBytes[i]} — replay/duplication detected")
+                    }
+                }
+                // The abrupt-abort behavior is engine-timing dependent (CIO
+                // may deliver an IO error or a plain EOF), but the song must
+                // NEVER arrive as a full-length body: the length guarantee
+                // is what gets ExoPlayer to retry instead of listening to
+                // silence at halfway.
+                assertTrue(
+                    abnormalClose || bytes.size < dyingBytes.size / 2,
+                    "expected an aborted connection with a truncated body; got clean full EOF (size=${bytes.size})"
+                )
+            } finally {
+                client.close()
+                proxy.stop(100, 500)
+                origin.stop(100, 500)
+            }
+        }
     }
 }

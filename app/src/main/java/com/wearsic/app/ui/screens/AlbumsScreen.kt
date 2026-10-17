@@ -93,9 +93,19 @@ fun AlbumsScreen(
 ) {
     val listState = rememberScalingLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
-    var typed by remember(albumsState.query) { mutableStateOf(albumsState.query) }
+    // Initialised ONCE from the ViewModel query — keying this on
+    // albumsState.query made the field reset whenever a search landed,
+    // silently dropping characters typed while the server was answering.
+    var typed by remember { mutableStateOf(albumsState.query) }
     var debouncedQuery by remember { mutableStateOf("") }
     var submittedQuery by remember { mutableStateOf("") }
+
+    // Adopt genuine external changes (e.g. the query cleared from elsewhere),
+    // but never fight the user: an echo of our own submission is ignored.
+    LaunchedEffect(albumsState.query) {
+        val incoming = albumsState.query
+        if (incoming != typed && incoming != submittedQuery) typed = incoming
+    }
 
     // Debounce: fire search 400ms after the user stops typing.
     LaunchedEffect(debouncedQuery) {

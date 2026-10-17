@@ -6,6 +6,7 @@ import com.wearsic.app.model.InvalidConfigError
 import com.wearsic.app.model.InvalidTrackIdError
 import com.wearsic.app.model.InvalidUrlError
 import com.wearsic.app.model.InputTooLongError
+import com.wearsic.app.model.InputTooShortError
 import java.net.URI
 import java.net.URISyntaxException
 import java.util.regex.Pattern
@@ -62,7 +63,7 @@ object Validation {
     fun validateApiKey(apiKey: String): Result<String> {
         if (apiKey.isBlank()) return Result.failure(EmptyInputError("API key"))
         val trimmed = apiKey.trim()
-        if (trimmed.length < MIN_API_KEY_LENGTH) return Result.failure(InputTooLongError("API key", MIN_API_KEY_LENGTH))
+        if (trimmed.length < MIN_API_KEY_LENGTH) return Result.failure(InputTooShortError("API key", MIN_API_KEY_LENGTH))
         if (trimmed.length > MAX_API_KEY_LENGTH) return Result.failure(InputTooLongError("API key", MAX_API_KEY_LENGTH))
         return Result.success(trimmed)
     }
@@ -120,6 +121,5 @@ fun String.sanitizeFilename(): String = Validation.sanitizeFilename(this)
 fun String.sanitizeForFilename(): String = Validation.sanitizeTrackIdForFilename(this)
 fun String.hasValidScheme(): Boolean = Validation.hasValidScheme(this)
 
-fun <T> Result<T>.getOrNull(): T? = this.getOrNull()
 fun <T> Result<T>.isValid(): Boolean = this.isSuccess
 fun <T> Result<T>.getDisplayError(): String? = (this.exceptionOrNull() as? WearsicError)?.getDisplayMessage()

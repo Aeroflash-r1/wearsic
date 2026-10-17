@@ -14,7 +14,26 @@ import io.ktor.server.response.respondBytesWriter
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
+
+/**
+ * Wall-clock cap for one background CDN warm probe. A cold edge can take
+ * seconds to answer; anything longer is left to the real stream's own
+ * (client-level) timeouts.
+ */
+private const val WARM_UPSTREAM_TIMEOUT_MS: Long = 12_000L
+
+/**
+ * Upper bound on bytes a warm probe will read. A host honoring
+ * `Range: bytes=0-0` answers one byte; a hop that ignores the range and
+ * answers 200 must not push a whole song through a probe.
+ */
+private const val WARM_UPSTREAM_DRAIN_CAP = 64 * 1024
 
 /**
  * CDN statuses that mean "this RESOLVED url is dead" — the target was cached
@@ -46,7 +65,54 @@ class AudioProxy(
 
     private val logger = LoggerFactory.getLogger(AudioProxy::class.java)
 
+    /** Hosts the fire-and-forget prefetch warm probes (never joined). */
+    private val warmScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Fire-and-forget CDN warm for a PREFETCHED target. The tap that follows
+     * (usually seconds later) then finds the host's connection pooled and the
+     * CDN edge path hot. Live-measured: a cold first byte cost 3.8s while the
+     * very same URL answered in 157ms once warm — that gap is the "tap feels
+     * slow" complaint. One ranged byte per probe; any failure is ignored (the
+     * stream path has its own rotation/self-healing).
+     */
+    fun warmUpstream(videoId: String, url: String) {
+        if (!url.startsWith("https://")) return
+        warmScope.launch {
+            val startedAt = System.currentTimeMillis()
+            try {
+                withTimeoutOrNull(WARM_UPSTREAM_TIMEOUT_MS) {
+                    client.prepareGet(url) {
+                        header(HttpHeaders.Range, "bytes=0-0")
+                    }.execute { response ->
+                        if (response.status.value !in 200..299) return@execute
+                        val channel = response.bodyAsChannel()
+                        var drained = 0L
+                        val buf = ByteArray(8 * 1024)
+                        while (drained < WARM_UPSTREAM_DRAIN_CAP) {
+                            val n = channel.readAvailable(buf)
+                            if (n < 0) break
+                            if (n == 0) {
+                                channel.awaitContent()
+                                continue
+                            }
+                            drained += n
+                        }
+                    }
+                }
+                logger.info(
+                    "Upstream warm {}: {}ms", videoId, System.currentTimeMillis() - startedAt,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Best-effort: a failed warm changes nothing.
+            }
+        }
+    }
+
     suspend fun handle(call: ApplicationCall, videoId: String) {
+        val resolveStartedAt = System.currentTimeMillis()
         val target = try {
             extractor.streamTarget(videoId)
         } catch (e: Exception) {
@@ -63,9 +129,22 @@ class AudioProxy(
             )
             return
         }
+        val resolveMs = System.currentTimeMillis() - resolveStartedAt
         if (target == null) {
             call.respond(HttpStatusCode.NotFound, ErrorResponse("No playable audio stream found for $videoId"))
             return
+        }
+
+        // Extractor rotation tickets are warmed ONLY when the target's client
+        // family is wall-prone (not VISIONOS — live-verified wall-free).
+        // Warming on every play put a heavy NewPipe extraction right next to
+        // the playback download on a phone, and the watcher's warm-up
+        // requests (`Range: bytes=0-0`, fired per tap AND per upcoming track)
+        // made sure it happened on every single tap — the "slow to start
+        // playing" regression. Wall-prone targets still get their safety net
+        // (deduped per video per 45 min, delayed a few seconds).
+        if (target.needsExtractorWarm) {
+            (extractor as? YoutubeGateway)?.warmExtractorTickets(videoId)
         }
 
         val rangeHeader = call.request.header(HttpHeaders.Range)
@@ -76,7 +155,11 @@ class AudioProxy(
         // pass it through untouched with zero CPU cost.
         if (transcoder.needsTranscode(target.mimeType)) {
             val refreshForTranscode: suspend () -> String? = {
-                (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)?.url
+                // Mid-pump rotation: same-encoding tickets only (byte offsets
+                // encode a timeline). Incompatible → null → clean abort.
+                (extractor as? YoutubeGateway)
+                    ?.invalidateStreamTarget(videoId, target.itag, target.mimeType, requireCompatible = true)
+                    ?.url
             }
             when (val result = transcoder.handle(call, target.url, rangeHeader, refreshForTranscode, videoId)) {
                 is Transcoder.TranscodeResult.Streamed,
@@ -93,7 +176,7 @@ class AudioProxy(
                     }
                     // Dead URL on the transcode path: same self-heal as the
                     // passthrough path — one fresh re-resolve, then stream it.
-                    val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)
+                    val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag, target.mimeType)
                     if (fresh != null) {
                         logger.info("Self-healed stale transcode URL for {}", videoId)
                         when (val retry = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode)) {
@@ -119,7 +202,7 @@ class AudioProxy(
         // Passthrough path. proxyTarget no longer commits error responses
         // itself: it returns the outcome so we can retry once on dead URLs
         // BEFORE anything is sent (double-respond would throw).
-        when (val outcome = proxyTarget(call, target, rangeHeader, videoId)) {
+        when (val outcome = proxyTarget(call, target, rangeHeader, videoId, resolveMs)) {
             is ProxyOutcome.Streamed -> return
             is ProxyOutcome.Aborted -> return
             is ProxyOutcome.UpstreamError -> {
@@ -135,7 +218,7 @@ class AudioProxy(
                 // or was revoked upstream (it can die well inside the 1h cache
                 // TTL). Drop the stale entry, re-resolve once, and stream the
                 // fresh URL — the watch gets audio instead of an error.
-                val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)
+                val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag, target.mimeType)
                 if (fresh != null) {
                     logger.info("Self-healed stale stream URL for {}", videoId)
                     when (val retry = streamFresh(call, fresh, rangeHeader, videoId)) {
@@ -171,7 +254,9 @@ class AudioProxy(
     ): ProxyOutcome {
         if (transcoder.needsTranscode(fresh.mimeType)) {
             val refreshForTranscode: suspend () -> String? = {
-                (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, fresh.itag)?.url
+                (extractor as? YoutubeGateway)
+                    ?.invalidateStreamTarget(videoId, fresh.itag, fresh.mimeType, requireCompatible = true)
+                    ?.url
             }
             return when (val r = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode, videoId)) {
                 is Transcoder.TranscodeResult.Streamed -> ProxyOutcome.Streamed
@@ -187,19 +272,38 @@ class AudioProxy(
      * Streams one resolved [target] to the watch. Never commits an error
      * response itself — returns [ProxyOutcome.UpstreamError] so the caller
      * can self-heal first. Never throws for client aborts.
+     *
+     * Every response logs one compact timing line (resolve wait, upstream
+     * open, first byte, bytes, total) — the "slow to play" hunt needed
+     * exactly these numbers and guessing from request durations alone
+     * proved wrong.
      */
     private suspend fun proxyTarget(
         call: ApplicationCall,
         target: StreamTarget,
         rangeHeader: String?,
         videoId: String,
+        resolveMs: Long = 0L,
     ): ProxyOutcome {
+        val startedAt = System.currentTimeMillis()
+        var openMs = 0L
+        var firstByteMs = -1L
+        var written = 0L
         return try {
             val (start, end) = parseRangeHeader(rangeHeader)
-            // Validate the URL + learn its total with a 1-byte CLOSED probe.
-            // Open-ended ranges 403 from throttled networks, so the probe
-            // (and every chunk below) carries an explicit end byte.
-            val (probeStatus, total) = client.probeUpstreamLength(target.url, start)
+            // The upstream total. Lean targets carry it from the player
+            // response (contentLength) — re-using it skips the old 1-byte
+            // validating probe: a full CDN round trip before the first byte
+            // of EVERY request, including the watch app's per-tap warm-up
+            // requests. Unknown length (extractor targets) probes as before.
+            // A dead URL is no longer caught by the probe for lean targets:
+            // the open request surfaces the refusal and the chunked fallback
+            // immediately self-heals through URL rotation.
+            val (probeStatus, total) = if (target.contentLength > 0) {
+                HttpStatusCode.PartialContent.value to target.contentLength
+            } else {
+                client.probeUpstreamLength(target.url, start)
+            }
             if (probeStatus != HttpStatusCode.PartialContent.value || total == null) {
                 return ProxyOutcome.UpstreamError(probeStatus)
             }
@@ -214,33 +318,78 @@ class AudioProxy(
             call.response.header(HttpHeaders.ContentRange, "bytes $start-$lastByte/$total")
             call.response.header(HttpHeaders.AcceptRanges, "bytes")
 
+            // The client's declared window. The open pump runs to the natural
+            // EOF — never stop it early. A write-clamped early exit was
+            // live-tested and left tiny-window requests (the app's `bytes=0-0`
+            // warm-ups) hanging with the socket silent; the watch app closes
+            // its warm-up body right after the headers, so the response tears
+            // down on the client's disconnect instead.
+            val expectedRemaining = lastByte - start + 1
+            val countWrite: (Int) -> Unit = { n ->
+                written += n
+                if (firstByteMs < 0) firstByteMs = System.currentTimeMillis() - startedAt
+            }
+
             call.respondBytesWriter(
                 contentType = io.ktor.http.ContentType.parse(target.mimeType),
                 status = HttpStatusCode.PartialContent
             ) {
-                // Prefer ONE open-ended stream (the old behavior): a single
-                // request means a single throttle decision and zero chunk
-                // seams. Only when the network refuses it do we fall back
-                // to stitched closed-range chunks — resuming EXACTLY at the
-                // last byte already written, never replaying a prefix into
-                // a live response (a replay would corrupt the byte window
-                // the watch already accepted and stall/blur the stream).
-                val (openDone, openWritten) = tryOpenStream(target.url, start)
-                if (!openDone) {
-                    client.fetchClosedChunks(
-                        target.url, start + openWritten, lastByte, blockBytes = chunkBytes,
-                        emit = { buf, n -> writeFully(buf, 0, n) },
-                        refreshUrl = {
-                            (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)?.url
-                        },
-                    )
+                // Every failure in here tears the connection down (see
+                // [abortOnFailure]): an abandoned writer would leave the
+                // socket open and the watch would sit out its read timeout.
+                abortOnFailure {
+                    // Prefer ONE open-ended stream (the old behavior): a single
+                    // request means a single throttle decision and zero chunk
+                    // seams. Only when the network refuses it do we fall back
+                    // to stitched closed-range chunks — resuming EXACTLY at the
+                    // last byte already written, never replaying a prefix into
+                    // a live response (a replay would corrupt the byte window
+                    // the watch already accepted and stall/blur the stream).
+                    val openStarted = System.currentTimeMillis()
+                    val (openDone, openWritten) = tryOpenStream(target.url, start, onBytes = countWrite)
+                    openMs = System.currentTimeMillis() - openStarted
+                    // `openDone` alone is NOT enough: the CDN can END the open
+                    // stream at its per-URL transfer budget (~1 MB, measured)
+                    // with a graceful EOF — ending the response there would tell
+                    // the watch the song finished at that byte (the reported
+                    // "stalls at 1:04"). Anything short of the probed length
+                    // continues through rotating closed-range chunks instead.
+                    if (!openDone || openWritten < expectedRemaining) {
+                        val outcome = client.fetchClosedChunks(
+                            target.url, start + openWritten, lastByte, blockBytes = chunkBytes,
+                            maxRefreshes = 8,
+                            emit = { buf, n -> writeFully(buf, 0, n); countWrite(n) },
+                            refreshUrl = {
+                                // Mid-stream rotation: same-encoding tickets only
+                                // (byte offsets encode a timeline). When the pool
+                                // is dry the video gets wall-marked and the next
+                                // request resolves via n-fixed extractor URLs.
+                                (extractor as? YoutubeGateway)
+                                    ?.invalidateStreamTarget(videoId, target.itag, target.mimeType, requireCompatible = true)
+                                    ?.url
+                            },
+                        )
+                        if (outcome is ChunkedUpstream.Refused) {
+                            // No rotation left mid-stream: ABORT (never a clean
+                            // end) so ExoPlayer retries the remaining range.
+                            throw UpstreamTruncatedException(start + openWritten)
+                        }
+                    }
                 }
             }
+            logger.info(
+                "Stream {} done: rng={} resolve={}ms upstream={}ms firstByte={}ms bytes={} total={}ms",
+                videoId, rangeHeader ?: "full", resolveMs, openMs, maxOf(firstByteMs, 0L),
+                written, System.currentTimeMillis() - startedAt,
+            )
             ProxyOutcome.Streamed
         } catch (e: Exception) {
             // Client disconnected/skipped mid-stream, or upstream failed —
             // not worth a scary 500, this happens routinely on track skips.
-            logger.info("Stream proxy ended early: {}", e.message)
+            logger.info(
+                "Stream proxy ended early: {} (rng={} bytes={} after={}ms)",
+                e.message, rangeHeader ?: "full", written, System.currentTimeMillis() - startedAt,
+            )
             ProxyOutcome.Aborted
         }
     }
@@ -257,8 +406,18 @@ class AudioProxy(
      * noticed in ≤60s, while a slow-but-alive stream is NEVER killed at an
      * arbitrary total elapsed time (that was the old fixed 20s cap).
      * Throws when the caller goes away (mapped to Aborted above).
+     *
+     * A bounded client window (the watch app's `bytes=0-0` warm-ups) is NOT
+     * clamped here: the pump runs to the natural EOF and the client's own
+     * disconnect ends it. A write-clamped early exit was live-tested and
+     * left tiny-window requests hanging with the socket silent — never
+     * abandon an upstream body mid-transfer inside Ktor's writer.
      */
-    private suspend fun io.ktor.utils.io.ByteWriteChannel.tryOpenStream(url: String, start: Long): Pair<Boolean, Long> {
+    private suspend fun io.ktor.utils.io.ByteWriteChannel.tryOpenStream(
+        url: String,
+        start: Long,
+        onBytes: (Int) -> Unit = {},
+    ): Pair<Boolean, Long> {
         var written = 0L
         return try {
             var ok = false
@@ -289,6 +448,7 @@ class AudioProxy(
                     }
                     writeFully(buf, 0, n)
                     written += n
+                    onBytes(n)
                 }
                 ok = true
             }

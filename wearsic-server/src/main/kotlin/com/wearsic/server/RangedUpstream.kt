@@ -6,6 +6,7 @@ import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.CancellationException
 
@@ -74,6 +75,28 @@ internal fun parseRangeHeader(header: String?): Pair<Long, Long?> {
     val start = m.groupValues[1].toLongOrNull() ?: 0L
     val end = m.groupValues[2].takeIf { it.isNotEmpty() }?.toLongOrNull()
     return start to end
+}
+
+/**
+ * Runs a response-body producer so that ANY failure TEARS THE CONNECTION
+ * DOWN instead of abandoning the body.
+ *
+ * Why: a producer exception inside `respondBytesWriter` propagates to the
+ * caller, but the writer channel itself is left open — the socket then
+ * stays up with no further bytes and no end-of-body, so the watch waits out
+ * its own read timeout (~30-60s) before retrying, and the UI reads that as
+ * exactly the "stalls mid-song" bug. Closing the channel WITH the cause
+ * makes the engine drop the connection immediately: the data source errors
+ * at once and ExoPlayer retries the remaining range with a fresh request.
+ * A clean close is NOT an option either — that reads as "song finished".
+ */
+internal suspend fun ByteWriteChannel.abortOnFailure(block: suspend ByteWriteChannel.() -> Unit) {
+    try {
+        block()
+    } catch (t: Throwable) {
+        runCatching { close(t) }
+        throw t
+    }
 }
 
 /** `"bytes 0-0/3449447"` → 3449447. Null when absent/unparseable. */
@@ -199,9 +222,19 @@ internal suspend fun HttpClient.fetchClosedChunks(
         }
         if (status != HttpStatusCode.PartialContent.value) {
             UpstreamStats.rangeRefusals.incrementAndGet()
-            // Refused. First chunk (nothing emitted yet) = dead URL signal
-            // for the caller's self-heal.
+            // First chunk refused. A refresh may STILL rescue a mid-response
+            // fallback — the caller's self-heal only applies pre-commit —
+            // so rotate once here before surfacing Refused.
             if (pos == startByte.coerceAtLeast(0L) && got == 0L) {
+                val fresh = if (refreshUrl != null && refreshes < maxRefreshes) {
+                    refreshes++
+                    runCatching { refreshUrl() }.getOrNull()?.takeIf { it.isNotBlank() }
+                } else null
+                if (fresh != null && fresh != currentUrl) {
+                    chunkLogger.info("Upstream refused first chunk ({}), retrying with a rotated URL", status)
+                    currentUrl = fresh
+                    continue
+                }
                 return ChunkedUpstream.Refused(status)
             }
             // Mid-stream refusal (throttle 403): refresh the URL and RESUME
@@ -221,12 +254,20 @@ internal suspend fun HttpClient.fetchClosedChunks(
             throw UpstreamTruncatedException(pos + got)
         }
         pos += got
-        // Zero-byte 206s in a row mean a wedged connection, not EOF (EOF
-        // arrives as 416 or a short read followed by 416). Without this the
-        // loop re-requests the same range forever.
+        // Zero-byte 206s in a row mean either the origin ran dry (streaming
+        // to an unknown end) or a wedged connection (a concrete end is still
+        // owed). Without this the loop re-requests the same range forever.
         if (got == 0L) {
             zeroStreak++
-            if (zeroStreak >= 3) break
+            if (zeroStreak >= 3) {
+                if (endByteInclusive != null && pos <= endByteInclusive) {
+                    // Bytes are still OWED: a lying/wedged origin, NOT EOF.
+                    // Abort so the data source errors and retries instead of
+                    // the song "finishing" at this byte.
+                    throw UpstreamTruncatedException(pos)
+                }
+                break
+            }
         } else {
             zeroStreak = 0
         }

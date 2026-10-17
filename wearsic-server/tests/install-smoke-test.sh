@@ -170,7 +170,8 @@ fav_present && pass "wearsic.db preserved" || fail "wearsic.db preserved (favori
 # ═══ 3. CLI COMMANDS ═════════════════════════════════════════════════════════
 section "3. CLI commands"
 CLI status >/dev/null 2>&1 && pass "wearsic status (exit 0 = healthy)" || fail "wearsic status (exit 0 = healthy)"
-CLI health 2>/dev/null | grep -q '"status":"ok"' && pass "wearsic health" || fail "wearsic health"
+CLI health --json 2>/dev/null | grep -q '"status":"ok"' && pass "wearsic health --json (raw for scripts)" || fail "wearsic health --json (raw for scripts)"
+CLI health 2>/dev/null | grep -q 'extraction' && pass "wearsic health (pretty snapshot)" || fail "wearsic health (pretty snapshot)"
 CLI url 2>/dev/null | grep -q "$API_KEY" && pass "wearsic url (shows pairing info)" || fail "wearsic url (shows pairing info)"
 CLI api-key 2>/dev/null | grep -q "$API_KEY" && pass "wearsic api-key (shows key)" || fail "wearsic api-key (shows key)"
 CLI version 2>/dev/null | grep -qi 'engine' && pass "wearsic version" || fail "wearsic version"

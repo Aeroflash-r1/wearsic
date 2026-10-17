@@ -26,10 +26,14 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,7 +64,10 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.BuildConfig
+import com.wearsic.app.model.WearsicError
 import com.wearsic.app.network.model.ConnectionTestState
+import com.wearsic.app.util.Validation
+import kotlinx.coroutines.delay
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
@@ -93,6 +100,7 @@ fun SettingsScreen(
     apiKey: String = "",
     onApiKeyChanged: (String) -> Unit = {},
     onOpenStorage: () -> Unit = {},
+    onOpenServerDashboard: () -> Unit = {},
     autoCacheEnabled: Boolean = true,
     onAutoCacheToggled: (Boolean) -> Unit = {},
     offlineLimitSongs: Int = 15,
@@ -107,6 +115,102 @@ fun SettingsScreen(
 
     val listState = rememberScalingLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    // ── Editor state ─────────────────────────────────────────────────────
+    // Both text fields below are persisted asynchronously (DataStore): the
+    // saved value flows back milliseconds after every write. The old code
+    // bound the editable text straight to that flow (`remember(serverUrl)`),
+    // so an emission carrying an older value reset the field mid-typing —
+    // characters visibly vanished ("it backspaces itself"). These holders
+    // make the local text authoritative while the field is focused, and
+    // inbound values are adopted only when they are not racing our own save.
+    val urlField = rememberGuardedTextFieldState(serverUrl)
+    val keyField = rememberGuardedTextFieldState(apiKey)
+
+    /**
+     * Validates and persists the URL field. Invalid input is reported inline
+     * and never written, so a half-typed address can no longer replace the
+     * working one. Blank clears the setting on purpose.
+     */
+    fun commitUrl() {
+        val raw = urlField.text.trim()
+        if (raw.isEmpty()) {
+            urlField.error = null
+            urlField.text = ""
+            urlField.pendingCommit = ""
+            onServerUrlChanged("")
+            return
+        }
+        Validation.validateServerUrl(raw).fold(
+            onSuccess = { normalized ->
+                urlField.error = null
+                urlField.text = normalized
+                urlField.pendingCommit = normalized
+                if (normalized != serverUrl) onServerUrlChanged(normalized)
+            },
+            onFailure = { throwable ->
+                urlField.error = (throwable as? WearsicError)?.getDisplayMessage()
+                    ?: "Not a valid server address"
+            }
+        )
+    }
+
+    fun commitApiKey() {
+        val raw = keyField.text.trim()
+        if (raw.isEmpty()) {
+            keyField.error = null
+            keyField.text = ""
+            keyField.pendingCommit = ""
+            onApiKeyChanged("")
+            return
+        }
+        Validation.validateApiKey(raw).fold(
+            onSuccess = { normalized ->
+                keyField.error = null
+                keyField.text = normalized
+                keyField.pendingCommit = normalized
+                if (normalized != apiKey) onApiKeyChanged(normalized)
+            },
+            onFailure = { throwable ->
+                keyField.error = (throwable as? WearsicError)?.getDisplayMessage()
+                    ?: "Not a valid API key"
+            }
+        )
+    }
+
+    /**
+     * Tests the address the user SEES (validated first), not the last
+     * persisted one — previously a freshly typed URL was silently ignored
+     * until it happened to have been saved.
+     */
+    fun testConnectionNow() {
+        val raw = urlField.text.trim()
+        if (raw.isEmpty()) {
+            urlField.error = "Enter the server address first"
+            return
+        }
+        Validation.validateServerUrl(raw).fold(
+            onSuccess = { normalized ->
+                urlField.error = null
+                urlField.text = normalized
+                urlField.pendingCommit = normalized
+                onTestConnection(normalized)
+            },
+            onFailure = { throwable ->
+                urlField.error = (throwable as? WearsicError)?.getDisplayMessage()
+                    ?: "Not a valid server address"
+            }
+        )
+    }
+
+    // Never lose a finished edit: leaving the screen commits whatever is in
+    // the fields, exactly like pressing Done.
+    DisposableEffect(Unit) {
+        onDispose {
+            commitUrl()
+            commitApiKey()
+        }
+    }
 
     ScreenScaffold(
         scrollState = listState,
@@ -145,104 +249,141 @@ fun SettingsScreen(
 
             // Server URL Input Field (Fully Keyboard-enabled)
             item {
-                var isFocused by remember { mutableStateOf(false) }
-                var typedUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(CircleShape)
-                        .background(if (isFocused) WearsicSurfaceActive else WearsicSurface)
-                        .border(
-                            1.dp,
-                            if (isFocused) WearsicVibrantLavender else WearsicSurfaceBorderSubtle,
-                            CircleShape
-                        )
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
-                        .testTag("settings_server_url_container"),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(CircleShape)
+                            .background(if (urlField.focused) WearsicSurfaceActive else WearsicSurface)
+                            .border(
+                                1.dp,
+                                when {
+                                    urlField.error != null -> WearsicError
+                                    urlField.focused -> WearsicVibrantLavender
+                                    else -> WearsicSurfaceBorderSubtle
+                                },
+                                CircleShape
+                            )
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                            .testTag("settings_server_url_container"),
+                        contentAlignment = Alignment.CenterStart
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Dns,
-                            contentDescription = "Server URL Icon",
-                            tint = if (isFocused) WearsicVibrantLavender else WearsicTextSecondary,
-                            modifier = Modifier.size(16.dp)
-                        )
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        Column(
-                            modifier = Modifier.weight(1f)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Server URL",
-                                color = WearsicTextMuted,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold
+                            Icon(
+                                imageVector = Icons.Rounded.Dns,
+                                contentDescription = "Server URL Icon",
+                                tint = when {
+                                    urlField.error != null -> WearsicError
+                                    urlField.focused -> WearsicVibrantLavender
+                                    else -> WearsicTextSecondary
+                                },
+                                modifier = Modifier.size(16.dp)
                             )
 
-                            Box(
-                                modifier = Modifier.fillMaxWidth(),
-                                contentAlignment = Alignment.CenterStart
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Column(
+                                modifier = Modifier.weight(1f)
                             ) {
-                                if (typedUrl.isEmpty()) {
-                                    Text(
-                                        text = "Enter URL...",
-                                        color = WearsicTextMuted,
-                                        fontSize = 11.sp,
-                                        maxLines = 1
+                                Text(
+                                    text = "Server URL",
+                                    color = WearsicTextMuted,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                Box(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    if (urlField.text.isEmpty()) {
+                                        Text(
+                                            text = "Enter URL...",
+                                            color = WearsicTextMuted,
+                                            fontSize = 11.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+
+                                    BasicTextField(
+                                        value = urlField.text,
+                                        onValueChange = {
+                                            urlField.text = it
+                                            // Editing again clears a stale
+                                            // validation message.
+                                            if (urlField.error != null) urlField.error = null
+                                        },
+                                        singleLine = true,
+                                        textStyle = TextStyle(
+                                            color = WearsicTextPrimary,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Normal
+                                        ),
+                                        cursorBrush = SolidColor(WearsicVibrantLavender),
+                                        keyboardOptions = KeyboardOptions(
+                                            imeAction = ImeAction.Done
+                                        ),
+                                        keyboardActions = KeyboardActions(
+                                            onDone = {
+                                                keyboardController?.hide()
+                                                commitUrl()
+                                            }
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .onFocusChanged { focusState ->
+                                                val wasFocused = urlField.focused
+                                                urlField.focused = focusState.isFocused
+                                                if (wasFocused && !focusState.isFocused) commitUrl()
+                                            }
+                                            .testTag("settings_server_url")
                                     )
                                 }
+                            }
 
-                                BasicTextField(
-                                    value = typedUrl,
-                                    onValueChange = {
-                                        typedUrl = it
-                                        onServerUrlChanged(it)
-                                    },
-                                    singleLine = true,
-                                    textStyle = TextStyle(
-                                        color = WearsicTextPrimary,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Normal
-                                    ),
-                                    cursorBrush = SolidColor(WearsicVibrantLavender),
-                                    keyboardOptions = KeyboardOptions(
-                                        imeAction = ImeAction.Done
-                                    ),
-                                    keyboardActions = KeyboardActions(
-                                        onDone = {
-                                            keyboardController?.hide()
-                                            onServerUrlChanged(typedUrl)
-                                        }
-                                    ),
+                            if (urlField.text.isNotEmpty()) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Clear URL",
+                                    tint = WearsicTextSecondary,
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .onFocusChanged { focusState ->
-                                            isFocused = focusState.isFocused
+                                        .size(16.dp)
+                                        .clip(CircleShape)
+                                        .clickable {
+                                            urlField.text = ""
+                                            urlField.error = null
+                                            urlField.pendingCommit = ""
+                                            onServerUrlChanged("")
                                         }
-                                        .testTag("settings_server_url")
+                                        .testTag("settings_server_url_clear")
                                 )
                             }
                         }
+                    }
 
-                        if (typedUrl.isNotEmpty()) {
+                    if (urlField.error != null) {
+                        Row(
+                            modifier = Modifier
+                                .padding(top = 3.dp, start = 10.dp)
+                                .testTag("settings_server_url_error"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = "Clear URL",
-                                tint = WearsicTextSecondary,
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .clip(CircleShape)
-                                    .clickable {
-                                        typedUrl = ""
-                                        onServerUrlChanged("")
-                                    }
-                                    .testTag("settings_server_url_clear")
+                                imageVector = Icons.Rounded.Warning,
+                                contentDescription = null,
+                                tint = WearsicError,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = urlField.error ?: "",
+                                color = WearsicError,
+                                fontSize = 9.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -258,7 +399,7 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .clip(CircleShape)
                                 .background(WearsicVibrantLavender)
-                                .wearsicClickable { onTestConnection(serverUrl) }
+                                .wearsicClickable { testConnectionNow() }
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .testTag("settings_test_connection"),
                             contentAlignment = Alignment.Center
@@ -309,7 +450,7 @@ fun SettingsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicSuccess, CircleShape)
-                                .wearsicClickable { onTestConnection(serverUrl) }
+                                .wearsicClickable { testConnectionNow() }
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .testTag("settings_test_connection_success"),
                             contentAlignment = Alignment.Center
@@ -338,7 +479,7 @@ fun SettingsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicError, CircleShape)
-                                .wearsicClickable { onTestConnection(serverUrl) }
+                                .wearsicClickable { testConnectionNow() }
                                 .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .testTag("settings_test_connection_error"),
                             contentAlignment = Alignment.Center
@@ -369,66 +510,114 @@ fun SettingsScreen(
 
             // API Key Field (optional security)
             item {
-                var typedKey by remember(apiKey) { mutableStateOf(apiKey) }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(CircleShape)
-                        .background(WearsicSurface)
-                        .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "API Key (optional)",
-                            color = WearsicTextMuted,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        BasicTextField(
-                            value = typedKey,
-                            onValueChange = {
-                                typedKey = it
-                                onApiKeyChanged(it)
-                            },
-                            singleLine = true,
-                            textStyle = TextStyle(color = WearsicTextPrimary, fontSize = 11.sp),
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(
-                                imeAction = ImeAction.Done,
-                                keyboardType = KeyboardType.Password
-                            ),
-                            cursorBrush = SolidColor(WearsicVibrantLavender),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(CircleShape)
+                            .background(if (keyField.focused) WearsicSurfaceActive else WearsicSurface)
+                            .border(
+                                1.dp,
+                                when {
+                                    keyField.error != null -> WearsicError
+                                    keyField.focused -> WearsicVibrantLavender
+                                    else -> WearsicSurfaceBorderSubtle
+                                },
+                                CircleShape
+                            )
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .testTag("settings_api_key_container"),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "API Key (optional)",
+                                color = WearsicTextMuted,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            BasicTextField(
+                                value = keyField.text,
+                                onValueChange = {
+                                    keyField.text = it
+                                    if (keyField.error != null) keyField.error = null
+                                },
+                                singleLine = true,
+                                textStyle = TextStyle(color = WearsicTextPrimary, fontSize = 11.sp),
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(
+                                    imeAction = ImeAction.Done,
+                                    keyboardType = KeyboardType.Password
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onDone = {
+                                        keyboardController?.hide()
+                                        commitApiKey()
+                                    }
+                                ),
+                                cursorBrush = SolidColor(WearsicVibrantLavender),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onFocusChanged { focusState ->
+                                        val wasFocused = keyField.focused
+                                        keyField.focused = focusState.isFocused
+                                        if (wasFocused && !focusState.isFocused) commitApiKey()
+                                    }
+                                    .testTag("settings_api_key")
+                            )
+                        }
+                    }
+
+                    if (keyField.error != null) {
+                        Row(
+                            modifier = Modifier
+                                .padding(top = 3.dp, start = 10.dp)
+                                .testTag("settings_api_key_error"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Warning,
+                                contentDescription = null,
+                                tint = WearsicError,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = keyField.error ?: "",
+                                color = WearsicError,
+                                fontSize = 9.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
 
             // Storage Stats Pill
             item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(CircleShape)
-                        .background(WearsicSurface)
-                        .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
-                        .wearsicClickable(onClick = onOpenStorage)
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.SdStorage,
-                            contentDescription = null,
-                            tint = WearsicVibrantLavender,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.size(8.dp))
-                        Text("Storage", color = WearsicTextPrimary, fontSize = 12.sp)
-                    }
-                }
+                SettingsPillItem(
+                    title = "Storage",
+                    subtitle = "Downloads & offline cache",
+                    icon = Icons.Rounded.SdStorage,
+                    onClick = onOpenStorage,
+                    testTag = "settings_storage",
+                    showChevron = true
+                )
+            }
+
+            // Engine dashboard: live /health + /ready straight from the server
+            item {
+                SettingsPillItem(
+                    title = "Engine Dashboard",
+                    subtitle = (connectionTestState as? ConnectionTestState.Success)
+                        ?.let { "Engine v${it.version} connected" }
+                        ?: "Health, extractor, updates",
+                    icon = Icons.Rounded.MonitorHeart,
+                    onClick = onOpenServerDashboard,
+                    testTag = "settings_dashboard",
+                    showChevron = true
+                )
             }
 
             // ── Offline Audio ────────────────────────────────────────────
@@ -560,6 +749,7 @@ private fun SettingsPillItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     iconTint: androidx.compose.ui.graphics.Color = WearsicVibrantLavender,
+    showChevron: Boolean = false,
     testTag: String = "settings_pill"
 ) {
     Box(
@@ -608,8 +798,65 @@ private fun SettingsPillItem(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            if (showChevron) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = WearsicTextMuted,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
     }
+}
+
+/**
+ * Text-editing state for a field whose canonical value lives in an async
+ * store (DataStore). While the field is focused its local text is the source
+ * of truth; inbound values are adopted only when they cannot be a stale echo
+ * racing a save we just issued. This is what makes typing an address on the
+ * watch keyboard stop "backspacing itself".
+ */
+private class GuardedTextFieldState(initial: String) {
+    var text by mutableStateOf(initial)
+    var focused by mutableStateOf(false)
+    var error by mutableStateOf<String?>(null)
+
+    /** The value we expect the store to emit after a save; consumed once. */
+    var pendingCommit by mutableStateOf<String?>(null)
+}
+
+@Composable
+private fun rememberGuardedTextFieldState(external: String): GuardedTextFieldState {
+    val state = remember { GuardedTextFieldState(external) }
+
+    LaunchedEffect(external, state.focused) {
+        if (!state.focused) {
+            val pending = state.pendingCommit
+            when {
+                // No save in flight: plain sync (covers the initial load and
+                // changes made by any other writer).
+                pending == null -> if (state.text != external) state.text = external
+                // Our own save round-tripped: consume it exactly once.
+                external == pending -> {
+                    state.pendingCommit = null
+                    if (state.text != external) state.text = external
+                }
+                // A save is still in flight: leave the editor text alone.
+            }
+        }
+    }
+
+    // Safety valve: a save that never round-trips (screen left before the
+    // write landed, storage hiccup) must not block sync forever.
+    LaunchedEffect(state.pendingCommit) {
+        if (state.pendingCommit != null) {
+            delay(2500)
+            state.pendingCommit = null
+        }
+    }
+
+    return state
 }
 
 @Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)

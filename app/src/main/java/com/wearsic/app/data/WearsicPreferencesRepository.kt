@@ -48,11 +48,30 @@ class WearsicPreferencesRepository(private val context: Context) {
             preferences[KEY_SERVER_URL] ?: DEFAULT_SERVER_URL
         }
 
+    /**
+     * Persists the server URL.
+     *
+     * Blank input CLEARS the setting (the user emptied the field on purpose —
+     * that is how the app returns to "no server configured"). Anything else
+     * must validate: an invalid value is dropped instead of written.
+     *
+     * Why the strictness: the previous code stored `""` for any URL that did
+     * not validate. Combined with saving on every keystroke that meant typing
+     * `http://192.168...` went through invalid intermediate states, each one
+     * WIPING the stored server URL — silently breaking playback mid-edit and
+     * (via the settings screen's two-way binding) erasing characters under
+     * the user's fingers.
+     */
     suspend fun saveServerUrl(url: String) {
-        val urlValidation = Validation.validateServerUrl(url)
-        val cleanUrl = urlValidation.getOrElse { "" }
+        if (url.isBlank()) {
+            context.dataStore.edit { preferences ->
+                preferences[KEY_SERVER_URL] = ""
+            }
+            return
+        }
+        val cleanUrl = Validation.validateServerUrl(url).getOrNull() ?: return
         context.dataStore.edit { preferences ->
-            preferences[KEY_SERVER_URL] = cleanUrl.trim().trimEnd('/')
+            preferences[KEY_SERVER_URL] = cleanUrl.trimEnd('/')
         }
     }
 
@@ -116,12 +135,28 @@ class WearsicPreferencesRepository(private val context: Context) {
             .first()
     }
 
-    suspend fun saveApiKey(key: String) {
-        val keyValidation = Validation.validateApiKey(key)
-        val cleanKey = keyValidation.getOrElse { "" }
-        context.dataStore.edit { preferences ->
-            preferences[KEY_API_KEY] = cleanKey.trim()
+    /**
+     * Persists the API key and returns the value that was actually applied
+     * (`""` when cleared, `null` when the input was rejected).
+     *
+     * Blank clears the key. A non-blank key must pass [Validation.validateApiKey];
+     * an invalid key is dropped rather than stored, so a half-typed key can
+     * never replace a working one. Callers that mirror the key into the HTTP
+     * layer must use the returned value — not their input — or they would
+     * push a rejected key into every outgoing request.
+     */
+    suspend fun saveApiKey(key: String): String? {
+        if (key.isBlank()) {
+            context.dataStore.edit { preferences ->
+                preferences[KEY_API_KEY] = ""
+            }
+            return ""
         }
+        val cleanKey = Validation.validateApiKey(key).getOrNull() ?: return null
+        context.dataStore.edit { preferences ->
+            preferences[KEY_API_KEY] = cleanKey
+        }
+        return cleanKey
     }
 
     fun isValidServerUrl(url: String): Boolean {

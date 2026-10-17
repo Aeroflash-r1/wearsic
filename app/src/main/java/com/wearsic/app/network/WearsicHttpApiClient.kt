@@ -12,6 +12,7 @@ import com.wearsic.app.network.model.AlbumDto
 import com.wearsic.app.network.model.FavoritesResponseDto
 import com.wearsic.app.network.model.PlaylistDto
 import com.wearsic.app.network.model.PlaylistWithTracksDto
+import com.wearsic.app.network.model.ReadyResponseDto
 import com.wearsic.app.network.model.SearchResponseDto
 import com.wearsic.app.network.model.SearchResultsResponseDto
 import com.wearsic.app.network.model.ServerHealthDto
@@ -72,6 +73,49 @@ class WearsicHttpApiClient(
                     json.decodeFromString<ServerHealthDto>(bodyString)
                 } catch (_: Exception) {
                     ServerHealthDto()
+                }
+
+                Result.success(dto)
+            }
+        } catch (e: UnknownHostException) {
+            Result.failure(HostUnreachableError(e.message ?: "unknown"))
+        } catch (e: SocketTimeoutException) {
+            Result.failure(TimeoutError())
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not connect to server", e))
+        }
+    }
+
+    override suspend fun checkReady(baseUrl: String): Result<ReadyResponseDto> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        val readyUrl = "$sanitizedUrl/ready"
+
+        try {
+            val request = Request.Builder()
+                .url(readyUrl)
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError(readyUrl, response.code, "Server returned HTTP ${response.code}")
+                    )
+                }
+
+                val bodyString = response.body?.string() ?: ""
+                // /ready is cheap and stable, but a proxy or an intermediate
+                // server version may answer with a different shape; fall back
+                // to "not ready" rather than failing the whole probe.
+                val dto = try {
+                    json.decodeFromString<ReadyResponseDto>(bodyString)
+                } catch (_: Exception) {
+                    ReadyResponseDto()
                 }
 
                 Result.success(dto)

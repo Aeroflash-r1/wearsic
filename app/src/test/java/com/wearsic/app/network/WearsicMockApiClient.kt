@@ -6,6 +6,7 @@ import com.wearsic.app.R
 import com.wearsic.app.network.model.AlbumDto
 import com.wearsic.app.network.model.PlaylistDto
 import com.wearsic.app.network.model.PlaylistWithTracksDto
+import com.wearsic.app.network.model.ReadyResponseDto
 import com.wearsic.app.network.model.SearchResponseDto
 import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.network.model.TrackDto
@@ -25,6 +26,23 @@ class WearsicMockApiClient(private val context: Context) : WearsicApiClient {
                     status = "ok",
                     version = "1.0.0-dev",
                     serverName = "Wearsic Ktor Server (Dev)"
+                )
+            )
+        }
+    }
+
+    override suspend fun checkReady(baseUrl: String): Result<ReadyResponseDto> {
+        delay(150)
+        return if (baseUrl.contains("invalid") || baseUrl.contains("fail")) {
+            Result.failure(Exception("Could not connect to $baseUrl (Connection refused)"))
+        } else {
+            Result.success(
+                ReadyResponseDto(
+                    ready = true,
+                    database = true,
+                    extractor = true,
+                    transcoder = true,
+                    engineVersion = "1.0.0-dev"
                 )
             )
         }

@@ -16,6 +16,10 @@ import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Playlist
 import com.wearsic.app.model.Track
 import com.wearsic.app.network.model.ConnectionTestState
+import com.wearsic.app.network.model.ExtractionHealthDto
+import com.wearsic.app.network.model.ReadyResponseDto
+import com.wearsic.app.network.model.ServerHealthDto
+import com.wearsic.app.network.model.ServerUpdateStatusDto
 import com.wearsic.app.ui.components.WearsicTrackActionSheet
 import com.wearsic.app.ui.screens.AlbumsScreen
 import com.wearsic.app.ui.screens.ArtistsScreen
@@ -27,6 +31,7 @@ import com.wearsic.app.ui.screens.PlaylistDetailScreen
 import com.wearsic.app.ui.screens.PlaylistsScreen
 import com.wearsic.app.ui.screens.QueueScreen
 import com.wearsic.app.ui.screens.SearchScreen
+import com.wearsic.app.ui.screens.ServerDashboardScreen
 import com.wearsic.app.ui.screens.SettingsScreen
 import com.wearsic.app.ui.screens.StorageStatsContent
 import com.wearsic.app.ui.screens.VolumeScreen
@@ -38,6 +43,7 @@ import com.wearsic.app.ui.viewmodel.LibraryViewModel.FavoritesUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistDetailUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistsUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.SearchUiState
+import com.wearsic.app.ui.viewmodel.ServerDashboardState
 
 /**
  * High-fidelity screen gallery rendered by layoutlib (the same Skia + font
@@ -188,9 +194,9 @@ fun GalleryAlbums() {
             albumsState = AlbumsUiState(
                 query = "coldplay",
                 albums = listOf(
-                    Album("a1", "Parachutes", "Coldplay", 10),
-                    Album("a2", "A Rush of Blood to the Head", "Coldplay", 11),
-                    Album("a3", "X&Y", "Coldplay", 13)
+                    Album("a1", "Parachutes", "Coldplay"),
+                    Album("a2", "A Rush of Blood to the Head", "Coldplay"),
+                    Album("a3", "X&Y", "Coldplay")
                 )
             ),
             onQueryChanged = {}, onOpenAlbum = {}
@@ -340,7 +346,70 @@ fun GallerySettings() {
 @Composable
 fun GalleryAudioOutput() {
     GallerySurface {
-        VolumeScreen(currentOutputDevice = "Pixel Buds Pro", sleepRemainingMs = 15 * 60_000L)
+        VolumeScreen(
+            currentOutputDevice = "Pixel Buds Pro",
+            sleepRemainingMs = 15 * 60_000L,
+            sleepSetMinutes = 15
+        )
+    }
+}
+
+@PreviewTest
+@Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
+@Composable
+fun GalleryAudioOutputMuted() {
+    GallerySurface {
+        VolumeScreen(currentOutputDevice = "Watch Speaker")
+    }
+}
+
+@PreviewTest
+@Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
+@Composable
+fun GalleryServerDashboard() {
+    GallerySurface {
+        ServerDashboardScreen(
+            state = ServerDashboardState(
+                health = ServerHealthDto(
+                    status = "ok",
+                    version = "1.9.0",
+                    serverName = "Wearsic Engine",
+                    transcoderAvailable = true,
+                    extraction = ExtractionHealthDto(
+                        successCount = 128,
+                        failureCount = 4,
+                        failureRatePercent = 3,
+                        consecutiveFailures = 0
+                    ),
+                    canaryHealthy = true,
+                    update = ServerUpdateStatusDto(status = "idle"),
+                    crashCount = 0
+                ),
+                ready = ReadyResponseDto(
+                    ready = true,
+                    database = true,
+                    extractor = true,
+                    transcoder = true
+                ),
+                latencyMs = 38,
+                // Deterministic for reference-image rendering: a live
+                // "12s ago" label could never validate across runs.
+                checkedAtMillis = 0L
+            )
+        )
+    }
+}
+
+@PreviewTest
+@Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
+@Composable
+fun GalleryServerDashboardOffline() {
+    GallerySurface {
+        ServerDashboardScreen(
+            state = ServerDashboardState(
+                error = "Cannot reach 192.168.1.42 — check the server address"
+            )
+        )
     }
 }
 

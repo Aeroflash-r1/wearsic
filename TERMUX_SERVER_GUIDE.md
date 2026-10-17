@@ -455,13 +455,25 @@ Check the server:
 wearsic health
 ~~~
 
-A healthy server should report:
+You get a readable snapshot (status, version, extraction success, crashes):
 
-~~~json
-{"status":"ok"}
+~~~text
+  ♪ wearsic · health
+
+  ● ok   http://127.0.0.1:8080 · 12ms
+    version           v1.9.0 · Wearsic Engine
+    transcoder         available
+    extraction         75 ok · 1 failed (1%)
+    crashes            0
 ~~~
 
-The exact JSON may contain additional fields depending on the server version.
+Scripts that want the raw JSON use `--json`:
+
+~~~bash
+wearsic health --json
+~~~
+
+A healthy server reports `"status":"ok"`.
 
 Check whether it can serve music:
 

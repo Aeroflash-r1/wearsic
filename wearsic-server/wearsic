@@ -5,16 +5,20 @@
 #   wearsic start             start the server (self-healing supervisor)
 #   wearsic stop              stop the server
 #   wearsic restart           stop, then start
-#   wearsic status            running? healthy? which version?
-#   wearsic logs              live logs (Ctrl+C to exit)
-#   wearsic health            raw /health JSON
+#   wearsic status            running? healthy? which version? (exit 0/3/4)
+#   wearsic logs              follow live logs (Ctrl+C to exit)
+#   wearsic health [--json]   server snapshot (--json for scripts)
 #   wearsic url               Server URL + API key for the watch
 #   wearsic api-key [new]     show / change the API key
 #   wearsic update            update to the latest release (verified + rollback)
 #   wearsic doctor            check the whole setup (exit 0 = READY)
 #
-# Also available: ready, ip, version, cookies [str], funnel, public.
+# Also available: ready [--json], ip, version, cookies [str], funnel, public.
 # The classic nested form keeps working: `wearsic server start` etc.
+#
+# Output follows the usual conventions: colour only on a terminal
+# (WEARSIC_COLOR=always|never overrides, NO_COLOR disables), plain when
+# piped, so `wearsic health --json | jq` and CI logs stay clean.
 #
 # Installed to $PREFIX/bin by install.sh. Finds the server in
 # $WEARSIC_DIR, else ~/wearsic-server.
@@ -26,19 +30,69 @@ RUN="$DEST/run-termux.sh"
 LOG="$DEST/wearsic-server.log"
 ENV_FILE="$DEST/.env"
 
-say()  { printf '\033[2m[wearsic]\033[0m %s\n' "$*"; }
-ok()   { printf '\033[2m[wearsic]\033[0m   \033[1;32m✓\033[0m %s\n' "$*"; }
-warn() { printf '\033[2m[wearsic]\033[0m   \033[1;33m!\033[0m %s\n' "$*"; }
-die()  { printf '\033[2m[wearsic]\033[0m \033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+# Blueprint for every command: soft-green brand, coloured symbols, two-space
+# indent, no per-line tag noise. Colour follows the usual conventions:
+#
+#   WEARSIC_COLOR=auto|always|never    auto = colour only on a real terminal
+#   NO_COLOR=1                         force plain output
+#
+# Piped output is plain, so `wearsic health | jq` and CI logs never carry
+# escape codes.
+color_on() {
+  [ -n "${NO_COLOR:-}" ] && return 1
+  case "${WEARSIC_COLOR:-auto}" in
+    never) return 1 ;;
+    always) return 0 ;;
+    *) [ -t 1 ] ;;
+  esac
+}
+if color_on; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
+  C_BRAND=$'\033[38;5;114m'; C_ACC=$'\033[38;5;157m'
+  C_OK=$'\033[1;32m'; C_WARN=$'\033[1;33m'; C_ERR=$'\033[1;31m'
+else
+  C_RESET=""; C_BOLD=""; C_DIM=""; C_BRAND=""; C_ACC=""; C_OK=""; C_WARN=""; C_ERR=""
+fi
 
-# Animated spinner (see install.sh for the full pretty-output set).
-# Animations auto-disable when piped so logs stay clean.
+# Animations need a terminal, independent of colour.
 TTY_OUT=0; [ -t 1 ] && TTY_OUT=1
+
+say()  { printf '  %s\n' "$*"; }
+note() { say "$*"; }
+dim()  { printf '  %s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
+ok()   { printf '  %s✓%s %s\n' "$C_OK" "$C_RESET" "$*"; }
+warn() { printf '  %s!%s %s\n' "$C_WARN" "$C_RESET" "$*"; }
+err()  { printf '  %s✗%s %s\n' "$C_ERR" "$C_RESET" "$*" >&2; }
+die()  { err "$*"; exit 1; }
+
+# One identity line per command, e.g. "  ♪ wearsic · status".
+brand() {
+  printf '\n  %s♪ wearsic%s' "$C_BRAND" "$C_RESET"
+  if [ -n "${1:-}" ]; then printf ' %s· %s%s' "$C_DIM" "$1" "$C_RESET"; fi
+  printf '\n\n'
+}
+
+section() { printf '\n  %s%s%s\n' "$C_BOLD" "$1" "$C_RESET"; }
+
+# Aligned key/value row for the status-style commands.
+kv() { printf '    %s%-17s%s %s\n' "$C_DIM" "$1" "$C_RESET" "$2"; }
+
+# Coloured state dot: dot ok | warn | err | off
+dot() {
+  case "${1:-off}" in
+    ok)   printf '%s●%s' "$C_OK" "$C_RESET" ;;
+    warn) printf '%s●%s' "$C_WARN" "$C_RESET" ;;
+    err)  printf '%s●%s' "$C_ERR" "$C_RESET" ;;
+    *)    printf '%s●%s' "$C_DIM" "$C_RESET" ;;
+  esac
+}
+
+# Spinner. Disabled when piped so scripted output stays line-clean.
 SPIN_PID=""; SPIN_MSG=""
 spinner_start() {
   SPIN_MSG="$1"
-  if [ "$TTY_OUT" != "1" ]; then say "$1…"; return 0; fi
-  printf '\033[2m[wearsic]\033[0m  %s ' "$1"
+  if [ "$TTY_OUT" != "1" ]; then note "$1…"; return 0; fi
+  printf '  '
   ( while :; do for f in $'\033[38;5;255m⠋' $'\033[38;5;158m⠙' $'\033[38;5;120m⠹' $'\033[38;5;114m⠸' $'\033[38;5;114m⠼' $'\033[38;5;120m⠴' $'\033[38;5;158m⠦' $'\033[38;5;255m⠧' $'\033[38;5;158m⠇' $'\033[38;5;120m⠏'; do printf '\b%s\033[0m' "$f"; sleep 0.09; done; done ) &
   SPIN_PID=$!
 }
@@ -46,7 +100,7 @@ spinner_stop() {
   local msg="${2:-$SPIN_MSG}"
   if [ -n "$SPIN_PID" ]; then kill "$SPIN_PID" 2>/dev/null; wait "$SPIN_PID" 2>/dev/null; SPIN_PID=""; fi
   if [ "$TTY_OUT" = "1" ]; then printf '\b'; fi
-  if [ "${1:-0}" = "0" ]; then ok "$msg"; else printf '\033[2m[wearsic]\033[0m  \033[1;31m✗\033[0m %s\n' "$msg"; fi
+  if [ "${1:-0}" = "0" ]; then ok "$msg"; else err "$msg"; fi
   SPIN_MSG=""
 }
 
@@ -63,8 +117,9 @@ draw_bar() { # $1 label $2 pct $3 have-bytes $4 total-bytes
   local filled=$(( pct * width / 100 ))
   i=0; while [ "$i" -lt "$filled" ]; do bar="${bar}█"; i=$((i + 1)); done
   while [ "$i" -lt "$width" ]; do bar="${bar}░"; i=$((i + 1)); done
-  printf "\r\033[1;35m[wearsic]\033[0m  %s \033[38;5;157m%s\033[0m %3d%%  \033[2m%s / %s\033[0m" \
-    "$label" "$bar" "$pct" "$(human_bytes "$have")" "$(human_bytes "$total")"
+  printf '\r  %s%s%s %s%s%s %3d%%  %s%s / %s%s' \
+    "$C_ACC" "$label" "$C_RESET" "$C_BRAND" "$bar" "$C_RESET" "$pct" \
+    "$C_DIM" "$(human_bytes "$have")" "$(human_bytes "$total")" "$C_RESET"
 }
 
 # Download with a live █ progress bar (MB + %). Spinner fallback when the
@@ -109,7 +164,8 @@ $1"; fi
   BOX_N=$((BOX_N + 1))
 }
 box_end() {
-  local w line plain spaces i
+  local w line plain spaces i esc
+  esc="$(printf '\033')"   # literal ESC — BSD/busybox sed lack \x1b escapes
   # Never wider than the terminal: a 60-char funnel URL on a narrow
   # split-screen must wrap inside the box, not blow its borders out.
   local cols="${COLUMNS:-80}"
@@ -119,7 +175,7 @@ box_end() {
   w=${#BOX_TITLE}
   local wrapped=""
   while IFS= read -r line; do
-    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    plain="$(printf '%s' "$line" | sed "s/${esc}\\[[0-9;]*m//g")"
     if [ "${#plain}" -le "$maxw" ]; then
       wrapped="$wrapped
 $line"
@@ -141,36 +197,157 @@ EOF
   BOX_BODY="$(printf '%s' "$wrapped" | tail -n +2)"
   w=${#BOX_TITLE}
   while IFS= read -r line; do
-    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    plain="$(printf '%s' "$line" | sed "s/${esc}\\[[0-9;]*m//g")"
     [ "${#plain}" -gt "$w" ] && w=${#plain}
   done <<EOF
 $BOX_BODY
 EOF
   [ "$w" -lt 20 ] && w=20
-  printf '\033[38;5;114m╭─ %s ' "$BOX_TITLE"
+  printf '%s╭─ %s ' "$C_BRAND" "$BOX_TITLE"
   i=$(( ${#BOX_TITLE} + 4 )); while [ "$i" -lt "$((w + 4))" ]; do printf '─'; i=$((i + 1)); done
-  printf '\033[0m\n'
+  printf '%s\n' "$C_RESET"
   while IFS= read -r line; do
-    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    plain="$(printf '%s' "$line" | sed "s/${esc}\\[[0-9;]*m//g")"
     spaces=$(( w - ${#plain} ))
-    printf '\033[38;5;114m│\033[0m %s' "$line"
+    printf '%s│%s %s' "$C_BRAND" "$C_RESET" "$line"
     i=0; while [ "$i" -lt "$spaces" ]; do printf ' '; i=$((i + 1)); done
-    printf ' \033[38;5;114m│\033[0m\n'
+    printf ' %s│%s\n' "$C_BRAND" "$C_RESET"
   done <<EOF
 $BOX_BODY
 EOF
-  printf '\033[38;5;114m╰'
-  i=0; while [ "$i" -lt "$((w + 4))" ]; do printf '─'; i=$((i + 1)); done
-  printf '\033[0m\n'
+  printf '%s╰' "$C_BRAND"
+  i=0; while [ "$i" -lt "$((w + 3))" ]; do printf '─'; i=$((i + 1)); done
+  printf '%s\n' "$C_RESET"
   BOX_TITLE=""; BOX_BODY=""; BOX_N=0
 }
-# Legacy one-shot wrappers (kept for callers that print single lines).
-box_top()    { printf '\033[38;5;114m╭─ %s %s\033[0m\n' "$1" "$(box_rule "$1")"; }
-box_bottom() { printf '\033[38;5;114m╰%s╯\033[0m\n' "$(box_rule "")"; }
-box_rule() {
-  local n=$(( 50 - ${#1} )); [ "$n" -lt 4 ] && n=4
-  local i=0 s=""; while [ "$i" -lt "$n" ]; do s="${s}─"; i=$((i + 1)); done
-  printf '%s' "$s"
+
+# ── small data helpers for the status-style commands ────────────────────────
+# HTTP GET that never fails the caller: body/code/milliseconds land in
+# HTTP_BODY / HTTP_CODE / HTTP_MS and the caller decides how to render.
+http_get() { # $1 = url, $2 = timeout seconds (default 5)
+  local t="${2:-5}" out tsec
+  HTTP_BODY=""; HTTP_CODE="000"; HTTP_MS=""
+  out="$(curl -s -m "$t" -w $'\n%{http_code} %{time_total}' "$1" 2>/dev/null)" || true
+  case "$out" in
+    *$'\n'*)
+      HTTP_BODY="${out%$'\n'*}"
+      out="${out##*$'\n'}"
+      HTTP_CODE="${out%% *}"
+      tsec="${out#* }"
+      case "$tsec" in
+        ''|*[!0-9.]*) HTTP_MS="" ;;
+        *) HTTP_MS="$(awk -v t="$tsec" 'BEGIN{printf "%.0f", t*1000}')" ;;
+      esac ;;
+  esac
+}
+
+# The /health and /ready schemas are fixed: first-occurrence readers.
+# awk index() finds the FIRST match, so a top-level key wins over a nested
+# one with the same name (e.g. top-level "status":"ok" vs update.status).
+# Empty output = the field is missing (or null).
+json_tail() { # text right after the first "key":
+  printf '%s' "$1" | awk -v k="\"$2\":" '{ n = index($0, k); if (n > 0) print substr($0, n + length(k)) }'
+}
+jstr() {
+  json_tail "$1" "$2" | awk '{
+    if (substr($0, 1, 1) != "\"") next
+    s = substr($0, 2); m = index(s, "\"")
+    if (m > 0) print substr(s, 1, m - 1)
+  }'
+}
+jnum() {
+  json_tail "$1" "$2" | awk '{
+    s = $0; sub(/^[ \t]*/, "", s)
+    if (substr(s, 1, 1) !~ /[0-9]/) next
+    sub(/[^0-9].*$/, "", s); print s
+  }'
+}
+jbool() {
+  json_tail "$1" "$2" | awk '{
+    s = $0; sub(/^[ \t]*/, "", s)
+    if (substr(s, 1, 4) == "true") print "true"
+    else if (substr(s, 1, 5) == "false") print "false"
+  }'
+}
+jobj() { # content between the braces of the first "key":{...}
+  printf '%s' "$1" | awk -v k="\"$2\":{" '{
+    n = index($0, k); if (n == 0) next
+    s = substr($0, n + length(k)); m = index(s, "}")
+    if (m > 0) print substr(s, 1, m - 1)
+  }'
+}
+
+# "2d 4h" / "1h 07m" / "3m 04s" / "12s".
+human_duration() {
+  local s="${1:-0}" d h m
+  d=$((s / 86400)); h=$(((s % 86400) / 3600)); m=$(((s % 3600) / 60))
+  if [ "$d" -gt 0 ]; then printf '%dd %dh' "$d" "$h"
+  elif [ "$h" -gt 0 ]; then printf '%dh %02dm' "$h" "$m"
+  elif [ "$m" -gt 0 ]; then printf '%dm %02ds' "$m" "$((s % 60))"
+  else printf '%ds' "$s"; fi
+}
+
+# Process uptime. Primary source /proc (no ps dependence); when the kernel
+# hides /proc/uptime from apps, fall back to ps -o etime. Empty on failure.
+proc_uptime() { # $1 = pid
+  local pid="${1:-}" stat rest start hz up secs
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  if [ -r "/proc/$pid/stat" ] && [ -r /proc/uptime ]; then
+    stat="$(cat "/proc/$pid/stat" 2>/dev/null)" || stat=""
+    rest="${stat##*\) }"                                 # strip "pid (comm) "
+    start="$(printf '%s' "$rest" | awk '{print $20}')"   # starttime, in ticks
+    case "$start" in
+      ''|*[!0-9]*) ;;
+      *)
+        hz="$(getconf CLK_TCK 2>/dev/null || true)"
+        case "$hz" in ''|*[!0-9]*) hz=100 ;; esac
+        up="$(awk '{print $1}' /proc/uptime 2>/dev/null)"
+        case "$up" in
+          ''|*[!0-9.]*) ;;
+          *) secs="$(awk -v u="$up" -v s="$start" -v h="$hz" 'BEGIN{d=u-s/h; if (d<0) d=0; printf "%d", d}')" ;;
+        esac ;;
+    esac
+  fi
+  if [ -z "${secs:-}" ]; then
+    # Fallback: [[dd-]hh:]mm:ss from ps. procps (Termux) takes -p; BusyBox
+    # ps has no -p, so ask for etime+pid and match the row ourselves.
+    local et d h m s
+    et="$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')"
+    if [ -z "$et" ]; then
+      et="$(ps -o etime=,pid= 2>/dev/null | awk -v p="$pid" '$NF == p { print $1; exit }')"
+    fi
+    case "$et" in
+      *-*:*:*) d="${et%%-*}"; rest="${et#*-}"; h="${rest%%:*}"; rest="${rest#*:}"
+               m="${rest%%:*}"; s="${rest##*:}"; secs=$((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s)) ;;
+      *:*:*)   h="${et%%:*}"; rest="${et#*:}"; m="${rest%%:*}"; s="${rest##*:}"
+               secs=$((10#$h * 3600 + 10#$m * 60 + 10#$s)) ;;
+      *:*)     m="${et%%:*}"; s="${et##*:}"; secs=$((10#$m * 60 + 10#$s)) ;;
+      *)       secs="" ;;
+    esac
+  fi
+  [ -n "${secs:-}" ] || return 0
+  human_duration "$secs"
+}
+
+# Doctor row: state ok|warn|err|off, name, detail.
+doctor_row() {
+  local sym
+  case "$2" in
+    ok)   sym="$C_OK✓$C_RESET" ;;
+    warn) sym="$C_WARN!$C_RESET" ;;
+    err)  sym="$C_ERR✗$C_RESET" ;;
+    *)    sym="$C_DIM—$C_RESET" ;;
+  esac
+  printf '    %s %s%-18s%s %s\n' "$sym" "$C_DIM" "$1" "$C_RESET" "$3"
+}
+
+# Capability line for `wearsic ready`: checkline <label> <true|false>
+checkline() {
+  if [ "${2:-false}" = "true" ]; then
+    printf '  %s✓%s %s\n' "$C_OK" "$C_RESET" "$1"
+  else
+    printf '  %s✗%s %s%s%s\n' "$C_ERR" "$C_RESET" "$C_WARN" "$1" "$C_RESET"
+  fi
 }
 
 installed() { [ -f "$RUN" ] || die "Not installed (no $DEST). Run the one-line installer first."; }
@@ -206,7 +383,7 @@ pids_for() {  # $1 = literal string to find in process command lines
     pid="${d#/proc/}"
     [ "$pid" = "$self" ] && continue
     [ "$pid" = "$sub" ] && continue
-    cmdline="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" || continue
+    cmdline="$( { tr '\0' ' ' < "$d/cmdline"; } 2>/dev/null )" || continue
     [ -z "$cmdline" ] && continue
     case "$cmdline" in
       *"$pat"*) printf '%s\n' "$pid" ;;
@@ -215,12 +392,32 @@ pids_for() {  # $1 = literal string to find in process command lines
 }
 
 supervisor_running() { [ -n "$(pids_for "$RUN")" ]; }
+
+# THIS install's engine process(es). Matching only the main class was a
+# landmine: with two wearsic installs on one device (e.g. a test copy),
+# `wearsic stop` in one killed the other's server too. The JVM command
+# line carries the install path (classpath + launcher script), so require
+# the main class AND $DEST.
+server_pids() {
+  local self="$$" sub="${BASHPID:-$$}" d pid cmdline
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    [ "$pid" = "$self" ] && continue
+    [ "$pid" = "$sub" ] && continue
+    cmdline="$( { tr '\0' ' ' < "$d/cmdline"; } 2>/dev/null )" || continue
+    case "$cmdline" in
+      *"com.wearsic.server.ApplicationKt"*) ;;
+      *) continue ;;
+    esac
+    case "$cmdline" in
+      *"$DEST"*) printf '%s\n' "$pid" ;;
+    esac
+  done
+}
+
 # The launcher script exec()s into the JVM, so the process command line is
 # the java main class, not the script path — match BOTH.
-server_running() {
-  [ -n "$(pids_for "com.wearsic.server.ApplicationKt")" ] \
-    || [ -n "$(pids_for "$DEST/bin/wearsic-server")" ]
-}
+server_running() { [ -n "$(server_pids)" ]; }
 
 health_ok() {
   curl -sf -m 5 "http://127.0.0.1:$(port)/health" >/dev/null 2>&1
@@ -265,26 +462,33 @@ server_url() {
 }
 
 show_pairing() {
-  box_begin "♪ Connect your watch"
+  local key; key="$(api_key)"
+  box_begin "connect your watch"
   box_line ""
-  box_line "   Server : $(server_url)"
-  box_line "   Key    : $(api_key)"
+  box_line "   ${C_ACC}server${C_RESET}   $(server_url)"
+  if [ -n "$key" ]; then
+    box_line "   ${C_ACC}key${C_RESET}      $key"
+  else
+    box_line "   ${C_ACC}key${C_RESET}      ${C_WARN}not set - anyone on your network can use this server${C_RESET}"
+  fi
   box_line ""
-  box_line "   On the watch, open Wearsic → Settings,"
-  box_line "   type the Server line, then the Key line."
+  box_line "   ${C_DIM}Wearsic app > Settings > enter both values.${C_RESET}"
   box_end
 }
 
 cmd_start() {
   installed
+  brand "start"
   if health_ok; then
-    say "Server is already running: $(server_url)"
+    ok "already running on port $(port)"
+    printf '\n'
+    show_pairing
     return 0
   fi
   if supervisor_running; then
-    say "Supervisor is running — waiting for the server to come up…"
+    note "supervisor is running — waiting for the server…"
   else
-    say "Starting the server (leave WiFi on; battery unrestricted for Termux)…"
+    note "starting (keep WiFi on; unrestricted battery for Termux helps)…"
     # bash explicitly so the launcher starts on any system (its shebang
     # points at the Termux bash path); identical behavior on Termux.
     ( cd "$DEST" && nohup bash "$RUN" >/dev/null 2>&1 & )
@@ -298,21 +502,23 @@ cmd_start() {
     sleep 1
   done
   if health_ok; then
-    spinner_stop 0 "server is up — self-healing supervisor is watching it"
+    spinner_stop 0 "server is up — the self-healing supervisor is watching it"
+    printf '\n'
     show_pairing
   else
-    spinner_stop 1 "server start"
-    say "Not healthy yet — check the logs:  wearsic server logs"
+    spinner_stop 1 "server did not answer within 30s"
+    dim "check the logs: wearsic logs"
     return 1
   fi
 }
 
 cmd_stop() {
   installed
+  brand "stop"
   local pids pid i
-  pids="$(pids_for "$RUN"; pids_for "com.wearsic.server.ApplicationKt"; pids_for "$DEST/bin/wearsic-server")"
-  [ -n "$pids" ] || { say "Server is not running."; return 0; }
-  say "Stopping server…"
+  pids="$(pids_for "$RUN"; server_pids)"
+  [ -n "$pids" ] || { note "server is not running."; return 0; }
+  note "stopping…"
   # Stop the supervisor first: its trap kills the JVM — but the trap only
   # runs after its current (up to 30s) sleep ends. So poll for REAL exit and
   # escalate to kill -9, otherwise a "stopped" supervisor lingers and the
@@ -326,10 +532,10 @@ cmd_stop() {
   for pid in $(pids_for "$RUN"); do kill -9 "$pid" 2>/dev/null; done
   # Then the JVM itself (graceful, then force), in case the supervisor was
   # already dead and left it behind.
-  pids="$(pids_for "com.wearsic.server.ApplicationKt"; pids_for "$DEST/bin/wearsic-server")"
+  pids="$(server_pids)"
   for pid in $pids; do kill "$pid" 2>/dev/null; done
   sleep 1
-  pids="$(pids_for "com.wearsic.server.ApplicationKt"; pids_for "$DEST/bin/wearsic-server")"
+  pids="$(server_pids)"
   for pid in $pids; do kill -9 "$pid" 2>/dev/null; done
   # Wait until the port actually goes quiet: graceful shutdown drains
   # in-flight streams for seconds, during which /health still answers —
@@ -340,7 +546,7 @@ cmd_stop() {
     sleep 1
     i=$((i + 1))
   done
-  spinner_stop 0 "stopped."
+  spinner_stop 0 "stopped"
 }
 
 cmd_restart() { cmd_stop; cmd_start; }
@@ -349,56 +555,116 @@ cmd_restart() { cmd_stop; cmd_start; }
 #   0 = running and healthy   1 = error   3 = not running   4 = running but unhealthy
 cmd_status() {
   installed
+  brand "status"
   local P; P="$(port)"
   if health_ok; then
-    say "running and healthy on port $P"
-    curl -sf -m 5 "http://127.0.0.1:$P/health" \
-      | sed 's/^{"status":"ok"//' 2>/dev/null || true
-    say ""
+    local body ver ex pid up ok_n fail_n rate
+    http_get "http://127.0.0.1:$P/health"
+    body="$HTTP_BODY"
+    ver="$(jstr "$body" version)"
+    ex="$(jobj "$body" extraction)"
+    ok_n="$(jnum "$ex" successCount)"; fail_n="$(jnum "$ex" failureCount)"; rate="$(jnum "$ex" failureRatePercent)"
+    pid="$(server_pids | head -1)"
+    up=""; [ -n "$pid" ] && up="$(proc_uptime "$pid")"
+    printf '  %s %s%s%s%s\n' "$(dot ok)" "$C_OK" "running and healthy" "$C_RESET" "${up:+ · up $up}"
+    kv "address" "$(server_url)"
+    kv "version" "v${ver:-unknown}"
+    [ -n "$pid" ] && kv "process" "pid $pid"
+    [ -n "$ok_n" ] && kv "engine" "${ok_n} ok · ${fail_n:-0} failed (${rate:-0}%)"
+    if [ -n "$(api_key)" ]; then
+      kv "watch key" "set"
+    else
+      kv "watch key" "${C_WARN}not set — the server is open on your network${C_RESET}"
+    fi
+    printf '\n'
     return 0
   elif supervisor_running; then
-    say "supervisor running, server NOT healthy — try: wearsic server logs"
+    printf '  %s %snot healthy%s\n' "$(dot warn)" "$C_WARN" "$C_RESET"
+    dim "the supervisor is up but the server is not answering — check: wearsic logs"
     return 4
   else
-    say "not running — start with: wearsic server start"
+    printf '  %s %sstopped%s\n' "$(dot err)" "$C_ERR" "$C_RESET"
+    dim "start it: wearsic start"
     return 3
   fi
 }
 
 cmd_logs() {
   installed
+  brand "logs"
   [ -f "$LOG" ] || die "No log yet ($LOG). Start the server first."
-  say "Tailing $LOG (Ctrl+C to exit)…"
+  dim "following $LOG — Ctrl+C to exit"
+  printf '\n'
   tail -f "$LOG"
 }
 
 cmd_health() {
   installed
-  curl -sf -m 5 "http://127.0.0.1:$(port)/health" \
-    || die "No response — is the server running? (wearsic server start)"
-  say ""
+  local P; P="$(port)"
+  if [ "${1:-}" = "--json" ]; then
+    curl -sf -m 5 "http://127.0.0.1:$P/health" \
+      || die "No response — is the server running? (wearsic start)"
+    printf '\n'
+    return 0
+  fi
+  brand "health"
+  http_get "http://127.0.0.1:$P/health"
+  [ "$HTTP_CODE" = "200" ] || die "No response — is the server running? (wearsic start)"
+  local body st ver st_state
+  body="$HTTP_BODY"
+  st="$(jstr "$body" status)"
+  ver="$(jstr "$body" version)"
+  if [ "$st" = "ok" ]; then
+    st_state="$(dot ok) ${C_OK}ok${C_RESET}"
+  else
+    st_state="$(dot warn) ${C_WARN}${st:-unknown}${C_RESET}"
+  fi
+  printf '  %s   %shttp://127.0.0.1:%s · %sms%s\n' "$st_state" "$C_DIM" "$P" "${HTTP_MS:-?}" "$C_RESET"
+  kv "version" "v${ver:-unknown} · $(jstr "$body" serverName)"
+  if [ "$(jbool "$body" transcoderAvailable)" = "true" ]; then
+    kv "transcoder" "available"
+  else
+    kv "transcoder" "${C_WARN}unavailable — pkg install ffmpeg${C_RESET}"
+  fi
+  local ex ok_n fail_n rate cons last_err extra
+  ex="$(jobj "$body" extraction)"
+  ok_n="$(jnum "$ex" successCount)"; fail_n="$(jnum "$ex" failureCount)"
+  rate="$(jnum "$ex" failureRatePercent)"; cons="$(jnum "$ex" consecutiveFailures)"
+  last_err="$(jstr "$ex" lastError)"
+  extra=""
+  if [ -n "$cons" ] && [ "$cons" -gt 0 ] 2>/dev/null; then extra=" · $cons in a row"; fi
+  kv "extraction" "${ok_n:-0} ok · ${fail_n:-0} failed (${rate:-0}%)$extra"
+  [ -n "$last_err" ] && kv "last error" "$last_err"
+  local upd; upd="$(jobj "$body" update)"
+  kv "update" "$(jstr "$upd" status)"
+  local stg; stg="$(jstr "$upd" stagedVersion)"
+  [ -n "$stg" ] && kv "staged" "v$stg — applies on next restart"
+  kv "crashes" "$(jnum "$body" crashCount)"
+  kv "cdn refusals" "$(jnum "$body" upstreamRefusals)"
+  printf '\n'
 }
 
 cmd_url() { installed; show_pairing; }
 
 cmd_ip() {
   local ip; ip="$(lan_ip)"
-  [ -n "$ip" ] && say "WiFi IP: $ip" || die "Could not find a WiFi IP — are you connected to WiFi?"
+  [ -n "$ip" ] && say "WiFi IP: ${C_ACC}$ip${C_RESET}" || die "Could not find a WiFi IP — are you connected to WiFi?"
 }
 
 cmd_api_key() {
   installed
+  brand "api-key"
   if [ -n "${1:-}" ]; then
     write_env_key "$1"
-    say "API key updated. Restart to apply:"
-    say "  wearsic server restart"
-    say "Then set the same key on the watch (Settings → API Key)."
+    ok "API key updated"
+    dim "apply it:        wearsic restart"
+    dim "on the watch:    Settings → API Key (same value)"
   else
     local k; k="$(api_key)"
-    [ -n "$k" ] || die "No API key set — the server is OPEN. Set one with: wearsic server api key <your-key>"
-    say "API key: $k"
-    say "Enter it on the watch: Settings → API Key"
-    say "Set a new one with: wearsic server api key <new-key>"
+    [ -n "$k" ] || die "No API key set — the server is OPEN on your network. Set one: wearsic api-key <your-key>"
+    kv "api key" "${C_ACC}$k${C_RESET}"
+    dim "enter it on the watch: Settings → API Key"
+    dim "change it: wearsic api-key <new-key>"
   fi
 }
 
@@ -894,152 +1160,223 @@ cmd_update() {
 # Installed vs running engine version (from /health when available).
 cmd_version() {
   installed
-  local health ver
-  health="$(curl -sf -m 5 "http://127.0.0.1:$(port)/health" 2>/dev/null || true)"
-  ver="$(printf '%s' "$health" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
-  say "engine: ${ver:-unknown (server not running)}"
+  brand "version"
+  local ver
+  http_get "http://127.0.0.1:$(port)/health" 3
+  ver="$(jstr "$HTTP_BODY" version)"
+  if [ -n "$ver" ]; then
+    kv "engine" "v$ver ${C_DIM}(running)${C_RESET}"
+  else
+    kv "engine" "${C_WARN}not running — wearsic start${C_RESET}"
+  fi
+  printf '\n'
 }
 
-# /ready in one line: can the server serve music RIGHT NOW?
+# /ready: can the server serve music RIGHT NOW?
 cmd_ready() {
   installed
-  curl -sf -m 5 "http://127.0.0.1:$(port)/ready" \
-    || die "No /ready response — is the server running and not an old engine? (wearsic server start)"
-  say ""
+  local P; P="$(port)"
+  if [ "${1:-}" = "--json" ]; then
+    curl -sf -m 5 "http://127.0.0.1:$P/ready" \
+      || die "No /ready response — is the server running? (wearsic start)"
+    printf '\n'
+    return 0
+  fi
+  brand "ready"
+  http_get "http://127.0.0.1:$P/ready"
+  [ "$HTTP_CODE" != "000" ] || die "No response — is the server running? (wearsic start)"
+  local body rd db ex tc ver
+  body="$HTTP_BODY"
+  rd="$(jbool "$body" ready)"; db="$(jbool "$body" database)"
+  ex="$(jbool "$body" extractor)"; tc="$(jbool "$body" transcoder)"
+  ver="$(jstr "$body" engineVersion)"
+  local rd_state rd_color rd_text
+  if [ "$rd" = "true" ]; then rd_state=ok; rd_color="$C_OK"; rd_text="ready"
+  else rd_state=warn; rd_color="$C_WARN"; rd_text="not ready"; fi
+  printf '  %s %s%s%s   %shttp://127.0.0.1:%s · %sms%s\n' \
+    "$(dot "$rd_state")" "$rd_color" "$rd_text" "$C_RESET" "$C_DIM" "$P" "${HTTP_MS:-?}" "$C_RESET"
+  checkline "database" "$db"
+  checkline "music engine" "$ex"
+  checkline "audio conversion" "$tc"
+  printf '\n'
+  if [ "$rd" = "true" ]; then
+    box_begin "ready - the watch can play music"
+    box_line ""
+    box_line "   engine v${ver:-unknown}"
+    box_end
+    return 0
+  fi
+  box_begin "NOT READY - playback will fail"
+  box_line ""
+  [ "$db" != "true" ] && box_line "   database: check free storage and permissions"
+  [ "$ex" != "true" ] && box_line "   music engine: run wearsic update, then check the logs"
+  [ "$tc" != "true" ] && box_line "   audio conversion: pkg install ffmpeg"
+  box_end
+  return 1
 }
-
-# Helper: one doctor row (name, symbol, detail).
-doctor_line() { printf '  %-16s %s %s\n' "$1" "$2" "${3:-}"; }
 
 # End-to-end environment diagnostics. Prints only the PRESENCE of the API
 # key, never its value; never prints cookies or other secrets.
 # Exit codes: 0 = READY, 1 = problems found.
 cmd_doctor() {
   local fails=0 warns=0
-  say "Wearsic Doctor"
-  say "────────────────────────"
+  brand "doctor"
 
+  section "System"
   if command -v java >/dev/null 2>&1; then
-    doctor_line "Java" "✓" "$(java -version 2>&1 | head -1 | tr -d '"' | cut -c1-40)"
+    doctor_row "java" ok "$(java -version 2>&1 | head -1 | tr -d '"' | cut -c1-52)"
   else
-    doctor_line "Java" "✗" "missing — pkg install -y openjdk-17"; fails=$((fails+1))
+    doctor_row "java" err "missing — pkg install -y openjdk-17"; fails=$((fails+1))
   fi
 
   if command -v ffmpeg >/dev/null 2>&1; then
-    doctor_line "ffmpeg" "✓" ""
+    doctor_row "ffmpeg" ok "present"
   else
-    doctor_line "ffmpeg" "✗" "missing — rare Opus/WebM songs will 503 (pkg install ffmpeg)"; warns=$((warns+1))
+    doctor_row "ffmpeg" warn "missing — rare Opus/WebM songs will 503 (pkg install ffmpeg)"; warns=$((warns+1))
   fi
 
-  if [ -x "$DEST/bin/wearsic-server" ] && [ -f "$DEST/run-termux.sh" ]; then
-    doctor_line "Server install" "✓" "$DEST"
+  local avail; avail="$(df -k "$DEST" 2>/dev/null | awk 'NR==2 {print $4}')"
+  case "$avail" in
+    ''|*[!0-9]*) doctor_row "storage" warn "free space unknown"; warns=$((warns+1)) ;;
+    *) if [ "$avail" -lt 102400 ]; then
+         doctor_row "storage" warn "only $((avail / 1024))MB free — clean up $DEST"; warns=$((warns+1))
+       elif [ "$avail" -ge 1048576 ]; then
+         doctor_row "storage" ok "$((avail / 1024 / 1024))GB free"
+       else
+         doctor_row "storage" ok "$((avail / 1024))MB free"
+       fi ;;
+  esac
+
+  if [ -n "${PREFIX:-}" ] && [ -d "${PREFIX:-/nonexistent}/bin" ]; then
+    doctor_row "termux" ok "$PREFIX"
   else
-    doctor_line "Server install" "✗" "not installed"; fails=$((fails+1))
+    doctor_row "termux" off "not Termux"; warns=$((warns+1))
+  fi
+
+  section "Server"
+  if [ -x "$DEST/bin/wearsic-server" ] && [ -f "$DEST/run-termux.sh" ]; then
+    doctor_row "install" ok "$DEST"
+  else
+    doctor_row "install" err "not installed in $DEST"; fails=$((fails+1))
   fi
 
   if supervisor_running; then
-    doctor_line "Supervisor" "✓" ""
+    doctor_row "supervisor" ok "running"
   else
-    doctor_line "Supervisor" "✗" "not running — wearsic server start"; fails=$((fails+1))
+    doctor_row "supervisor" err "not running — wearsic start"; fails=$((fails+1))
   fi
-  if server_running; then
-    doctor_line "Server process" "✓" ""
-  else
-    doctor_line "Server process" "✗" "not running"; fails=$((fails+1))
-  fi
-  doctor_line "Port $(port)" "✓" ""
 
-  if [ -f "$DEST/wearsic.db" ]; then
-    doctor_line "Database" "✓" "wearsic.db"
+  local pid; pid="$(server_pids | head -1)"
+  if [ -n "$pid" ]; then
+    local up; up="$(proc_uptime "$pid")"
+    doctor_row "process" ok "pid $pid${up:+ · up $up}"
   else
-    doctor_line "Database" "—" "not created yet (appears on first start)"; warns=$((warns+1))
+    doctor_row "process" err "not running"; fails=$((fails+1))
+  fi
+
+  local P health ready_body hms rms
+  P="$(port)"
+  http_get "http://127.0.0.1:$P/health"
+  health="$HTTP_BODY"; hms="$HTTP_MS"
+  if [ "$HTTP_CODE" = "200" ]; then
+    local v; v="$(jstr "$health" version)"
+    doctor_row "health" ok "200 OK · ${hms:-?}ms · v${v:-unknown}"
+  else
+    health=""
+    doctor_row "health" err "no response — wearsic start"; fails=$((fails+1))
+  fi
+
+  http_get "http://127.0.0.1:$P/ready"
+  ready_body="$HTTP_BODY"; rms="$HTTP_MS"
+  if printf '%s' "$ready_body" | grep -q '"ready"[[:space:]]*:[[:space:]]*true'; then
+    doctor_row "readiness" ok "ready · ${rms:-?}ms"
+  elif [ -n "$ready_body" ]; then
+    doctor_row "readiness" err "not ready"; fails=$((fails+1))
+    if printf '%s' "$ready_body" | grep -q '"database"[[:space:]]*:[[:space:]]*false'; then
+      doctor_row "database probe" err "check free storage and database permissions"
+    fi
+    if printf '%s' "$ready_body" | grep -q '"extractor"[[:space:]]*:[[:space:]]*false'; then
+      doctor_row "music engine" err "run wearsic update; inspect wearsic logs for upstream challenges"
+    fi
+  elif [ -n "$health" ]; then
+    doctor_row "readiness" off "no /ready (engine older than 1.4.0)"; warns=$((warns+1))
+  else
+    doctor_row "readiness" err "no response"; fails=$((fails+1))
   fi
 
   # API key: presence only — the value is never printed.
   if [ -n "$(api_key)" ]; then
-    doctor_line "API key" "✓" "set"
+    doctor_row "api key" ok "set"
   else
-    doctor_line "API key" "✗" "NOT set — server is OPEN (fine on LAN, never public)"; warns=$((warns+1))
+    doctor_row "api key" warn "NOT set — server is OPEN on your network (fine for LAN, never public)"; warns=$((warns+1))
   fi
 
-  local P health ready_body
-  P="$(port)"
-  health="$(curl -sf -m 5 "http://127.0.0.1:$P/health" 2>/dev/null || true)"
+  if [ -f "$DEST/wearsic.db" ]; then
+    doctor_row "database" ok "wearsic.db"
+  else
+    doctor_row "database" off "not created yet (appears on first start)"; warns=$((warns+1))
+  fi
+
+  section "Engine"
   if [ -n "$health" ]; then
-    doctor_line "Health" "✓" "ok"
-  else
-    doctor_line "Health" "✗" "no response"; fails=$((fails+1))
-  fi
+    local ver consec canary ex_obj ok_n fail_n rate
+    ver="$(jstr "$health" version)"
+    ex_obj="$(jobj "$health" extraction)"
+    consec="$(jnum "$ex_obj" consecutiveFailures)"
+    canary="$(jbool "$health" canaryHealthy)"
+    doctor_row "version" ok "v${ver:-unknown}"
 
-  ready_body="$(curl -sf -m 5 "http://127.0.0.1:$P/ready" 2>/dev/null || true)"
-  if printf '%s' "$ready_body" | grep -q '"ready"[[:space:]]*:[[:space:]]*true'; then
-    doctor_line "Readiness" "✓" "ready"
-  elif [ -n "$ready_body" ]; then
-    doctor_line "Readiness" "✗" "not ready"; fails=$((fails+1))
-    if printf '%s' "$ready_body" | grep -q '"database"[[:space:]]*:[[:space:]]*false'; then
-      doctor_line "Database probe" "✗" "check free storage and database permissions"
-    fi
-    if printf '%s' "$ready_body" | grep -q '"extractor"[[:space:]]*:[[:space:]]*false'; then
-      doctor_line "Music engine" "✗" "run wearsic update; inspect wearsic logs for upstream challenges"
-    fi
-  elif [ -n "$health" ]; then
-    doctor_line "Readiness" "—" "no /ready (engine older than 1.4.0)"; warns=$((warns+1))
-  else
-    doctor_line "Readiness" "✗" "no response"; fails=$((fails+1))
-  fi
+    ok_n="$(jnum "$ex_obj" successCount)"
+    fail_n="$(jnum "$ex_obj" failureCount)"
+    rate="$(jnum "$ex_obj" failureRatePercent)"
+    doctor_row "extraction" ok "${ok_n:-0} ok · ${fail_n:-0} failed (${rate:-0}%)"
 
-  if [ -n "$health" ]; then
-    local ver consec canary
-    ver="$(printf '%s' "$health" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
-    consec="$(printf '%s' "$health" | sed -n 's/.*"consecutiveFailures":\([0-9]*\).*/\1/p')"
-    canary="$(printf '%s' "$health" | sed -n 's/.*"canaryHealthy":\(true\|false\|null\).*/\1/p')"
-    doctor_line "Engine version" "✓" "v${ver:-unknown}"
-    if printf '%s' "$health" | grep -q '"transcoderAvailable"[[:space:]]*:[[:space:]]*false'; then
-      doctor_line "Audio conversion" "—" "unavailable — pkg install -y ffmpeg"; warns=$((warns+1))
-    fi
-    if printf '%s' "$health" | grep -q '"status"[[:space:]]*:[[:space:]]*"staged"'; then
-      doctor_line "Engine update" "—" "staged — applies on next restart"
-    fi
     if [ -n "$consec" ] && [ "$consec" -ge 6 ] 2>/dev/null; then
-      doctor_line "Extractor" "✗" "$consec consecutive failures — engine broken? self-heal should be staging an update"; fails=$((fails+1))
+      doctor_row "extractor" err "$consec consecutive failures — engine broken? self-heal should be staging an update"; fails=$((fails+1))
     else
-      doctor_line "Extractor" "✓" "consecutive failures: ${consec:-0}"
+      doctor_row "extractor" ok "consecutive failures: ${consec:-0}"
     fi
-    if [ "$canary" = "true" ]; then
-      doctor_line "Canary" "✓" "healthy"
-    elif [ -n "$canary" ]; then
-      doctor_line "Canary" "—" "$canary"
+
+    case "$canary" in
+      true) doctor_row "canary" ok "healthy" ;;
+      "")   doctor_row "canary" off "not reported" ;;
+      *)    doctor_row "canary" off "$canary" ;;
+    esac
+
+    local upd; upd="$(jobj "$health" update)"
+    case "$(jstr "$upd" status)" in
+      staged) doctor_row "engine update" off "v$(jstr "$upd" stagedVersion) staged — applies on next restart" ;;
+      "")     doctor_row "engine update" off "not reported" ;;
+      *)      doctor_row "engine update" ok "$(jstr "$upd" status)" ;;
+    esac
+
+    if [ "$(jbool "$health" transcoderAvailable)" = "false" ]; then
+      doctor_row "audio conversion" warn "unavailable — pkg install -y ffmpeg"; warns=$((warns+1))
     fi
-    local crashes
-    crashes="$(printf '%s' "$health" | sed -n 's/.*"crashCount"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')"
+
+    local crashes; crashes="$(jnum "$health" crashCount)"
     if [ -n "$crashes" ] && [ "$crashes" -gt 0 ] 2>/dev/null; then
-      doctor_line "Crashes" "!" "$crashes recorded — see state/crashes + wearsic-server.log"; warns=$((warns+1))
+      doctor_row "crashes" warn "$crashes recorded — see state/crashes + wearsic-server.log"; warns=$((warns+1))
+    else
+      doctor_row "crashes" ok "${crashes:-0}"
     fi
-    local refusals
-    refusals="$(printf '%s' "$health" | sed -n 's/.*"upstreamRefusals"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')"
+
+    local refusals; refusals="$(jnum "$health" upstreamRefusals)"
     if [ -n "$refusals" ] && [ "$refusals" -ge 10 ] 2>/dev/null; then
-      doctor_line "CDN throttle" "!" "$refusals refused ranges — throttled network, not a broken engine (cookie + wait, not update)"; warns=$((warns+1))
+      doctor_row "cdn refusals" warn "$refusals refused ranges — throttled network, not a broken engine"; warns=$((warns+1))
+    else
+      doctor_row "cdn refusals" ok "${refusals:-0}"
     fi
+  else
+    doctor_row "engine" off "server not responding — wearsic start"
   fi
 
+  section "Network"
   local ip; ip="$(lan_ip)"
   if [ -n "$ip" ]; then
-    doctor_line "LAN network" "✓" "$ip"
+    doctor_row "wifi" ok "$ip"
   else
-    doctor_line "LAN network" "✗" "no WiFi IP"; fails=$((fails+1))
-  fi
-
-  local avail; avail="$(df -k "$DEST" 2>/dev/null | awk 'NR==2 {print $4}')"
-  if [ -n "$avail" ] && [ "$avail" -lt 102400 ] 2>/dev/null; then
-    doctor_line "Storage" "✗" "only ${avail}KB free"; warns=$((warns+1))
-  else
-    doctor_line "Storage" "✓" "$(( ${avail:-0} / 1024 ))MB free"
-  fi
-
-  if [ -n "${PREFIX:-}" ] && [ -d "${PREFIX:-/nonexistent}/bin" ]; then
-    doctor_line "Termux" "✓" ""
-  else
-    doctor_line "Termux" "—" "not Termux"; warns=$((warns+1))
+    doctor_row "wifi" err "no WiFi IP — is WiFi on?"; fails=$((fails+1))
   fi
 
   # Tailscale / Funnel: only ever reported ACTIVE when confirmed, and the
@@ -1048,89 +1385,76 @@ cmd_doctor() {
   if command -v tailscale >/dev/null 2>&1; then
     local ts_st; ts_st="$(ts_state)"
     case "$ts_st" in
-      Running)   doctor_line "Tailscale" "✓" "connected" ;;
-      NeedsLogin) doctor_line "Tailscale" "!" "installed, not logged in — for a public URL run: tailscale up"; warns=$((warns+1)) ;;
-      Stopped)   doctor_line "Tailscale" "!" "node stopped — for a public URL run: tailscale up"; warns=$((warns+1)) ;;
-      Starting)  doctor_line "Tailscale" "—" "starting up"; warns=$((warns+1)) ;;
-      *)         doctor_line "Tailscale" "!" "daemon not responding — run: tailscaled-start"; warns=$((warns+1)) ;;
+      Running)    doctor_row "tailscale" ok "connected" ;;
+      NeedsLogin) doctor_row "tailscale" warn "installed, not logged in — for a public URL run: tailscale up"; warns=$((warns+1)) ;;
+      Stopped)    doctor_row "tailscale" warn "node stopped — for a public URL run: tailscale up"; warns=$((warns+1)) ;;
+      Starting)   doctor_row "tailscale" off "starting up"; warns=$((warns+1)) ;;
+      *)          doctor_row "tailscale" warn "daemon not responding — run: tailscaled-start"; warns=$((warns+1)) ;;
     esac
     # Tailscale is OPTIONAL: the server plays fine over LAN without it, so
     # all of the above stay warnings and never flip doctor's exit code.
     # Making a logged-out phone a hard failure would report "NOT READY" for
     # a server that is in fact serving music perfectly over WiFi.
     if tailscale funnel status 2>/dev/null | grep -qi 'https://'; then
-      doctor_line "Funnel" "✓" "active"
+      doctor_row "funnel" ok "active"
     elif [ "$ts_st" != "Running" ]; then
       # Funnel cannot work until the node is connected — say THAT instead of
       # reporting a separate, confusing Funnel failure.
-      doctor_line "Funnel" "—" "blocked: Tailscale not connected"
+      doctor_row "funnel" off "blocked: Tailscale not connected"
     else
-      doctor_line "Funnel" "—" "not active — start with: wearsic funnel"
+      doctor_row "funnel" off "not active — start with: wearsic funnel"
     fi
   else
-    doctor_line "Tailscale" "—" "not installed"
-    doctor_line "Funnel" "—" "not installed"
+    doctor_row "tailscale" off "not installed"
+    doctor_row "funnel" off "not installed"
   fi
 
-  say "────────────────────────"
+  printf '\n'
   if [ "$fails" -eq 0 ]; then
-    box_begin "✓ READY ($warns warning(s))"
+    box_begin "READY"
     box_line ""
-    box_line "   wearsic url = connect the watch"
-    box_line "   wearsic logs = playback issues"
+    if [ "$warns" -gt 0 ]; then
+      box_line "   $warns warning(s) - nothing blocking playback."
+    else
+      box_line "   everything looks good."
+    fi
+    box_line ""
+    box_line "   wearsic url     connect the watch"
+    box_line "   wearsic logs    when playback misbehaves"
     box_end
     return 0
   fi
-  box_begin "✗ NOT READY ($fails problem(s), $warns warning(s))"
+  box_begin "NOT READY"
   box_line ""
-  box_line "   Fix the ✗ lines above,"
-  box_line "   then run wearsic doctor again."
+  box_line "   $fails problem(s), $warns warning(s)."
+  box_line "   Fix the problem rows above, then run wearsic doctor again."
   box_end
   return 1
 }
 
 usage() {
-  local G=$'\033[38;5;114m' D=$'\033[2m' R=$'\033[0m' B=$'\033[1m'
-  printf '%s\n\n' "$(grad_line '♪ Wearsic server — music for your watch')"
-  printf "${B}Server${R}\n"
-  printf "  ${G}wearsic start${R}      start the server\n"
-  printf "  ${G}wearsic stop${R}       stop the server\n"
-  printf "  ${G}wearsic restart${R}    stop, then start\n"
-  printf "  ${G}wearsic status${R}     running? healthy? (0 healthy, 3 stopped, 4 unhealthy)\n"
-  printf "  ${G}wearsic logs${R}       live logs\n"
-  printf "  ${G}wearsic doctor${R}     full checkup (exit 0 = READY)\n\n"
-  printf "${B}Watch pairing${R}\n"
-  printf "  ${G}wearsic url${R}        Server URL + API key for the watch\n"
-  printf "  ${G}wearsic ip${R}         this phone's WiFi IP\n"
-  printf "  ${G}wearsic api-key [new]${R}  show / change the API key\n\n"
-  printf "${B}Engine${R}\n"
-  printf "  ${G}wearsic update [--pre]${R}  update to the latest release (verified, rollback-safe)\n"
-  printf "  ${G}wearsic version${R}    installed + running engine version\n"
-  printf "  ${G}wearsic health${R}     raw /health JSON     ${G}wearsic ready${R}  raw /ready JSON\n\n"
-  printf "${B}Internet access${R}\n"
-  printf "  ${G}wearsic funnel${R}     public HTTPS URL (Tailscale Funnel)\n"
-  printf "  ${G}wearsic public${R}     public URL recipes (Funnel / Cloudflare)\n"
-  printf "  ${G}wearsic cookies [str]${R}  set the YouTube cookie\n\n"
-  printf "${D}The classic nested form also works:  wearsic server start${R}\n"
-}
-
-# White→green gradient for short titles (same ramp as install.sh).
-grad_line() {
-  local text="$1" len i=0 out="" shade ch
-  len=${#text}
-  if [ "$len" -le 0 ]; then printf ''; return 0; fi
-  while [ "$i" -lt "$len" ]; do
-    if [ "$len" -le 1 ]; then shade=114;
-    else shade=$(( 255 - (255 - 114) * i / (len - 1) )); fi
-    if [ "$shade" -gt 200 ]; then shade=255
-    elif [ "$shade" -gt 170 ]; then shade=158
-    elif [ "$shade" -gt 145 ]; then shade=120
-    else shade=114; fi
-    ch="$(printf '%s' "$text" | cut -c$((i + 1)))"
-    out="${out}$(printf '\033[38;5;%sm%s' "$shade" "$ch")"
-    i=$((i + 1))
-  done
-  printf '%s\033[0m' "$out"
+  printf '\n  %s♪ wearsic%s %s· music for your watch%s\n\n' "$C_BRAND" "$C_RESET" "$C_DIM" "$C_RESET"
+  printf '  %sServer%s\n' "$C_BOLD" "$C_RESET"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "start" "$C_RESET" "start the server (self-healing supervisor)"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "stop" "$C_RESET" "stop the server"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "restart" "$C_RESET" "stop, then start"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "status" "$C_RESET" "is it running? healthy? which version? (exit 0/3/4)"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "logs" "$C_RESET" "follow live logs (Ctrl+C to exit)"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "doctor" "$C_RESET" "full checkup — exit 0 means READY"
+  printf '\n  %sWatch pairing%s\n' "$C_BOLD" "$C_RESET"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "url" "$C_RESET" "server URL + key to enter on the watch"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "ip" "$C_RESET" "this phone's WiFi IP"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "api-key [new]" "$C_RESET" "show or set the API key"
+  printf '\n  %sEngine%s\n' "$C_BOLD" "$C_RESET"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "update [--pre]" "$C_RESET" "update to the latest release (verified, rollback-safe)"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "version" "$C_RESET" "installed + running engine version"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "health [--json]" "$C_RESET" "server snapshot (--json for scripts)"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "ready [--json]" "$C_RESET" "can the server play music right now?"
+  printf '\n  %sRemote access%s\n' "$C_BOLD" "$C_RESET"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "funnel" "$C_RESET" "public HTTPS URL (Tailscale Funnel)"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "public" "$C_RESET" "public URL recipes (Tailscale / Cloudflare)"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "cookies [cookie]" "$C_RESET" "set the YouTube cookie (fixes bot-wall errors)"
+  printf '\n  %sThe classic nested form works too: wearsic server start%s\n\n' "$C_DIM" "$C_RESET"
 }
 
 # --- dispatch ---------------------------------------------------------
@@ -1144,8 +1468,8 @@ case "${1:-}" in
       restart) cmd_restart ;;
       status)  cmd_status ;;
       logs)    cmd_logs ;;
-      health)  cmd_health ;;
-      ready)   cmd_ready ;;
+      health)  shift 2; cmd_health "$@" ;;
+      ready)   shift 2; cmd_ready "$@" ;;
       url)     cmd_url ;;
       ip)      cmd_ip ;;
       version) cmd_version ;;
@@ -1168,8 +1492,8 @@ case "${1:-}" in
   restart)   cmd_restart ;;
   status)    cmd_status ;;
   logs)      cmd_logs ;;
-  health)    cmd_health ;;
-  ready)     cmd_ready ;;
+  health)    shift; cmd_health "$@" ;;
+  ready)     shift; cmd_ready "$@" ;;
   url)       cmd_url ;;
   ip)        cmd_ip ;;
   version)   cmd_version ;;

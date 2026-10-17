@@ -5,6 +5,7 @@ import com.wearsic.app.model.InvalidConfigError
 import com.wearsic.app.model.InvalidTrackIdError
 import com.wearsic.app.model.InvalidUrlError
 import com.wearsic.app.model.InputTooLongError
+import com.wearsic.app.model.InputTooShortError
 import com.wearsic.app.model.WearsicError
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -260,7 +261,7 @@ class ValidationTest {
     fun `Too short API key fails validation`() {
         val result = Validation.validateApiKey("short")
         assertTrue(result.isFailure)
-        assertTrue(result.exceptionOrNull() is InputTooLongError)
+        assertTrue(result.exceptionOrNull() is InputTooShortError)
     }
 
     @Test

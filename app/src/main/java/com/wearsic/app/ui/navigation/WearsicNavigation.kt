@@ -31,6 +31,7 @@ import com.wearsic.app.ui.screens.PlaylistsScreen
 import com.wearsic.app.ui.screens.PlayerScreen
 import com.wearsic.app.ui.screens.QueueScreen
 import com.wearsic.app.ui.screens.SearchScreen
+import com.wearsic.app.ui.screens.ServerDashboardScreen
 import com.wearsic.app.ui.screens.SettingsScreen
 import com.wearsic.app.ui.screens.VolumeScreen
 import com.wearsic.app.model.ArtistGroup
@@ -70,6 +71,7 @@ fun WearsicApp(
     val apiKey by settingsVM.apiKey.collectAsStateWithLifecycle()
     val storageStats by downloadsVM.storageStats.collectAsStateWithLifecycle()
     val sleepRemainingMs by playerViewModel.sleepRemainingMs.collectAsStateWithLifecycle()
+    val sleepSetMinutes by playerViewModel.sleepSetMinutes.collectAsStateWithLifecycle()
     val crossfadeMs by settingsVM.crossfadeMs.collectAsStateWithLifecycle()
     val albumsState by libraryVM.albumsState.collectAsStateWithLifecycle()
     val artistsState by libraryVM.artistsState.collectAsStateWithLifecycle()
@@ -255,6 +257,7 @@ fun WearsicApp(
                 VolumeScreen(
                     currentOutputDevice = stablePlaybackState.outputDeviceName,
                     sleepRemainingMs = sleepRemainingMs,
+                    sleepSetMinutes = sleepSetMinutes,
                     crossfadeMs = crossfadeMs,
                     onSleepTimerSet = { minutes ->
                         playerViewModel.setSleepTimer(minutes)
@@ -286,6 +289,9 @@ fun WearsicApp(
                     onOpenStorage = {
                         downloadsVM.refreshStorageStats()
                         navController.navigate(Screen.Storage.route)
+                    },
+                    onOpenServerDashboard = {
+                        navController.navigate(Screen.ServerDashboard.route)
                     },
                     autoCacheEnabled = autoCacheEnabled,
                     onAutoCacheToggled = { enabled ->
@@ -356,6 +362,18 @@ fun WearsicApp(
                     manualCount = storageStats.manualCount,
                     manualMb = storageStats.manualMb,
                     onClearAutoCached = { downloadsVM.clearAutoCachedDownloads() }
+                )
+            }
+
+            // Server engine dashboard: live /health + /ready
+            composable(Screen.ServerDashboard.route) {
+                val dashboardState by settingsVM.serverDashboard.collectAsStateWithLifecycle()
+                LaunchedEffect(Unit) {
+                    settingsVM.refreshServerDashboard()
+                }
+                ServerDashboardScreen(
+                    state = dashboardState,
+                    onRefresh = { settingsVM.refreshServerDashboard() }
                 )
             }
 

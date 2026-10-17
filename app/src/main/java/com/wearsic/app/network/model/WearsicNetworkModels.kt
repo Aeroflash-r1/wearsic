@@ -11,7 +11,57 @@ import kotlinx.serialization.Transient
 data class ServerHealthDto(
     val status: String = "ok",
     val version: String = "1.0.0",
-    @SerialName("serverName") val serverName: String = "Wearsic Engine"
+    @SerialName("serverName") val serverName: String = "Wearsic Engine",
+    // Engine capabilities + self-healing observability (server v1.9+). Every
+    // field is optional with a default so a watch pointed at an older server
+    // still decodes this response and only shows what the server reports.
+    val transcoderAvailable: Boolean = false,
+    val extraction: ExtractionHealthDto? = null,
+    val canaryHealthy: Boolean? = null,
+    val update: ServerUpdateStatusDto? = null,
+    val crashCount: Int = 0,
+    val lastCrashAtMillis: Long = 0,
+    val upstreamRefusals: Int = 0
+)
+
+/** Extraction-engine success/failure counters from /health. */
+@Serializable
+data class ExtractionHealthDto(
+    val successCount: Int = 0,
+    val failureCount: Int = 0,
+    val failureRatePercent: Int = 0,
+    val consecutiveFailures: Int = 0,
+    val lastError: String? = null,
+    val lastSuccessAtMillis: Long = 0,
+    val lastFailureAtMillis: Long = 0
+)
+
+/**
+ * Engine-update status from /health. `status == "staged"` means a new engine
+ * is downloaded and waiting for the server supervisor to apply on restart.
+ */
+@Serializable
+data class ServerUpdateStatusDto(
+    val status: String = "idle",
+    val latestKnownVersion: String? = null,
+    val lastCheckAtMillis: Long = 0,
+    val lastError: String? = null,
+    val stagedVersion: String? = null,
+    val updateAttempt: Int = 0,
+    val rollbackReason: String? = null
+)
+
+/**
+ * /ready — "can the server serve music right now?". Deliberately cheap:
+ * database ping + in-memory counters, no network, no secrets.
+ */
+@Serializable
+data class ReadyResponseDto(
+    val ready: Boolean = false,
+    val database: Boolean = false,
+    val extractor: Boolean = false,
+    val transcoder: Boolean = false,
+    val engineVersion: String = ""
 )
 
 @Serializable

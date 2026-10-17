@@ -7,9 +7,13 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.slf4j.LoggerFactory
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+
+/** Logger tag "ytmusic": per-search detail (pages, fallbacks) without the old raw stderr prints. */
+private val log = LoggerFactory.getLogger("ytmusic")
 
 /**
  * A music track from YouTube Music (InnerTube `music.youtube.com` API).
@@ -133,9 +137,9 @@ class YTMusicService(
                 val page = parseSearchResponse(raw, limit - out.size)
                     .filter { it.title != null && it.artist != null }
                 if (out.isEmpty() && page.isEmpty()) {
-                    System.err.println("YTMUSIC empty page (${raw.length} chars): ${raw.take(200)}")
+                    log.debug("empty page ({} chars): {}", raw.length, raw.take(200))
                 }
-                System.err.println("YTMUSIC page: ${raw.length} chars -> ${page.size} songs")
+                log.debug("page: {} chars -> {} songs", raw.length, page.size)
                 for (t in page) {
                     if (out.none { it.videoId == t.videoId }) out.add(t)
                     if (out.size >= limit) break
@@ -156,11 +160,11 @@ class YTMusicService(
         }.onFailure { e ->
             if (e is kotlinx.coroutines.CancellationException) throw e
             val safeMsg = (e.message ?: e.javaClass.simpleName).replace(Regex("key=[^&\\s]*"), "key=…")
-            System.err.println("YTMUSIC search failed: ${e.javaClass.simpleName}: $safeMsg")
+            log.debug("search failed: {}: {}", e.javaClass.simpleName, safeMsg)
         }.getOrDefault(emptyList())
         // One line per search: page counts make "Show more returned nothing"
         // debuggable without guessing (cache hit vs short shelf vs no token).
-        System.err.println("YTMUSIC search '$key' limit=$limit -> ${tracks.size} tracks ($fetchedPages pages)")
+        log.info("search '{}' limit={} -> {} tracks ({} pages)", key, limit, tracks.size, fetchedPages)
         // Only cache usable results: a transient YTM failure must not serve
         // an empty page for the next 5 minutes (the NewPipe fallback would
         // never get its chance).

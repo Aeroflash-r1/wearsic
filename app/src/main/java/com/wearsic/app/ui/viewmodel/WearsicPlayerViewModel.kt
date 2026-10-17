@@ -71,12 +71,20 @@ class WearsicPlayerViewModel(
     val storageStats: StateFlow<DownloadsViewModel.StorageStats> get() = downloadsViewModel.storageStats
     val radioState: StateFlow<LibraryViewModel.RadioState> get() = libraryViewModel.radioState
     val sleepRemainingMs: StateFlow<Long> get() = _sleepRemainingMs
+
+    /**
+     * Length the CURRENT sleep timer was set for (0 when off). The Sound
+     * screen highlights the exact chip the user picked — guessing from the
+     * remaining time matched the wrong chip over time.
+     */
+    val sleepSetMinutes: StateFlow<Int> get() = _sleepSetMinutes
     // Delegates to the SettingsViewModel's flow: keeping a second copy meant
     // reading the same startup log twice to produce one string.
     val startupHealth: StateFlow<String> get() = settingsViewModel.startupHealth
 
     // Sleep timer state (kept here as it spans playback and UI)
     private val _sleepRemainingMs = MutableStateFlow(0L)
+    private val _sleepSetMinutes = MutableStateFlow(0)
     private var sleepJob: Job? = null
 
     // Server truth for hearts: refreshed from GET /api/favorites, applied to
@@ -195,10 +203,12 @@ class WearsicPlayerViewModel(
         playbackViewModel.setVolumeScale(1f)
         if (minutes <= 0) {
             _sleepRemainingMs.value = 0L
+            _sleepSetMinutes.value = 0
             return
         }
         val durationMs = minutes * 60_000L
         val endsAt = System.currentTimeMillis() + durationMs
+        _sleepSetMinutes.value = minutes
         sleepJob = viewModelScope.launch {
             var lastTick = System.nanoTime()
             while (true) {
@@ -222,6 +232,7 @@ class WearsicPlayerViewModel(
             playbackViewModel.pause()
             playbackViewModel.setVolumeScale(1f)
             _sleepRemainingMs.value = 0L
+            _sleepSetMinutes.value = 0
         }
     }
 

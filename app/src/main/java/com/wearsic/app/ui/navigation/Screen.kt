@@ -13,6 +13,7 @@ sealed class Screen(val route: String) {
     data object Playlists : Screen("playlists")
     data object Albums : Screen("albums")
     data object Storage : Screen("storage")
+    data object ServerDashboard : Screen("server-dashboard")
     data object Favorites : Screen("favorites")
     data object PlaylistDetail : Screen("playlist/{id}/{name}") {
         fun createRoute(id: String, name: String): String =

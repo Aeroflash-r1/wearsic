@@ -222,27 +222,34 @@ class WearsicMediaService : MediaSessionService() {
         //      buffer. On a phone that reads as cautious; on a watch it
         //      reads as broken. 2.5s still guards against thrashing between
         //      stalling and resuming, so a flaky link isn't made worse.
-        //    - maxBufferMs 30s -> 50s: a deeper runway against WiFi jitter.
-        //      A 4-minute AAC track at 128kbps is ~3.8MB, so 50s costs well
-        //      under 1MB of heap — affordable, and it means a track that
+        //    - maxBufferMs 30s -> 50s -> 90s: a deeper runway against WiFi
+        //      jitter. A 4-minute AAC track at 128kbps is ~3.8MB, so 90s
+        //      costs ~1.4MB of heap — affordable, and it means a track that
         //      starts buffering usually finishes before the buffer is gone.
-        //    - targetBufferBytes 2MB as a hard backstop so a pathological
+        //    - targetBufferBytes 3MB as a hard backstop so a pathological
         //      bitrate can't grow the buffer without bound on a small heap,
         //      with time thresholds prioritised over that byte target.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 /* minBufferMs = */ 15000,
-                /* maxBufferMs = */ 50000,
+                /* maxBufferMs = */ 90000,
                 /* bufferForPlaybackMs = */ 800,
                 /* bufferForPlaybackAfterRebufferMs = */ 2500
             )
             .setPrioritizeTimeOverSizeThresholds(true)
-            .setTargetBufferBytes(2 * 1024 * 1024)
-            .build()        // 4. Player
+            .setTargetBufferBytes(3 * 1024 * 1024)
+            .build()
+        // 4. Player
         return ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, handleAudioFocus)
             .setHandleAudioBecomingNoisy(true)
-            .setWakeMode(C.WAKE_MODE_LOCAL)
+            // WAKE_MODE_NETWORK (not LOCAL): streams arrive over WiFi while
+            // the screen is off. LOCAL holds only the CPU wake lock — Wear
+            // OS still dozes the radio between packets, the socket sits
+            // silent, the buffer drains, and playback "stalls halfway".
+            // NETWORK additionally holds the WifiLock for the whole
+            // playback session; audio keeps flowing in the dark.
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(mediaSourceFactory)
             .build()

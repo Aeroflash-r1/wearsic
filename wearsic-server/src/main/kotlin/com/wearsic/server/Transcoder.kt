@@ -231,8 +231,11 @@ class Transcoder(
 
                 // Validate the CDN URL with a 1-byte CLOSED probe before
                 // committing a response (open ranges 403 — see RangedUpstream).
-                val (probeStatus, _) = client.probeUpstreamLength(sourceUrl, 0)
-                if (probeStatus != HttpStatusCode.PartialContent.value) {
+                // The probe ALSO yields the source's total length: the feed
+                // is bounded at that byte, so any pre-EOF 416/connection-end
+                // is provably mid-song and never dressed up as a clean end.
+                val (probeStatus, probeTotal) = client.probeUpstreamLength(sourceUrl, 0)
+                if (probeStatus != HttpStatusCode.PartialContent.value || probeTotal == null) {
                     // Don't respond here — let AudioProxy retry with a
                     // fresh URL first (dead-URL self-heal). It sends the
                     // final 502 only if the retry also fails.
@@ -246,7 +249,11 @@ class Transcoder(
                     HttpStatusCode.OK
                 }
                 if (startByte > 0) {
-                    call.response.header(HttpHeaders.ContentRange, "bytes $startByte-*")
+                    // RFC 7233 unsatisfied-range form: `bytes N-*/*` — total
+                    // is unknowable until ffmpeg finishes. A bare `bytes N-*`
+                    // (no "/total") is syntactically invalid and some clients
+                    // discard it, losing length hints for seeking.
+                    call.response.header(HttpHeaders.ContentRange, "bytes $startByte-*/*")
                 }
                 call.response.header(HttpHeaders.AcceptRanges, "bytes")
 
@@ -268,10 +275,12 @@ class Transcoder(
 
                         // Pump CDN bytes into ffmpeg's stdin in closed-range
                         // chunks (open upstream ranges 403 — see RangedUpstream).
+                        // Bounded at the probed total: a pre-EOF connection
+                        // death can then never masquerade as a clean feed end.
                         val pump = launch(Dispatchers.IO) {
                             try {
                                 val outcome: ChunkedUpstream = client.fetchClosedChunks(
-                                    sourceUrl, 0, null,
+                                    sourceUrl, 0, (probeTotal ?: 0L) - 1,
                                     refreshUrl = refreshUrl,
                                 ) { buf: ByteArray, n: Int ->
                                     stdin.write(buf, 0, n)
@@ -312,6 +321,15 @@ class Transcoder(
                         }
                         pump.join()
                         stderrDrain.join()
+                        // IMPORTANT: served songs must ALWAYS be whole or dead.
+                        // An upstream feed that died mid-song (refusal/drop)
+                        // leaves ffmpeg's flushed prefix as a shorter-than-song
+                        // output; ending the response cleanly would make the
+                        // watch believe the song ENDED here (the reported
+                        // "stalls halfway, silently"). Abort the connection
+                        // instead: OkHttp sees unexpected EOF, ExoPlayer
+                        // retries the remaining range with a fresh request.
+                        if (!upstreamDone.get()) throw UpstreamTruncatedException(startByte)
                     }
                 }
             } catch (e: Exception) {

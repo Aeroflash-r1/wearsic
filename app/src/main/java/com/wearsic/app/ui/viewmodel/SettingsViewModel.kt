@@ -1,12 +1,16 @@
 package com.wearsic.app.ui.viewmodel
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wearsic.app.data.WearsicMusicRepository
 import com.wearsic.app.data.WearsicPreferencesRepository
 import com.wearsic.app.media.crossfade.CrossfadeLengths
+import com.wearsic.app.model.WearsicError
 import com.wearsic.app.network.model.ConnectionTestState
+import com.wearsic.app.network.model.ReadyResponseDto
+import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.util.Validation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,7 +18,22 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+
+/**
+ * One probe of the server's live state, rendered by the Engine Dashboard:
+ * `/health` (status, engine version, extraction health, update staging) and
+ * `/ready` (can it serve music right now).
+ */
+data class ServerDashboardState(
+    val loading: Boolean = false,
+    val health: ServerHealthDto? = null,
+    val ready: ReadyResponseDto? = null,
+    val error: String? = null,
+    val latencyMs: Long? = null,
+    val checkedAtMillis: Long = 0L
+)
 
 /**
  * ViewModel responsible for application settings and configuration.
@@ -51,12 +70,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private var testJob: Job? = null
 
     fun testConnection(targetUrl: String) {
-        if (_connectionTestState.value is ConnectionTestState.Testing) return
         testJob?.cancel()
+        // Set synchronously: the UI reacts on the tap itself, and a URL
+        // commit landing while the test is in flight (see saveServerUrl)
+        // deliberately leaves this state alone.
+        _connectionTestState.value = ConnectionTestState.Testing
         testJob = viewModelScope.launch {
-            _connectionTestState.value = ConnectionTestState.Testing
             val result = musicRepository.testServerConnection(targetUrl)
-            _connectionTestState.value = result
+            // A newer tap replaced this job — never publish a stale result.
+            if (isActive) _connectionTestState.value = result
         }
     }
 
@@ -67,7 +89,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun saveServerUrl(url: String) {
         viewModelScope.launch {
             preferencesRepository.saveServerUrl(url)
-            _connectionTestState.value = ConnectionTestState.Idle
+            // A changed URL invalidates a PREVIOUS test result — but never
+            // stomp a test that is running right now: the user may have
+            // pressed "Test Connection" at the same moment the field
+            // committed, and the result is still on its way.
+            if (_connectionTestState.value !is ConnectionTestState.Testing) {
+                _connectionTestState.value = ConnectionTestState.Idle
+            }
         }
     }
 
@@ -132,6 +160,62 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun validateApiKey(key: String): Boolean {
         return Validation.validateApiKey(key).isSuccess
+    }
+
+    // ============================================================================
+    // Engine Dashboard (live /health + /ready)
+    // ============================================================================
+
+    private val _serverDashboard = MutableStateFlow(ServerDashboardState())
+    val serverDashboard: StateFlow<ServerDashboardState> = _serverDashboard.asStateFlow()
+
+    private var dashboardJob: Job? = null
+
+    /**
+     * Probes /health, then /ready, and publishes one snapshot. Cancels any
+     * in-flight probe so a rapid tap on Refresh cannot interleave two results.
+     */
+    fun refreshServerDashboard() {
+        dashboardJob?.cancel()
+        dashboardJob = viewModelScope.launch {
+            _serverDashboard.value = _serverDashboard.value.copy(loading = true, error = null)
+            val url = musicRepository.getServerUrl()
+            if (Validation.validateServerUrl(url).isFailure) {
+                _serverDashboard.value = ServerDashboardState(
+                    error = "Server URL not set — add it in Settings first"
+                )
+                return@launch
+            }
+
+            val startedAt = SystemClock.elapsedRealtime()
+            val healthResult = musicRepository.probeServerHealth(url)
+            val latency = SystemClock.elapsedRealtime() - startedAt
+
+            healthResult.fold(
+                onSuccess = { health ->
+                    // /ready is best-effort: a server that predates the
+                    // endpoint (or hiccups on it) still gets a useful card.
+                    val ready = musicRepository.probeServerReadiness(url).getOrNull()
+                    _serverDashboard.value = ServerDashboardState(
+                        loading = false,
+                        health = health,
+                        ready = ready,
+                        latencyMs = latency,
+                        checkedAtMillis = System.currentTimeMillis()
+                    )
+                },
+                onFailure = { error ->
+                    val message = (error as? WearsicError)?.getDisplayMessage()
+                        ?: error.message ?: "Could not reach server"
+                    _serverDashboard.value = ServerDashboardState(
+                        loading = false,
+                        error = message,
+                        latencyMs = latency,
+                        checkedAtMillis = System.currentTimeMillis()
+                    )
+                }
+            )
+        }
     }
 
     // ============================================================================

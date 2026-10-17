@@ -123,6 +123,10 @@ data class InvalidTrackIdError(val trackId: String) : ValidationError("Invalid t
 data class InputTooLongError(val fieldName: String, val maxLength: Int) : 
     ValidationError("$fieldName exceeds maximum length of $maxLength")
 
+/** Input is shorter than the required minimum length */
+data class InputTooShortError(val fieldName: String, val minLength: Int) :
+    ValidationError("$fieldName must be at least $minLength characters")
+
 /** Invalid configuration value supplied by the user (a validation failure). */
 data class InvalidConfigError(val key: String, val value: String) : 
     ValidationError("Invalid value for $key: $value")

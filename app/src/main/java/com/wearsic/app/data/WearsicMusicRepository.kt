@@ -15,6 +15,8 @@ import com.wearsic.app.model.WearsicError
 import com.wearsic.app.network.WearsicApiClient
 import com.wearsic.app.network.WearsicHttpApiClient
 import com.wearsic.app.network.model.ConnectionTestState
+import com.wearsic.app.network.model.ReadyResponseDto
+import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.network.model.TrackDto
 import com.wearsic.app.util.Validation
 import com.wearsic.app.util.sanitizeDisplay
@@ -36,8 +38,11 @@ class WearsicMusicRepository(
     }
 
     suspend fun saveApiKey(key: String) {
-        preferencesRepository.saveApiKey(key)
-        refreshApiKeyWith(key)
+        // Mirror exactly what the repository accepted: a rejected (invalid)
+        // key must NOT be pushed into the shared HTTP client, or every
+        // outgoing request would carry credentials the server will 401.
+        val applied = preferencesRepository.saveApiKey(key) ?: return
+        refreshApiKeyWith(applied)
     }
 
     suspend fun getServerUrl(): String {
@@ -94,6 +99,17 @@ class WearsicMusicRepository(
         }
         return base
     }
+
+    /**
+     * Raw probes for the Engine Dashboard screen. Unlike
+     * [testServerConnection] these do not wrap failures in user hints — the
+     * dashboard renders the transport error and its context itself.
+     */
+    suspend fun probeServerHealth(url: String): Result<ServerHealthDto> =
+        httpApiClient.checkHealth(url)
+
+    suspend fun probeServerReadiness(url: String): Result<ReadyResponseDto> =
+        httpApiClient.checkReady(url)
 
     suspend fun searchMusic(query: String, limit: Int = 10): Result<List<Track>> {
         val queryValidation = Validation.validateQuery(query)

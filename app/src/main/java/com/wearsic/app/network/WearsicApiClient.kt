@@ -3,12 +3,15 @@ package com.wearsic.app.network
 import com.wearsic.app.network.model.AlbumDto
 import com.wearsic.app.network.model.PlaylistDto
 import com.wearsic.app.network.model.PlaylistWithTracksDto
+import com.wearsic.app.network.model.ReadyResponseDto
 import com.wearsic.app.network.model.SearchResponseDto
 import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.network.model.TrackDto
 
 interface WearsicApiClient {
     suspend fun checkHealth(baseUrl: String): Result<ServerHealthDto>
+    /** /ready — "can this server actually serve music right now?" */
+    suspend fun checkReady(baseUrl: String): Result<ReadyResponseDto>
     suspend fun searchTracks(baseUrl: String, query: String): Result<SearchResponseDto>
     /** Same search with an explicit page size (1..25, server-clamped). */
     suspend fun searchTracks(baseUrl: String, query: String, limit: Int): Result<SearchResponseDto>

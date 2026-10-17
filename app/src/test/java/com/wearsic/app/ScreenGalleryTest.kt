@@ -14,6 +14,7 @@ import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Playlist
 import com.wearsic.app.model.Track
 import com.wearsic.app.network.model.ConnectionTestState
+import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.ui.components.WearsicTrackActionSheet
 import com.wearsic.app.ui.screens.AlbumsScreen
 import com.wearsic.app.ui.screens.ArtistsScreen
@@ -25,6 +26,7 @@ import com.wearsic.app.ui.screens.PlaylistDetailScreen
 import com.wearsic.app.ui.screens.PlaylistsScreen
 import com.wearsic.app.ui.screens.QueueScreen
 import com.wearsic.app.ui.screens.SearchScreen
+import com.wearsic.app.ui.screens.ServerDashboardScreen
 import com.wearsic.app.ui.screens.SettingsScreen
 import com.wearsic.app.ui.screens.StorageStatsContent
 import com.wearsic.app.ui.screens.VolumeScreen
@@ -35,6 +37,7 @@ import com.wearsic.app.ui.viewmodel.LibraryViewModel.FavoritesUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistDetailUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistsUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.SearchUiState
+import com.wearsic.app.ui.viewmodel.ServerDashboardState
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Rule
@@ -304,7 +307,26 @@ class ScreenGalleryTest {
     fun audioOutput() = shoot("17-audio-output") {
         VolumeScreen(
             currentOutputDevice = "Pixel Buds Pro",
-            sleepRemainingMs = 15 * 60_000L
+            sleepRemainingMs = 15 * 60_000L,
+            sleepSetMinutes = 15
+        )
+    }
+
+    @Test
+    fun serverDashboard() = shoot("17b-server-dashboard") {
+        ServerDashboardScreen(
+            state = ServerDashboardState(
+                health = ServerHealthDto(
+                    status = "ok",
+                    version = "1.9.0",
+                    serverName = "Wearsic Engine",
+                    transcoderAvailable = true,
+                    canaryHealthy = true,
+                    crashCount = 0
+                ),
+                latencyMs = 38,
+                checkedAtMillis = 0L
+            )
         )
     }
 

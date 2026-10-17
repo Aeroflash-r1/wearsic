@@ -7,6 +7,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.ApplicationStarted
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO as ServerCIO
@@ -33,9 +34,48 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
 import java.io.File
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.security.MessageDigest
+
+/** Boot-time messages (before/around the HTTP server going live). */
+private val bootLog = LoggerFactory.getLogger("boot")
+
+/** First site-local IPv4 address, for the startup banner. null when offline. */
+private fun lanAddress(): String? = runCatching {
+    NetworkInterface.getNetworkInterfaces().asSequence()
+        .filter { it.isUp && !it.isLoopback }
+        .flatMap { it.inetAddresses.asSequence() }
+        .filterIsInstance<Inet4Address>()
+        .firstOrNull { it.isSiteLocalAddress }
+        ?.hostAddress
+}.getOrNull()
+
+/**
+ * One compact startup box instead of five scattered lines. Plain text (no
+ * ANSI): it lands in wearsic-server.log and is read via `wearsic logs`.
+ */
+private fun startupBanner(port: Int, dbPath: String, apiKeySet: Boolean, transcoderReady: Boolean): String {
+    val title = "wearsic engine ${ServerVersion.VERSION}"
+    val rows = buildList {
+        add("address    http://0.0.0.0:$port")
+        lanAddress()?.let { add("LAN        http://$it:$port") }
+        add("database   ${File(dbPath).name}")
+        add("transcoder ${if (transcoderReady) "ready (ffmpeg)" else "unavailable - pkg install ffmpeg"}")
+        add("auth       ${if (apiKeySet) "API key required" else "open - no API key (LAN use)"}")
+    }
+    val w = maxOf(title.length, rows.maxOf { it.length })
+    val sb = StringBuilder()
+    sb.append("╭─ ").append(title).append(' ').append("─".repeat(w - title.length)).append('\n')
+    for (r in rows) {
+        sb.append("│ ").append(r).append(" ".repeat(w - r.length)).append(" │").append('\n')
+    }
+    sb.append('╰').append("─".repeat(w + 3))
+    return sb.toString()
+}
 
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
@@ -131,7 +171,7 @@ fun main() {
     // song streaming, inactivity-watchdog only.
     val transcoder = Transcoder(streamClient, cacheDir = java.io.File(stateDir, "transcode-cache"))
     if (!transcoder.available) {
-        System.err.println("WARNING: ffmpeg not found on PATH — songs YouTube only offers in Opus/WebM " +
+        bootLog.warn("ffmpeg not found on PATH — songs YouTube only offers in Opus/WebM " +
             "will return 503. Install it in Termux with: pkg install ffmpeg")
     }
 
@@ -162,11 +202,12 @@ fun main() {
             override fun getMatchedVideoId(surrogateId: String): String? =
                 database.getMatchedVideoId(surrogateId)
         },
+        warmUpstream = audioProxy::warmUpstream,
     )
 
     if (apiKey == null) {
-        System.err.println(
-            "WARNING: WEARSIC_API_KEY is not set — the server is OPEN to anyone who can reach it. " +
+        bootLog.warn(
+            "WEARSIC_API_KEY is not set — the server is OPEN to anyone who can reach it. " +
                 "Fine for private LAN/Tailscale use; REQUIRED for any public/tunnel deployment."
         )
     }
@@ -192,6 +233,11 @@ fun main() {
             engineUpdater = engineUpdater,
             crashReporter = crashReporter,
         )
+        // Startup banner once the app is actually live (connectors bound),
+        // so the log opens with one readable box instead of scattered lines.
+        environment.monitor.subscribe(ApplicationStarted) {
+            bootLog.info(startupBanner(port, dbPath, apiKey != null, transcoder.available))
+        }
     }.apply {
         // Graceful shutdown: drain in-flight streams, then release every
         // owned resource. Previously SIGTERM cut streams mid-byte and leaked

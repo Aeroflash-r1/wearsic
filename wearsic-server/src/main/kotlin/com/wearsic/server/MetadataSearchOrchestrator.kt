@@ -36,6 +36,13 @@ class MetadataSearchOrchestrator(
      * removed — this only serves rows persisted by older builds.
      */
     private val persistentMatches: MatchPersistence? = null,
+    /**
+     * Fire-and-forget "warm this prefetched target's CDN path" hook
+     * (`AudioProxy::warmUpstream`). Pools the host connection and heats the
+     * edge a few seconds before the likely tap, so the tap's own request
+     * opens fast instead of paying a cold first byte (live-seen: 3.8s).
+     */
+    private val warmUpstream: ((videoId: String, url: String) -> Unit)? = null,
 ) {
     companion object {
         /**
@@ -135,7 +142,8 @@ class MetadataSearchOrchestrator(
             for (track in tracks) {
                 if (!isActive || foregroundPlaybackDemand) break
                 try {
-                    youtube.streamTarget(track.videoId)
+                    val target = youtube.streamTarget(track.videoId)
+                    if (target != null) warmUpstream?.invoke(track.videoId, target.url)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {

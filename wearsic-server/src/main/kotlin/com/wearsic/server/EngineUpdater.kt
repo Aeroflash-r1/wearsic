@@ -16,6 +16,10 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.zip.ZipInputStream
+import org.slf4j.LoggerFactory
+
+/** Logger tag "update": engine release checks and staging. */
+private val log = LoggerFactory.getLogger("update")
 
 /**
  * A newer engine release discovered on GitHub. [sha256Url] is the release's
@@ -231,7 +235,7 @@ class EngineUpdater(
             ?: installable.firstNotNullOfOrNull { it.tag_name?.removePrefix("v") }
 
         if (update != null) {
-            println("[update] New engine available: v${update.version} (running v$runningVersion)")
+            log.info("New engine available: v{} (running v{})", update.version, runningVersion)
         }
         update
     } catch (e: Exception) {
@@ -328,14 +332,14 @@ class EngineUpdater(
         recordAttempt(update.version)
         finalZip.delete()
         tmpZip.delete()
-        println(
-            "[update] Engine v${update.version} staged (attempt $attempt, sha256 verified) " +
-                "— supervisor will apply it on next restart"
+        log.info(
+            "Engine v{} staged (attempt {}, sha256 verified) — supervisor will apply it on next restart",
+            update.version, attempt
         )
         update.version
     } catch (e: Exception) {
         lastCheckError = ("stage failed: " + (e.message ?: e.javaClass.simpleName)).take(200)
-        println("[update] ERROR staging engine update: ${e.message}")
+        log.error("staging engine update failed: {}", e.message)
         // Never leave a rejected download behind.
         runCatching { File(stateDir, "update.zip.tmp").delete() }
         null

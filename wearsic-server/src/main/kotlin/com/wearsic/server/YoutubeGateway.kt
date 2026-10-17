@@ -3,12 +3,13 @@ package com.wearsic.server
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -125,6 +126,22 @@ class YoutubeGateway(
         // with the iOS client answers in ~0.3-0.5s. Null on ANY failure
         // (login-gated, ciphered-only, throttled) → full extraction fallback.
         private const val LEAN_HTTP_TIMEOUT_MS: Long = 15_000L
+
+        /**
+         * How long the remaining lean clients may keep a resolve open AFTER
+         * the wall-safe primary (VISIONOS) answered. Their answers add
+         * rotation tickets; the first answer alone is enough to start
+         * playback.
+         */
+        private const val LEAN_ANSWER_GRACE_MS: Long = 400L
+
+        /**
+         * How long a resolve may keep waiting for the primary client when
+         * OTHER clients already returned formats. Its URLs are the only
+         * ones measured to survive the 1 MB CDN wall, so a slightly slower
+         * primary is worth absorbing.
+         */
+        private const val LEAN_PREFERRED_WAIT_MS: Long = 1400L
         private const val IOS_CLIENT_VERSION = "21.03.2"
         private const val IOS_USER_AGENT =
             "com.google.ios.youtube/21.03.2 (iPhone16,2; U; CPU iOS 18_7_2 like Mac OS X; en_US)"
@@ -153,6 +170,13 @@ class YoutubeGateway(
             val clientIdHeader: String,
             val userAgent: String,
             val contextFields: String,
+            /**
+             * Client needs the session visitor id in its payload. Only
+             * VISIONOS does (IOS works cookie-less without one), and keeping
+             * it to that single branch lets the visitor-id fetch overlap the
+             * other clients' POSTs instead of serializing in front of them.
+             */
+            val wantsVisitorData: Boolean = false,
         )
 
         private val LEAN_CLIENTS: List<LeanClientProfile> = listOf(
@@ -160,6 +184,7 @@ class YoutubeGateway(
                 clientName = "VISIONOS", clientVersion = "1.02", clientIdHeader = "",
                 userAgent = VISIONOS_USER_AGENT,
                 contextFields = """"deviceModel":"RealityDevice14,1","deviceMake":"Apple","osName":"visionOS","osVersion":"25.6.0.0",""",
+                wantsVisitorData = true,
             ),
             LeanClientProfile(
                 clientName = "IOS", clientVersion = IOS_CLIENT_VERSION, clientIdHeader = "5",
@@ -189,10 +214,25 @@ class YoutubeGateway(
         private const val VISITOR_DATA_TTL_MS: Long = 6 * 60 * 60 * 1000L
 
         /**
+         * Failed visitor-id fetches back off for this long. Without it, a
+         * network that cannot reach sw.js_data paid a fresh (failing) fetch
+         * attempt on EVERY resolve.
+         */
+        private const val VISITOR_DATA_RETRY_MS: Long = 5 * 60 * 1000L
+
+        /**
          * How long a video's extractor-ticket warm is considered fresh —
          * at most one background extraction per video per window.
          */
         private const val EXTRACTOR_WARM_TTL_MS: Long = 45 * 60 * 1000L
+
+        /**
+         * Delay before a playback-triggered warm starts extracting: keeps the
+         * first seconds of a stream (the ones the listener is waiting on)
+         * free of competing extraction I/O. A wall refusal would come ~64s of
+         * audio in, far beyond this window.
+         */
+        private const val WARM_EXTRACTOR_DELAY_MS: Long = 4_000L
 
         /** Cap per-video ticket pool: enough URLs to cover long mixes. */
         private const val MAX_TICKETS_PER_VIDEO = 40
@@ -265,6 +305,10 @@ class YoutubeGateway(
 
     @Volatile
     private var visitorDataFetchedAt: Long = 0L
+
+    /** Backoff stamp: failed fetches retry no sooner than this. */
+    @Volatile
+    private var visitorDataNextAttemptAt: Long = 0L
 
     // ---------------- Search ----------------
 
@@ -502,12 +546,22 @@ class YoutubeGateway(
             if (lean != null) {
                 healthMeter?.recordSuccess()
                 stashFormatFallbacks(videoId, ranked.drop(1))
-                // Safety net for networks where even the best lean family gets
-                // walled: warm extractor tickets in the background NOW so that
-                // a mid-song refusal rotates straight onto proven-unwalled
-                // URLs instead of burning the retry budget on spent lean URLs.
-                warmExtractorTickets(videoId)
-                val target = StreamTarget(url = lean.url, mimeType = lean.mimeType, itag = lean.itag)
+                // NOTE: extractor-ticket warm deliberately does NOT run from
+                // here. streamTarget also serves search PREFETCH (every
+                // result row resolves in the background), and warming one
+                // heavy NewPipe extraction per row competed with the song
+                // download the user was starting (measured live: ~2 MB/s
+                // collapses to ~250 KB/s) — the "slow to start playing"
+                // regression. The warm is fired from AudioProxy instead, the
+                // moment a video is ACTUALLY streamed, so only played songs
+                // pay for it.
+                val target = StreamTarget(
+                    url = lean.url,
+                    mimeType = lean.mimeType,
+                    itag = lean.itag,
+                    contentLength = lean.contentLength,
+                    needsExtractorWarm = !isWallSafeClient(lean.client),
+                )
                 streamCache.put(
                     videoId,
                     CachedStreamTarget(target, System.currentTimeMillis() + STREAM_CACHE_TTL_MILLIS)
@@ -665,11 +719,20 @@ class YoutubeGateway(
      * broken path instead.
      */
     internal fun warmExtractorTickets(videoId: String) {
+        // Wall-marked videos already resolve through the extractor — their
+        // pool IS extractor-built. Warming again would burn a duplicate
+        // extraction for nothing.
+        if (isWallThrottled(videoId)) return
         val now = System.currentTimeMillis()
         extractorWarmed.get(videoId)?.let { if (it > now) return }
         extractorWarmed.put(videoId, now + EXTRACTOR_WARM_TTL_MS)
         warmScope.launch {
             try {
+                // Let playback's initial buffer fill uncontended first. The
+                // wall (when it comes) refuses ~64s of audio in, so a few
+                // seconds of delay still lands tickets long before a
+                // rotation could need them.
+                delay(WARM_EXTRACTOR_DELAY_MS)
                 val streams = withTimeoutOrNull(EXTRACTION_TIMEOUT_MS) {
                     extractionMutex.withLock {
                         withContext(Dispatchers.IO) { resolveAudioStreamsWithFallback(videoId) }
@@ -696,7 +759,13 @@ class YoutubeGateway(
     private fun publishTicket(videoId: String, next: LeanAudio, why: String): StreamTarget {
         logger.info("Track {}: {} — {} itag {} via {}", videoId, why, next.mimeType, next.itag, next.client)
         healthMeter?.recordSuccess()
-        val target = StreamTarget(url = next.url, mimeType = next.mimeType, itag = next.itag)
+        val target = StreamTarget(
+            url = next.url,
+            mimeType = next.mimeType,
+            itag = next.itag,
+            contentLength = next.contentLength,
+            needsExtractorWarm = !isWallSafeClient(next.client),
+        )
         streamCache.put(
             videoId,
             CachedStreamTarget(target, System.currentTimeMillis() + STREAM_CACHE_TTL_MILLIS)
@@ -740,6 +809,12 @@ class YoutubeGateway(
         val bitrateKbps: Int,
         val itag: Int,
         val client: String = "",
+        /**
+         * Byte length of this exact file as stated by the player response
+         * (0 = unknown). The proxy uses it to skip its 1-byte length probe —
+         * a full CDN round trip — before the first byte of every request.
+         */
+        val contentLength: Long = 0L,
     )
 
     /**
@@ -795,9 +870,13 @@ class YoutubeGateway(
      */
     private suspend fun currentVisitorData(): String? {
         val cached = visitorData
-        if (cached != null && System.currentTimeMillis() - visitorDataFetchedAt < VISITOR_DATA_TTL_MS) {
+        val now = System.currentTimeMillis()
+        if (cached != null && now - visitorDataFetchedAt < VISITOR_DATA_TTL_MS) {
             return cached
         }
+        // Failed fetches back off (see VISITOR_DATA_RETRY_MS) so one broken
+        // sw.js_data route cannot tax every single resolve.
+        if (visitorDataNextAttemptAt > now) return cached
         return withContext(Dispatchers.IO) {
             runCatching {
                 val req = HttpRequest.newBuilder(URI.create(VISITOR_DATA_URL))
@@ -823,10 +902,13 @@ class YoutubeGateway(
                 ?.let { fresh ->
                     visitorData = fresh
                     visitorDataFetchedAt = System.currentTimeMillis()
+                    visitorDataNextAttemptAt = 0L
                     logger.info("Visitor id acquired ({} chars)", fresh.length)
                     fresh
                 }
-                ?: cached
+                ?: cached.also {
+                    visitorDataNextAttemptAt = System.currentTimeMillis() + VISITOR_DATA_RETRY_MS
+                }
         }
     }
 
@@ -841,32 +923,89 @@ class YoutubeGateway(
      * independent rotation sources (VR needs a configured cookie). All
      * clients are queried in PARALLEL so total latency stays at one
      * round-trip.
+     *
+     * LATENCY BEFORE COMPLETENESS: once ANY client has answered with
+     * formats, the rest get only [LEAN_ANSWER_GRACE_MS] to add rotation
+     * tickets — a single stalled client must never park a tap on its own
+     * HTTP timeout (live-seen: a 3.1s cold start while two clients had
+     * long answered). Before the first good answer all clients are still
+     * awaited: there, bailing out would only trigger the much slower
+     * extraction fallback.
      */
     private suspend fun resolveLeanFormats(videoId: String): List<LeanAudio>? {
         if (!VIDEO_ID_RE.matches(videoId)) return null
-        val visitor = currentVisitorData()
-        if (visitor == null) {
-            // No session id: VISIONOS and other modern clients answer
-            // LOGIN_REQUIRED. IOS usually still resolves (with URLs that can
-            // hit the 1 MB wall); a configured cookie unlocks the rest.
-            logger.info("No visitor id available for {} — some clients may need a cookie", videoId)
-        }
-        val perClient = coroutineScope {
-            LEAN_CLIENTS.map { profile ->
-                async(Dispatchers.IO) {
-                    runCatching { fetchLeanFormats(videoId, profile, visitor) }
-                        .onFailure {
-                            logger.info("Lean player ({}) failed for {}: {}", profile.clientName, videoId, it.message)
-                        }
-                        .getOrDefault(emptyList())
+        // Queries run on a DETACHED scope on purpose: java.net.http's send()
+        // is blocking and not cancellation-interruptible, so structured
+        // concurrency would keep this call parked in join() until a stalled
+        // client hit its timeout even after an answer was picked.
+        val queryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val answers = Channel<Pair<LeanClientProfile, List<LeanAudio>>>(Channel.UNLIMITED)
+        LEAN_CLIENTS.forEach { profile ->
+            queryScope.launch {
+                val audios = try {
+                    // The visitor-id fetch overlaps the OTHER clients' POSTs
+                    // instead of serializing in front of the whole resolve:
+                    // only the client that carries the id (VISIONOS) waits on
+                    // it, so a cold visitor cache costs one branch's latency,
+                    // not every resolve's.
+                    val visitor = if (profile.wantsVisitorData) currentVisitorData() else null
+                    if (profile.wantsVisitorData && visitor == null) {
+                        // No session id: VISIONOS answers LOGIN_REQUIRED; IOS
+                        // still resolves (with URLs that can hit the 1 MB
+                        // wall); a configured cookie unlocks the rest.
+                        logger.info("No visitor id available for {} — some clients may need a cookie", videoId)
+                    }
+                    fetchLeanFormats(videoId, profile, visitor)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    logger.info("Lean player ({}) failed for {}: {}", profile.clientName, videoId, t.message)
+                    emptyList()
                 }
-            }.awaitAll()
+                answers.trySend(profile to audios)
+            }
         }
-        val audios = perClient.flatten().distinctBy { it.url }
+        val preferred = LEAN_CLIENTS.firstOrNull { it.wantsVisitorData } ?: LEAN_CLIENTS.first()
+        val collected = mutableListOf<Pair<LeanClientProfile, List<LeanAudio>>>()
+        var firstGoodAt = 0L
+        var preferredAnswered = false
+        while (collected.size < LEAN_CLIENTS.size) {
+            var answer = answers.tryReceive().getOrNull()
+            if (answer == null) {
+                if (firstGoodAt == 0L) {
+                    // Nothing good yet — a null return here would send the
+                    // caller into the slow extraction path, so keep waiting.
+                    answer = answers.receive()
+                } else {
+                    // Formats already exist, so this is a pure quality wait:
+                    // brief once the primary has answered (its tickets are
+                    // the wall-safe ones); longer while it is still silent.
+                    val budget = if (preferredAnswered) LEAN_ANSWER_GRACE_MS else LEAN_PREFERRED_WAIT_MS
+                    val left = budget - (System.currentTimeMillis() - firstGoodAt)
+                    if (left <= 0) break
+                    answer = withTimeoutOrNull(left) { answers.receive() } ?: break
+                }
+            }
+            collected += answer
+            if (answer.first === preferred) preferredAnswered = true
+            if (firstGoodAt == 0L && answer.second.isNotEmpty()) {
+                firstGoodAt = System.currentTimeMillis()
+            }
+        }
+        queryScope.cancel() // late answers are dropped by design
+        // Client order — not arrival order — ranks the tickets: an early IOS
+        // answer must not demote VISIONOS's wall-safe URLs.
+        val audios = collected
+            .sortedBy { LEAN_CLIENTS.indexOf(it.first) }
+            .flatMap { it.second }
+            .distinctBy { it.url }
         if (audios.isEmpty()) return null
         logger.info(
-            "Lean resolve {}: {} tickets from {} client(s)",
-            videoId, audios.size, perClient.count { it.isNotEmpty() },
+            "Lean resolve {}: {} tickets from {} client(s) [{}]",
+            videoId, audios.size, collected.count { it.second.isNotEmpty() },
+            collected.filter { it.second.isNotEmpty() }
+                .sortedBy { LEAN_CLIENTS.indexOf(it.first) }
+                .joinToString("+") { it.first.clientName },
         )
         // Same preference as the extractor path, as a RANKING so the caller
         // can rotate: AAC-LC (hardware-decoded on the watch, low battery)
@@ -938,7 +1077,10 @@ class YoutubeGateway(
             val mime = o["mimeType"]?.jsonPrimitive?.contentOrNull ?: ""
             if (!mime.contains("audio", ignoreCase = true)) return@mapNotNull null
             val br = o["bitrate"]?.jsonPrimitive?.intOrNull ?: 0
-            LeanAudio(url, mime, br / 1000, o["itag"]?.jsonPrimitive?.intOrNull ?: 0, profile.clientName)
+            // InnerTube states the file size as a STRING ("3449447"); the
+            // proxy uses it to skip its pre-stream length probe.
+            val len = o["contentLength"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
+            LeanAudio(url, mime, br / 1000, o["itag"]?.jsonPrimitive?.intOrNull ?: 0, profile.clientName, len)
         }
     }
 
@@ -1103,8 +1245,39 @@ internal fun mergeTickets(
     return added
 }
 
-/** A resolved, playable audio target: CDN URL plus MIME type. */
-data class StreamTarget(val url: String, val mimeType: String, val itag: Int = 0)
+/**
+ * Client families whose raw URLs are live-verified to stream WHOLE songs
+ * (no ~1 MB transfer wall): VISIONOS player URLs and extractor-built URLs
+ * (which carry the deobfuscated `n`). Everything else (IOS, ANDROID_VR,
+ * unknown) is wall-prone and gets the background extractor-ticket warm when
+ * played.
+ */
+private fun isWallSafeClient(client: String): Boolean =
+    client.equals("VISIONOS", ignoreCase = true) || client.equals("extractor", ignoreCase = true)
+
+/**
+ * The target the proxy streams from — one audio file, resolved from either a
+ * lean player response, the extractor, or a rotation ticket.
+ */
+data class StreamTarget(
+    val url: String,
+    val mimeType: String,
+    val itag: Int = 0,
+    /**
+     * Known byte length (0 = unknown). Lean resolutions carry it from the
+     * player response so the proxy does not pay a length-probe round trip
+     * before the first byte; extractor resolutions probe as before.
+     */
+    val contentLength: Long = 0L,
+    /**
+     * True when this URL's client family is known to hit the CDN's ~1 MB
+     * transfer wall mid-song (IOS/VR/unknown). VISIONOS URLs are
+     * live-verified wall-free and must NOT trigger the extractor warm —
+     * that background extraction competes with the playback download and
+     * showed up as slow tap-to-play on a real watch.
+     */
+    val needsExtractorWarm: Boolean = false,
+)
 
 /** Cache entry: the resolved CDN URL plus its expiry (URLs expire upstream). */
 data class CachedStreamTarget(val target: StreamTarget, val expiresAtMillis: Long)

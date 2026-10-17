@@ -9,6 +9,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
+import org.slf4j.LoggerFactory
+
+/** Logger tag "selfheal": canary failures and auto-recovery actions. */
+private val log = LoggerFactory.getLogger("selfheal")
 
 /**
  * Wires the self-healing layers together and runs their background loops:
@@ -144,25 +148,25 @@ class SelfHealOrchestrator(
         lastEngineBrokenAtMillis = now
 
         if (updater.hasStagedUpdate()) {
-            println("[selfheal] Engine broken and an update is ALREADY staged — restarting to apply it")
+            log.warn("Engine broken and an update is ALREADY staged — restarting to apply it")
             restartSelf()
             return
         }
 
         if (!autoUpdate) {
-            println(
-                "[selfheal] Engine appears BROKEN (canary failed). " +
+            log.warn(
+                "Engine appears BROKEN (canary failed). " +
                     "Auto-update is disabled (WEARSIC_AUTO_UPDATE=0) — " +
                     "download the latest wearsic-server-termux zip and restart to fix."
             )
             return
         }
 
-        println("[selfheal] Engine appears BROKEN — searching for a newer engine release...")
+        log.warn("Engine appears BROKEN — searching for a newer engine release...")
         val remote = updater.checkForUpdate()
         if (remote == null) {
-            println(
-                "[selfheal] No newer release found; already on v${ServerVersion.VERSION}. " +
+            log.warn(
+                "No newer release found; already on v${ServerVersion.VERSION}. " +
                     "If YouTube just changed something, a fix needs a new release upstream. " +
                     "A YouTube cookie (POST /api/config/youtube-cookie) can also bypass bot-wall failures."
             )
@@ -179,7 +183,7 @@ class SelfHealOrchestrator(
      */
     private fun restartSelf() {
         if (!restarting.compareAndSet(null, "restart")) return
-        println("[selfheal] Restarting in 3s to apply the updated engine (supervisor will swap it in)...")
+        log.info("Restarting in 3s to apply the updated engine (supervisor will swap it in)...")
         restartAction()
     }
 }

@@ -125,7 +125,7 @@ other_supervisor_pids() {
     pid="${d#/proc/}"
     [ "$pid" = "$$" ] && continue
     [ "$pid" = "$self" ] && continue
-    cmdline="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" || continue
+    cmdline="$( { tr '\0' ' ' < "$d/cmdline"; } 2>/dev/null )" || continue
     [ -z "$cmdline" ] && continue
     case "$cmdline" in
       *"$SCRIPT_DIR/run-termux.sh"*) printf '%s\n' "$pid" ;;

@@ -142,7 +142,16 @@ download_bar() { # $1 = url, $2 = out file, $3 = label
   curl -fL --retry 3 --retry-delay 2 -o "$out" "$url" >/dev/null 2>&1 &
   local pid=$! have=0 pct=0
   while kill -0 "$pid" 2>/dev/null; do
-    have="$(wc -c < "$out" 2>/dev/null || echo 0)"
+    # curl creates $out only when its first bytes arrive: before that, an
+    # unguarded `wc -c < "$out"` makes the SHELL's redirection print
+    # "No such file or directory" (2>/dev/null on the command does not
+    # silence a failed input redirection — it is applied after it).
+    if [ -e "$out" ]; then
+      have="$(wc -c < "$out" 2>/dev/null || echo 0)"
+    else
+      have=0
+    fi
+    case "$have" in ''|*[!0-9]*) have=0 ;; esac
     pct=$(( have * 100 / total ))
     [ "$pct" -gt 100 ] && pct=100
     draw_bar "$label" "$pct" "$have" "$total"
@@ -152,6 +161,23 @@ download_bar() { # $1 = url, $2 = out file, $3 = label
   draw_bar "$label" 100 "$total" "$total"
   printf '\n'
   return 0
+}
+
+# Install a file ATOMICALLY: copy to a sibling temp, then rename into place.
+# A plain `cp` over a file bash is CURRENTLY EXECUTING truncates that very
+# inode, so the running shell's next buffered read lands mid-line in the new
+# content and it dies with "syntax error near unexpected token" — exactly
+# what corrupted `wearsic update` while it refreshed its own installed copy.
+# A rename swaps the inode instead: the running shell keeps reading the old
+# content, intact, and the new file is live for the next command.
+replace_file() { # $1 = source file, $2 = destination file
+  local src="$1" dst="$2" tmp
+  tmp="$(mktemp "$(dirname "$dst")/.wearsic-new.XXXXXX")" || return 1
+  if cp "$src" "$tmp" && mv -f "$tmp" "$dst"; then
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null
+  return 1
 }
 
 # Rounded box for pairing cards and verdicts. Buffered: content decides
@@ -424,20 +450,90 @@ health_ok() {
   curl -sf -m 5 "http://127.0.0.1:$(port)/health" >/dev/null 2>&1
 }
 
-# Best-effort LAN IP of this device (wlan0 first, then any route).
+# Best-effort LAN IP of this device — the address to enter on the watch.
+# Termux ships neither iproute2 nor net-tools, and recent Android removed
+# the old `dhcp.wlan0.ipaddress` property, so every probe we know is tried
+# in order until one answers:
+#   1. termux-wifi-connectioninfo (termux-api add-on; exact Wi-Fi address)
+#   2. ip / iproute2             (Wi-Fi first, then the default-route NIC)
+#   3. ifconfig / net-tools      (same order)
+#   4. Android's own tools       (/system/bin/ip, /system/bin/ifconfig —
+#      absolute paths because Termux's PATH never contains /system/bin)
+#   5. getprop                   (older Androids expose dhcp.*.ipaddress)
+#   6. /proc/net/fib_trie        (last resort, legacy domains only)
+# Prints NOTHING when every probe fails: callers print guidance instead of
+# a fake `http://<phone-IP>` placeholder (users typed it verbatim).
+
+# Default-route interface from /proc (no tools needed). Empty when the file
+# is unreadable (modern-target app domains cannot read it; Termux can).
+default_iface() {
+  awk '$2 == "00000000" && $1 != "lo" { print $1; exit }' \
+    "${WEARSIC_PROC_NET:-/proc/net}/route" 2>/dev/null
+}
+
 lan_ip() {
-  local ip=""
-  if command -v ip >/dev/null 2>&1; then
-    ip="$(ip -f inet addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+  local ip="" iface sys
+  iface="$(default_iface)"
+  sys="${WEARSIC_SYS_BIN:-/system/bin}"
+
+  # 1. Termux:API — exact Wi-Fi address, no parsing games.
+  if command -v termux-wifi-connectioninfo >/dev/null 2>&1; then
+    ip="$(termux-wifi-connectioninfo 2>/dev/null \
+      | sed -n 's/.*"ip"[[:space:]]*:[[:space:]]*"\([0-9.]\{7,\}\)".*/\1/p' | head -1)"
   fi
+
+  # 2. iproute2.
+  if [ -z "$ip" ] && command -v ip >/dev/null 2>&1; then
+    ip="$(ip -4 -o addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    if [ -z "$ip" ] && [ -n "$iface" ]; then
+      ip="$(ip -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
+  fi
+
+  # 3. net-tools ifconfig (present only when the user installed it).
   if [ -z "$ip" ] && command -v ifconfig >/dev/null 2>&1; then
-    ip="$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p' | head -1)"
-    [ -z "$ip" ] && ip="$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    ip="$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    if [ -z "$ip" ] && [ -n "$iface" ]; then
+      ip="$(ifconfig "$iface" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
   fi
-  if [ -z "$ip" ] && command -v hostname >/dev/null 2>&1; then
-    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+
+  # 4. Android's own tools, by absolute path.
+  if [ -z "$ip" ] && [ -x "$sys/ip" ]; then
+    ip="$("$sys/ip" -4 -o addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    if [ -z "$ip" ] && [ -n "$iface" ]; then
+      ip="$("$sys/ip" -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
   fi
-  printf '%s' "$ip"
+  if [ -z "$ip" ] && [ -x "$sys/ifconfig" ]; then
+    ip="$("$sys/ifconfig" wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    if [ -z "$ip" ] && [ -n "$iface" ]; then
+      ip="$("$sys/ifconfig" "$iface" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
+  fi
+
+  # 5. Android properties (older devices; gone on many Android 10+ builds).
+  local gp=""
+  if command -v getprop >/dev/null 2>&1; then gp="getprop"
+  elif [ -x "$sys/getprop" ]; then gp="$sys/getprop"; fi
+  if [ -z "$ip" ] && [ -n "$gp" ]; then
+    ip="$("$gp" dhcp.wlan0.ipaddress 2>/dev/null | tr -d '\r\n')"
+    if [ -z "$ip" ]; then
+      ip="$("$gp" 2>/dev/null \
+        | sed -n 's/^\[[^]]*[Ww][Ll][Aa][Nn][^]]*\.ipaddress\]: \[\([0-9.]*\)\]$/\1/p' | head -1)"
+    fi
+  fi
+
+  # 6. Pure /proc.
+  if [ -z "$ip" ] && [ -n "$iface" ]; then
+    ip="$(awk '/32 host/ { print f } { f = $2 }' "${WEARSIC_PROC_NET:-/proc/net}/fib_trie" 2>/dev/null \
+      | grep -E '^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
+  fi
+
+  # Only a plain dotted quad leaves this function.
+  if printf '%s' "$ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+    printf '%s' "$ip"
+  fi
 }
 
 write_env_key() {  # $1 = key
@@ -456,17 +552,25 @@ write_env_value() {  # $1 = key, $2 = value (may contain spaces/;)
   fi
 }
 
+# http://<this-phone>:<port>, or EMPTY when no local IP can be found —
+# callers show guidance instead of a fake `http://<phone-IP>` placeholder
+# (a placeholder looks like a ready-to-type address, and users typed it).
 server_url() {
   local ip; ip="$(lan_ip)"
-  if [ -n "$ip" ]; then printf 'http://%s:%s' "$ip" "$(port)"
-  else printf 'http://<phone-IP>:%s   (find it: wearsic server ip)' "$(port)"; fi
+  if [ -n "$ip" ]; then printf 'http://%s:%s' "$ip" "$(port)"; fi
 }
 
 show_pairing() {
-  local key; key="$(api_key)"
+  local key url; key="$(api_key)"; url="$(server_url)"
   box_begin "connect your watch"
   box_line ""
-  box_line "   ${C_ACC}server${C_RESET}   $(server_url)"
+  if [ -n "$url" ]; then
+    box_line "   ${C_ACC}server${C_RESET}   $url"
+  else
+    box_line "   ${C_ACC}server${C_RESET}   ${C_WARN}couldn't detect this phone's IP${C_RESET}"
+    box_line "   ${C_DIM}is Wi-Fi on? then rerun: wearsic url${C_RESET}"
+    box_line "   ${C_DIM}watch elsewhere? get a public URL: wearsic funnel${C_RESET}"
+  fi
   if [ -n "$key" ]; then
     box_line "   ${C_ACC}key${C_RESET}      $key"
   else
@@ -568,7 +672,8 @@ cmd_status() {
     pid="$(server_pids | head -1)"
     up=""; [ -n "$pid" ] && up="$(proc_uptime "$pid")"
     printf '  %s %s%s%s%s\n' "$(dot ok)" "$C_OK" "running and healthy" "$C_RESET" "${up:+ · up $up}"
-    kv "address" "$(server_url)"
+    local url; url="$(server_url)"
+    kv "address" "${url:-${C_DIM}not detected — see: wearsic url${C_RESET}}"
     kv "version" "v${ver:-unknown}"
     [ -n "$pid" ] && kv "process" "pid $pid"
     [ -n "$ok_n" ] && kv "engine" "${ok_n} ok · ${fail_n:-0} failed (${rate:-0}%)"
@@ -649,7 +754,11 @@ cmd_url() { installed; show_pairing; }
 
 cmd_ip() {
   local ip; ip="$(lan_ip)"
-  [ -n "$ip" ] && say "WiFi IP: ${C_ACC}$ip${C_RESET}" || die "Could not find a WiFi IP — are you connected to WiFi?"
+  if [ -n "$ip" ]; then
+    say "WiFi IP: ${C_ACC}$ip${C_RESET}"
+    return 0
+  fi
+  die "no local IP found — is Wi-Fi on? (Termux: pkg install iproute2, or check Android Settings → Wi-Fi)"
 }
 
 cmd_api_key() {
@@ -974,9 +1083,16 @@ cmd_update() {
   [ "$include_pre" = "1" ] && say "Including pre-releases (--pre)."
 
   repo="${WEARSIC_REPO:-Aeroflash-r1/wearsic}"
-  work="$(mktemp -d)" || die "could not create a temp dir"
+  # The EXIT trap below must outlive this function, so the path lives in a
+  # GLOBAL: `work` is a local of THIS function, and by the time a normal-exit
+  # trap runs it is out of scope — `${work:-}` expanded EMPTY, `rm -rf ""`
+  # was a silent no-op, and every update leaked its staging dir (download +
+  # unpacked tree, tens of MB) into $TMPDIR. (A bare "$work" also tripped
+  # `set -u` with "work: unbound variable" after every successful update.)
+  UPDATE_WORK="$(mktemp -d)" || die "could not create a temp dir"
+  work="$UPDATE_WORK"
   # EXIT (not RETURN) so the temp dir is cleaned even when die() exits.
-  trap 'rm -rf "$work"' EXIT
+  trap 'rm -rf "${UPDATE_WORK:-}"' EXIT
 
   say "Checking for the latest Wearsic server release…"
   local zip_url sha_url json tag
@@ -1073,7 +1189,12 @@ cmd_update() {
     die "the swap did not complete — the previous engine was restored"
   fi
   for f in run-termux.sh .env.example README.md; do
-    [ -f "$src/$f" ] && cp "$src/$f" "$DEST/$f"
+    [ -f "$src/$f" ] || continue
+    if [ "$f" = "run-termux.sh" ]; then
+      replace_file "$src/$f" "$DEST/$f"   # may be executing (supervisor)
+    else
+      cp "$src/$f" "$DEST/$f"             # plain data files
+    fi
   done
   chmod +x "$DEST/run-termux.sh" "$DEST/bin/wearsic-server" 2>/dev/null || true
   # Fingerprint of the engine we just installed: after the restart we check
@@ -1082,14 +1203,18 @@ cmd_update() {
   local new_hash
   new_hash="$(file_hash "$DEST/bin/wearsic-server")"
 
-  # Refresh the CLI copy(s) — the code only, never config.
+  # Refresh the CLI copy(s) — the code only, never config. replace_file:
+  # one of these copies is usually the script THIS process is running
+  # (invoked via PATH), and a plain `cp` over it truncates the file bash is
+  # still reading — the "syntax error / unexpected EOF" users hit right
+  # after "✓ update complete".
   local bindir
   for bindir in "${PREFIX:-/nonexistent}/bin" "$HOME/.local/bin" "$HOME/bin"; do
     if [ -f "$bindir/wearsic" ] && [ -f "$src/wearsic" ]; then
-      cp "$src/wearsic" "$bindir/wearsic" && chmod +x "$bindir/wearsic"
+      replace_file "$src/wearsic" "$bindir/wearsic" && chmod +x "$bindir/wearsic"
     fi
   done
-  [ -f "$src/wearsic" ] && cp "$src/wearsic" "$DEST/wearsic" && chmod +x "$DEST/wearsic" 2>/dev/null
+  [ -f "$src/wearsic" ] && replace_file "$src/wearsic" "$DEST/wearsic" && chmod +x "$DEST/wearsic" 2>/dev/null
   ok "update installed (previous engine kept for rollback)"
 
   # Bring it up and PROVE it is healthy; otherwise roll back.
@@ -1503,18 +1628,29 @@ cmd_doctor() {
   fi
 
   section "Network"
+  # Detect Tailscale/Funnel BEFORE the wifi verdict: a phone with no local
+  # IP is fine when a public URL reaches the watch, and calling that "NOT
+  # READY" sent users chasing a non-problem. (Same rule as the tailscale
+  # rows below — warnings, never a hard failure scoped to the wrong thing.)
+  local ts_st="" funnel_on=0
+  if command -v tailscale >/dev/null 2>&1; then
+    ts_st="$(ts_state)"
+    tailscale funnel status 2>/dev/null | grep -qi 'https://' && funnel_on=1
+  fi
+
   local ip; ip="$(lan_ip)"
   if [ -n "$ip" ]; then
     doctor_row "wifi" ok "$ip"
+  elif [ "$funnel_on" = "1" ]; then
+    doctor_row "wifi" warn "no local IP — fine, the public URL still works"; warns=$((warns+1))
   else
-    doctor_row "wifi" err "no WiFi IP — is WiFi on?"; fails=$((fails+1))
+    doctor_row "wifi" err "no local IP — Wi-Fi off? (or set up a public URL: wearsic funnel)"; fails=$((fails+1))
   fi
 
   # Tailscale / Funnel: only ever reported ACTIVE when confirmed, and the
   # reason is always spelled out — "not active" alone gave no way to tell a
   # dead daemon from a logged-out phone.
   if command -v tailscale >/dev/null 2>&1; then
-    local ts_st; ts_st="$(ts_state)"
     case "$ts_st" in
       Running)    doctor_row "tailscale" ok "connected" ;;
       NeedsLogin) doctor_row "tailscale" warn "installed, not logged in — for a public URL run: tailscale up"; warns=$((warns+1)) ;;
@@ -1526,7 +1662,7 @@ cmd_doctor() {
     # all of the above stay warnings and never flip doctor's exit code.
     # Making a logged-out phone a hard failure would report "NOT READY" for
     # a server that is in fact serving music perfectly over WiFi.
-    if tailscale funnel status 2>/dev/null | grep -qi 'https://'; then
+    if [ "$funnel_on" = "1" ]; then
       doctor_row "funnel" ok "active"
     elif [ "$ts_st" != "Running" ]; then
       # Funnel cannot work until the node is connected — say THAT instead of

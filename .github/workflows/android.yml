@@ -102,6 +102,21 @@ jobs:
       - name: Run CLI shell tests (sideload asset + adb selection)
         run: bash wearsic-server/tests/sideload-test.sh
 
+      # `wearsic url` was a permanent false negative on stock Termux (the
+      # probe order assumed iproute2's `ip`, which Termux never ships) and
+      # then printed a literal `http://<phone-IP>` placeholder users typed
+      # verbatim. Offline: every probe is staged through a hermetic PATH,
+      # WEARSIC_SYS_BIN and WEARSIC_PROC_NET.
+      - name: Run CLI shell tests (lan_ip probe chain)
+        run: bash wearsic-server/tests/lan-ip-test.sh
+
+      # The TTY download progress bar polled `wc -c` on a file curl had not
+      # created yet, spamming "No such file or directory" under its own
+      # progress line (users read it as a failed download). Offline: fakes
+      # curl so the GET lags the HEAD, then pins 0% -> 100% + zero stderr.
+      - name: Run CLI shell tests (download progress race)
+        run: bash wearsic-server/tests/download-bar-test.sh
+
       # Real pixels at Galaxy Watch7 dimensions. `ScreenGalleryTest` renders
       # every reachable screen through Robolectric and writes PNGs into
       # app/src/test/screenshots/. Roborazzi only WRITES pixels in record
@@ -148,6 +163,15 @@ jobs:
 
       - name: Assemble debug APK + server dist
         run: ./gradlew :app:assembleDebug :wearsic-server:installDist --stacktrace
+
+      # The installer and the CLI updater are shell-only: Kotlin tests cannot
+      # catch a torn reinstall or an updater that copies a new CLI over the
+      # very file bash is reading (the self-overwrite users hit right after
+      # "✓ update complete"). Runs the full smoke against the dist built
+      # above with real GNU coreutils — whose in-place `cp` is what made the
+      # old bug reproducible — and needs no phone.
+      - name: Install/update smoke test (installer + CLI end-to-end)
+        run: bash wearsic-server/tests/install-smoke-test.sh
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4

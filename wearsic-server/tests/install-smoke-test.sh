@@ -12,6 +12,8 @@
 #   7. rollback             (broken engine -> previous engine restored + healthy)
 #   8. data preservation    (wearsic.db, .env, API key, downloads/, state survive all)
 #   9. secret hygiene       (API key / cookie never appear in logs)
+#  10. self-update          (the updater refreshes its own CLI without
+#                            corrupting the process reading it)
 #
 # Usage:  bash wearsic-server/tests/install-smoke-test.sh
 # Needs:  java on PATH (or JAVA_HOME), a built server dist
@@ -46,6 +48,12 @@ teardown() {
 }
 trap teardown EXIT
 
+# Keep every temp file this test — and the CLI under test — creates inside
+# $T: the updater's $TMPDIR is asserted on below, and a hermetic root keeps
+# that assertion free of unrelated system temp dirs.
+export TMPDIR="$T/tmp"
+mkdir -p "$TMPDIR"
+
 # ── isolated environment ─────────────────────────────────────────────────────
 export HOME="$T/home"
 mkdir -p "$HOME"
@@ -74,6 +82,32 @@ make_release() { # $1 = version tag, $2 = marker content
   cp -r "$BUILD_DIST/bin" "$BUILD_DIST/lib" "$d/wearsic-server/"
   cp "$HERE/run-termux.sh" "$HERE/wearsic" "$HERE/.env.example" "$d/wearsic-server/"
   printf '%s\n' "$2" > "$d/wearsic-server/lib/test-engine-marker"
+  # Every real release ships a slightly different CLI — and that difference
+  # is what breaks a running updater that copies the new CLI over itself:
+  # bash reads its script incrementally, so a line inserted near the top
+  # shifts every byte below the read offset, and the shell's next buffered
+  # read lands mid-line in the new content ("syntax error near unexpected
+  # token"). Identical bytes made the old `cp` a harmless no-op and hid the
+  # bug in this test. Mimic a version bump (the shift grows per release) and
+  # give the CLI a tail marker: the LAST line echoes which release's file
+  # the shell actually finished reading. The tail also RE-EXITS with the
+  # script's previous status: a bare `echo` as the final line becomes the
+  # script's exit status, masking every `return N` from the CLI — including
+  # the `status` exit-code contract asserted in section 3 below.
+  local f="$d/wearsic-server/wearsic" pad i
+  pad="$(printf '%*s' "$(( ${1%%.*} * 40 ))" '' | tr ' ' 'x')"
+  {
+    sed -n '1p' "$f"
+    printf '# cli-shift v%s %s\n' "$1" "$pad"
+    sed -n '2,$p' "$f"
+    printf '\n# release-trailer v%s — padding so the tail spans past one read buffer.\n' "$1"
+    i=0
+    while [ "$i" -lt 900 ]; do
+      printf '# trailer-pad v%s %s\n' "$1" "$i"
+      i=$((i + 1))
+    done
+    printf 'rc=$?; echo "wearsic-cli-tail v%s" >&2; exit $rc\n' "$1"
+  } > "$f.new" && chmod +x "$f.new" && mv "$f.new" "$f"
   (cd "$d" && zip -qr "wearsic-server-termux-v$1.zip" wearsic-server)
   (cd "$d" && sha256sum "wearsic-server-termux-v$1.zip" > "wearsic-server-termux-v$1.zip.sha256")
   echo "$d"
@@ -197,6 +231,11 @@ CLI start >/dev/null 2>&1 && HEALTH | grep -q '"status":"ok"' \
 
 # ═══ 4. UPDATE (verified, staged, restarted) ═════════════════════════════════
 section "4. update"
+# Snapshot TMPDIR to prove the updater cleans its OWN work dir (it used to
+# leak it: the function-local `work` was out of scope by the time the EXIT
+# trap ran, so `rm -rf ""` was a no-op and every update left its staging
+# dir — download plus unpacked tree, tens of MB — behind).
+ls -d "$TMPDIR"/tmp.* 2>/dev/null | sort > "$T/tmpdir-before" || true
 if run_update "$D2" "2.0.0" >"$T/update.log" 2>&1; then
   pass "wearsic update exits 0"
 else
@@ -209,6 +248,40 @@ KEY4="$(sed -n 's/^WEARSIC_API_KEY=//p' "$DEST/.env" | tail -1)"
 fav_present && pass "wearsic.db preserved across update" || fail "wearsic.db preserved across update (favorite row lost)"
 [ -f "$DEST/downloads/keep.me" ] && pass "downloads/ preserved across update" || fail "downloads/ preserved across update"
 HEALTH | grep -q '"status":"ok"' && pass "server healthy after update" || fail "server healthy after update"
+ls -d "$TMPDIR"/tmp.* 2>/dev/null | sort > "$T/tmpdir-after" || true
+leaked="$(grep -Fxv -f "$T/tmpdir-before" "$T/tmpdir-after" 2>/dev/null || true)"
+if [ -n "$leaked" ]; then
+  fail "update cleaned its work dir (leaked: $(printf '%s' "$leaked" | tr '\n' ' '))"
+else
+  pass "update cleaned its work dir"
+fi
+
+# The updater must survive refreshing its OWN file. bash reads a script
+# incrementally: a plain `cp` over $HOME/.local/bin/wearsic truncates the
+# very inode the running shell is reading, and it dies parsing garbage once
+# its buffer runs out — the "syntax error near unexpected token '||'" users
+# saw AFTER "✓ update complete", plus a mangled exit. install-smoke's
+# fixtures make each release's CLI genuinely different (see make_release),
+# so this is the same scenario a real version bump creates.
+if grep -q 'wearsic-cli-tail v1.0.0' "$T/update.log"; then
+  pass "updater finished reading its own file (tail intact)"
+else
+  fail "updater finished reading its own file (tail intact) — its file was replaced under it"
+fi
+if grep -q 'wearsic-cli-tail v2.0.0' "$T/update.log"; then
+  fail "updater never read the replaced content (inode swapped under it)"
+else
+  pass "updater never read the replaced content (inode swapped under it)"
+fi
+if grep -Eq 'syntax error|unbound variable|command not found' "$T/update.log"; then
+  fail "update log free of shell corruption errors"
+  grep -E 'syntax error|unbound variable|command not found' "$T/update.log" | head -3 | sed 's/^/        /'
+else
+  pass "update log free of shell corruption errors"
+fi
+grep -q 'wearsic-cli-tail v2.0.0' "$HOME/.local/bin/wearsic" \
+  && pass "installed CLI replaced with the new release" || fail "installed CLI replaced with the new release"
+CLI version >/dev/null 2>&1 && pass "updated CLI still runs" || fail "updated CLI still runs"
 
 # ═══ 5. BAD CHECKSUM ═════════════════════════════════════════════════════════
 section "5. bad checksum (must refuse)"

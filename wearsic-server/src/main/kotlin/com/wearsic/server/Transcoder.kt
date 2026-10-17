@@ -261,75 +261,78 @@ class Transcoder(
                     contentType = ContentType.parse("audio/aac"),
                     status = status
                 ) {
-                    coroutineScope {
-                        // Drain ffmpeg's stderr to nowhere on its own thread.
-                        // A full OS pipe buffer would otherwise wedge ffmpeg
-                        // forever while it holds a global transcode permit.
-                        // (Never redirectErrorStream into stdout — that pipe
-                        // carries the AAC bytes.)
-                        val stderrDrain = launch(Dispatchers.IO) {
-                            runCatching {
-                                active.errorStream.copyTo(OutputStream.nullOutputStream())
-                            }
-                        }
-
-                        // Pump CDN bytes into ffmpeg's stdin in closed-range
-                        // chunks (open upstream ranges 403 — see RangedUpstream).
-                        // Bounded at the probed total: a pre-EOF connection
-                        // death can then never masquerade as a clean feed end.
-                        val pump = launch(Dispatchers.IO) {
-                            try {
-                                val outcome: ChunkedUpstream = client.fetchClosedChunks(
-                                    sourceUrl, 0, (probeTotal ?: 0L) - 1,
-                                    refreshUrl = refreshUrl,
-                                ) { buf: ByteArray, n: Int ->
-                                    stdin.write(buf, 0, n)
+                    abortOnFailure {
+                        coroutineScope {
+                            // Drain ffmpeg's stderr to nowhere on its own thread.
+                            // A full OS pipe buffer would otherwise wedge ffmpeg
+                            // forever while it holds a global transcode permit.
+                            // (Never redirectErrorStream into stdout — that pipe
+                            // carries the AAC bytes.)
+                            val stderrDrain = launch(Dispatchers.IO) {
+                                runCatching {
+                                    active.errorStream.copyTo(OutputStream.nullOutputStream())
                                 }
-                                when (outcome) {
-                                    is ChunkedUpstream.Done -> upstreamDone.set(true)
-                                    is ChunkedUpstream.Refused -> Unit
+                            }
+    
+                            // Pump CDN bytes into ffmpeg's stdin in closed-range
+                            // chunks (open upstream ranges 403 — see RangedUpstream).
+                            // Bounded at the probed total: a pre-EOF connection
+                            // death can then never masquerade as a clean feed end.
+                            val pump = launch(Dispatchers.IO) {
+                                try {
+                                    val outcome: ChunkedUpstream = client.fetchClosedChunks(
+                                        sourceUrl, 0, (probeTotal ?: 0L) - 1,
+                                        refreshUrl = refreshUrl,
+                                        maxRefreshes = 8,
+                                    ) { buf: ByteArray, n: Int ->
+                                        stdin.write(buf, 0, n)
+                                    }
+                                    when (outcome) {
+                                        is ChunkedUpstream.Done -> upstreamDone.set(true)
+                                        is ChunkedUpstream.Refused -> Unit
+                                    }
+                                } catch (e: Exception) {
+                                    // Upstream died; ffmpeg sees EOF and flushes what it has.
+                                } finally {
+                                    runCatching { stdin.close() }
                                 }
-                            } catch (e: Exception) {
-                                // Upstream died; ffmpeg sees EOF and flushes what it has.
-                            } finally {
-                                runCatching { stdin.close() }
                             }
-                        }
-
-                        // Read ffmpeg stdout, discard `startByte` bytes, stream the rest.
-                        val buf = ByteArray(64 * 1024)
-                        var skipped = 0L
-                        while (skipped < startByte) {
-                            val n = withContext(Dispatchers.IO) { stdout.read(buf) }
-                            if (n < 0) break
-                            runCatching { cacheWriter?.write(buf, 0, n) }
-                            skipped += n
-                            if (skipped > startByte) {
-                                // Chunk straddles the offset: keep the tail.
-                                val tail = buf.copyOfRange(
-                                    (n - (skipped - startByte)).toInt(),
-                                    n
-                                )
-                                writeFully(tail)
+    
+                            // Read ffmpeg stdout, discard `startByte` bytes, stream the rest.
+                            val buf = ByteArray(64 * 1024)
+                            var skipped = 0L
+                            while (skipped < startByte) {
+                                val n = withContext(Dispatchers.IO) { stdout.read(buf) }
+                                if (n < 0) break
+                                runCatching { cacheWriter?.write(buf, 0, n) }
+                                skipped += n
+                                if (skipped > startByte) {
+                                    // Chunk straddles the offset: keep the tail.
+                                    val tail = buf.copyOfRange(
+                                        (n - (skipped - startByte)).toInt(),
+                                        n
+                                    )
+                                    writeFully(tail)
+                                }
                             }
+                            while (true) {
+                                val n = withContext(Dispatchers.IO) { stdout.read(buf) }
+                                if (n < 0) break
+                                runCatching { cacheWriter?.write(buf, 0, n) }
+                                writeFully(buf, 0, n)
+                            }
+                            pump.join()
+                            stderrDrain.join()
+                            // IMPORTANT: served songs must ALWAYS be whole or dead.
+                            // An upstream feed that died mid-song (refusal/drop)
+                            // leaves ffmpeg's flushed prefix as a shorter-than-song
+                            // output; ending the response cleanly would make the
+                            // watch believe the song ENDED here (the reported
+                            // "stalls halfway, silently"). Abort the connection
+                            // instead: OkHttp sees unexpected EOF, ExoPlayer
+                            // retries the remaining range with a fresh request.
+                            if (!upstreamDone.get()) throw UpstreamTruncatedException(startByte)
                         }
-                        while (true) {
-                            val n = withContext(Dispatchers.IO) { stdout.read(buf) }
-                            if (n < 0) break
-                            runCatching { cacheWriter?.write(buf, 0, n) }
-                            writeFully(buf, 0, n)
-                        }
-                        pump.join()
-                        stderrDrain.join()
-                        // IMPORTANT: served songs must ALWAYS be whole or dead.
-                        // An upstream feed that died mid-song (refusal/drop)
-                        // leaves ffmpeg's flushed prefix as a shorter-than-song
-                        // output; ending the response cleanly would make the
-                        // watch believe the song ENDED here (the reported
-                        // "stalls halfway, silently"). Abort the connection
-                        // instead: OkHttp sees unexpected EOF, ExoPlayer
-                        // retries the remaining range with a fresh request.
-                        if (!upstreamDone.get()) throw UpstreamTruncatedException(startByte)
                     }
                 }
             } catch (e: Exception) {

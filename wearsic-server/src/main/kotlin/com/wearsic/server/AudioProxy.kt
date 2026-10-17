@@ -76,7 +76,11 @@ class AudioProxy(
         // pass it through untouched with zero CPU cost.
         if (transcoder.needsTranscode(target.mimeType)) {
             val refreshForTranscode: suspend () -> String? = {
-                (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)?.url
+                // Mid-pump rotation: same-encoding tickets only (byte offsets
+                // encode a timeline). Incompatible → null → clean abort.
+                (extractor as? YoutubeGateway)
+                    ?.invalidateStreamTarget(videoId, target.itag, target.mimeType, requireCompatible = true)
+                    ?.url
             }
             when (val result = transcoder.handle(call, target.url, rangeHeader, refreshForTranscode, videoId)) {
                 is Transcoder.TranscodeResult.Streamed,
@@ -93,7 +97,7 @@ class AudioProxy(
                     }
                     // Dead URL on the transcode path: same self-heal as the
                     // passthrough path — one fresh re-resolve, then stream it.
-                    val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)
+                    val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag, target.mimeType)
                     if (fresh != null) {
                         logger.info("Self-healed stale transcode URL for {}", videoId)
                         when (val retry = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode)) {
@@ -135,7 +139,7 @@ class AudioProxy(
                 // or was revoked upstream (it can die well inside the 1h cache
                 // TTL). Drop the stale entry, re-resolve once, and stream the
                 // fresh URL — the watch gets audio instead of an error.
-                val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)
+                val fresh = (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag, target.mimeType)
                 if (fresh != null) {
                     logger.info("Self-healed stale stream URL for {}", videoId)
                     when (val retry = streamFresh(call, fresh, rangeHeader, videoId)) {
@@ -171,7 +175,9 @@ class AudioProxy(
     ): ProxyOutcome {
         if (transcoder.needsTranscode(fresh.mimeType)) {
             val refreshForTranscode: suspend () -> String? = {
-                (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, fresh.itag)?.url
+                (extractor as? YoutubeGateway)
+                    ?.invalidateStreamTarget(videoId, fresh.itag, fresh.mimeType, requireCompatible = true)
+                    ?.url
             }
             return when (val r = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode, videoId)) {
                 is Transcoder.TranscodeResult.Streamed -> ProxyOutcome.Streamed
@@ -218,22 +224,46 @@ class AudioProxy(
                 contentType = io.ktor.http.ContentType.parse(target.mimeType),
                 status = HttpStatusCode.PartialContent
             ) {
-                // Prefer ONE open-ended stream (the old behavior): a single
-                // request means a single throttle decision and zero chunk
-                // seams. Only when the network refuses it do we fall back
-                // to stitched closed-range chunks — resuming EXACTLY at the
-                // last byte already written, never replaying a prefix into
-                // a live response (a replay would corrupt the byte window
-                // the watch already accepted and stall/blur the stream).
-                val (openDone, openWritten) = tryOpenStream(target.url, start)
-                if (!openDone) {
-                    client.fetchClosedChunks(
-                        target.url, start + openWritten, lastByte, blockBytes = chunkBytes,
-                        emit = { buf, n -> writeFully(buf, 0, n) },
-                        refreshUrl = {
-                            (extractor as? YoutubeGateway)?.invalidateStreamTarget(videoId, target.itag)?.url
-                        },
-                    )
+                // Every failure in here tears the connection down (see
+                // [abortOnFailure]): an abandoned writer would leave the
+                // socket open and the watch would sit out its read timeout.
+                abortOnFailure {
+                    // Prefer ONE open-ended stream (the old behavior): a single
+                    // request means a single throttle decision and zero chunk
+                    // seams. Only when the network refuses it do we fall back
+                    // to stitched closed-range chunks — resuming EXACTLY at the
+                    // last byte already written, never replaying a prefix into
+                    // a live response (a replay would corrupt the byte window
+                    // the watch already accepted and stall/blur the stream).
+                    val expectedRemaining = lastByte - start + 1
+                    val (openDone, openWritten) = tryOpenStream(target.url, start)
+                    // `openDone` alone is NOT enough: the CDN can END the open
+                    // stream at its per-URL transfer budget (~1 MB, measured)
+                    // with a graceful EOF — ending the response there would tell
+                    // the watch the song finished at that byte (the reported
+                    // "stalls at 1:04"). Anything short of the probed length
+                    // continues through rotating closed-range chunks instead.
+                    if (!openDone || openWritten < expectedRemaining) {
+                        val outcome = client.fetchClosedChunks(
+                            target.url, start + openWritten, lastByte, blockBytes = chunkBytes,
+                            maxRefreshes = 8,
+                            emit = { buf, n -> writeFully(buf, 0, n) },
+                            refreshUrl = {
+                                // Mid-stream rotation: same-encoding tickets only
+                                // (byte offsets encode a timeline). When the pool
+                                // is dry the video gets wall-marked and the next
+                                // request resolves via n-fixed extractor URLs.
+                                (extractor as? YoutubeGateway)
+                                    ?.invalidateStreamTarget(videoId, target.itag, target.mimeType, requireCompatible = true)
+                                    ?.url
+                            },
+                        )
+                        if (outcome is ChunkedUpstream.Refused) {
+                            // No rotation left mid-stream: ABORT (never a clean
+                            // end) so ExoPlayer retries the remaining range.
+                            throw UpstreamTruncatedException(start + openWritten)
+                        }
+                    }
                 }
             }
             ProxyOutcome.Streamed

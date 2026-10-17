@@ -48,7 +48,7 @@ X-Wearsic-Key: <key>
 ```json
 {
   "status": "ok",
-  "version": "1.6.3",
+  "version": "1.9.1",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -60,7 +60,9 @@ X-Wearsic-Key: <key>
 Client tolerates missing fields (`status` defaults to `"ok"` when HTTP 200).
 `version` comes from `ServerVersion.VERSION` (single source of truth shared
 with the Gradle build/JAR name); `transcoderAvailable` is informational and
-reports whether ffmpeg was found for Opus/WebM→AAC transcoding;
+reports the **live** ffmpeg status for Opus/WebM→AAC transcoding — the
+server re-probes a missing binary while running (30 s throttle,
+single-flight), so installing ffmpeg later flips it true without a restart;
 `extraction`/`canaryHealthy`/`update` expose the self-healing engine
 state (see `wearsic-server/README.md`).
 
@@ -78,7 +80,7 @@ state (see `wearsic-server/README.md`).
   "database": true,
   "extractor": true,
   "transcoder": true,
-  "engineVersion": "1.6.3"
+  "engineVersion": "1.9.1"
 }
 ```
 
@@ -172,6 +174,30 @@ Note: album `id` is a full playlist URL, not a bare id.
 - **POST** `/api/config/youtube-cookie` with `{ "cookie": "SID=...; HSID=..." }`
   → `{ "hasCookie": true|false }`. Persists the cookie (`settings` table);
   empty string clears it. Same endpoint the `wearsic cookies` CLI uses.
+
+---
+
+## Response Compression & Caching (server ≥ v1.9.1)
+
+- **gzip**: JSON responses ≥ 512 bytes are gzip-compressed
+  (`Content-Encoding: gzip`) when the client sends `Accept-Encoding`. The
+  compressor is allow-listed to `application/json` — audio bytes are never
+  recompressed, so Range reads stay byte-exact.
+- **Read-path `Cache-Control`** — GET only, and only on 2xx responses (a
+  transient 404 is never cached):
+
+  | Paths | Header |
+  |---|---|
+  | `/api/search`, `/api/search/albums`, `/api/suggestions`, `/api/related/*`, `/api/playlist` | `private, max-age=300` |
+  | `/api/favorites`, `/api/playlists`, `/api/playlists/*` | `private, max-age=5` |
+
+  Streams, `/api/config/*`, `/health`, `/ready` and errors carry no cache
+  headers (non-cacheable to HTTP caches).
+- **Reference client (watch app ≥ 1.9.1)**: a 16 MB OkHttp disk cache serves
+  repeat screens; after any favorites/playlist mutation the app sends
+  `Cache-Control: no-cache` for 6 s — longer than the 5 s user-state
+  window — so a read right after an edit can never return the pre-mutation
+  list.
 
 ---
 

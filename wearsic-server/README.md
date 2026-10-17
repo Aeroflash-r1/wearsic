@@ -6,7 +6,7 @@ Standalone Ktor + NewPipe Extractor backend for the Wearsic Wear OS app. This pr
 
 - Java 17
 - Termux packages: `pkg install openjdk-17 unzip curl`
-- `ffmpeg` (the launcher installs it on first start; needed only to transcode rare Opus/WebM-only songs)
+- `ffmpeg` (the launcher installs it in the background on first start; needed only to transcode rare Opus/WebM-only songs — the running server re-probes for a missing binary, so a late install heals without a restart)
 
 No tunnel is required: the watch connects over WiFi, a Tailscale
 private network, or a public HTTPS endpoint (Tailscale Funnel via
@@ -38,9 +38,10 @@ chmod +x wearsic-server-v*.sh
 wearsic start                      # one command from here on
 ```
 
-`wearsic start|stop|restart|status|logs|health|url|api-key|update|doctor`
-manages everything. Re-running `install` upgrades in place and keeps
-`wearsic.db` + `.env`. `./wearsic-server-v*.sh uninstall` removes it.
+`wearsic start|stop|restart|status|logs|health|ready|url|ip|api-key|sideload|update|version|doctor|funnel|public|cookies`
+manages everything (`wearsic help` lists all commands). Re-running `install`
+upgrades in place and keeps `wearsic.db` + `.env`.
+`./wearsic-server-v*.sh uninstall` removes it.
 
 ### From the ready-made Termux ZIP (`wearsic-server-termux-v<version>.zip`)
 
@@ -61,7 +62,7 @@ manages everything. Re-running `install` upgrades in place and keeps
 
 The ZIP is self-contained: `run-termux.sh` sits next to `bin/` and `lib/` and launches the server with a tuned heap. Your favorites/playlists are stored in `wearsic.db` next to the script — keep a copy of an old `wearsic.db` if you want to carry data over.
 
-`run-termux.sh` uses G1GC and a 512 MB heap by default. Override `JAVA_OPTS` when the phone has more or less memory. If `ffmpeg` is missing, the launcher attempts `pkg install -y ffmpeg` and **exits non-zero on failure** (the server cannot transcode Opus/WebM-only songs without it).
+`run-termux.sh` uses G1GC and a 512 MB heap by default. Override `JAVA_OPTS` when the phone has more or less memory. If `ffmpeg` is missing, the launcher starts `pkg install -y ffmpeg` **in the background** (AAC songs play immediately; a failure is loud in the log with the exact fix command). The running server also re-probes for a missing binary — 30 s throttle, single-flight — so conversion turns on with no restart the moment `ffmpeg` appears.
 
 ## Environment
 
@@ -94,12 +95,13 @@ Authenticated when `WEARSIC_API_KEY` is set:
 
 ## Self-healing
 
-The server defends itself against the two failure classes that actually kill music servers:
+The server defends itself against the three failure classes that actually kill music servers:
 
 1. **Runtime rot** (expired CDN URLs, one dead video, stalled sockets): ranged proxying, dead-URL re-resolution (403/404/410 → fresh extraction → retry once), iOS→default InnerTube client fallback, per-request timeouts, and the supervisor's crash/hang restart loop.
 2. **Engine rot** (YouTube changes their site and breaks NewPipeExtractor): every extraction is counted. After 6 consecutive failures the server probes a canary video ("Me at the zoo" — effectively permanent). If the canary also fails, the engine is declared broken:
    - with `WEARSIC_AUTO_UPDATE` on (default): a newer GitHub release is downloaded, **SHA-256-verified against the release's published `.zip.sha256`**, integrity-checked (central-directory walk — truncated downloads rejected), strictly extracted (zip-slip, duplicate and unexpected-file protection), staged into `wearsic-state/staging/`, and the process exits so `run-termux.sh` swaps it in transactionally on restart.
    - with it off: a loud log line tells you exactly what to do instead.
+3. **Tooling drift** (a boot probe that failed while the phone was busy, or `ffmpeg` installed after the server started): availability is re-probed on demand while the server runs — one probe per 30 s, single-flighted across parallel requests — and flips conversion ON the moment the binary appears, no restart needed. The 503 for a transcode-needing song names the exact install command.
 
 Check engine status any time: `curl http://localhost:8080/health | jq .extraction,.canaryHealthy,.update`
 
@@ -156,6 +158,27 @@ Search requests normalize whitespace, reject queries over 200 characters, coales
 `wearsic doctor` reports readiness-specific database/extractor remedies, missing audio conversion, staged engine updates, warning totals, and the next useful management command without exposing credentials.
 
 The server caches search results and resolved stream targets in small bounded in-memory caches (stream targets expire after 1 hour — CDN URLs expire upstream). Search goes to YouTube Music first (official titles/artists with directly playable videoIds); when YTM is unreachable the NewPipeExtractor YouTube search is used as fallback. Legacy surrogate → YouTube video matches from pre-1.5 builds are additionally persisted in SQLite (bounded to 2000 rows, 30-day staleness), so old saved favorites keep replaying after upgrade. SQLite uses WAL mode with `synchronous=NORMAL` for good performance on a phone.
+
+## Response compression & read-path caching
+
+Since v1.9.1 the server shapes its responses for the watch's disk cache and
+for relayed (Funnel) links:
+
+- **gzip for JSON** via a content-type allow-list with a 512-byte floor.
+  Audio is never recompressed — streams stay byte-exact for Range/seek.
+- **`Cache-Control` on GET read paths**, only on 2xx responses so a transient
+  404 is never cached:
+
+  | Paths | Header |
+  |---|---|
+  | `/api/search`, `/api/search/albums`, `/api/suggestions`, `/api/related/*`, `/api/playlist` | `private, max-age=300` |
+  | `/api/favorites`, `/api/playlists`, `/api/playlists/*` | `private, max-age=5` |
+
+  Streams, config, `/health`, `/ready` and errors send no cache headers.
+
+The watch client pairs this with a 6 s `Cache-Control: no-cache` burst after
+favorites/playlist mutations — longer than the 5 s user-state window — so a
+post-edit read can never be served the pre-mutation list.
 
 ## Errors and rate limiting
 

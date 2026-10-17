@@ -48,10 +48,17 @@ persist the YouTube cookie) is additive.
   is process-global, so extractions are serialized behind a mutex.
 - **Audio profile**: AAC-LC ~128 kbps preferred (hardware-decoded on the
   watch's SoC); rare Opus/WebM-only songs are transcoded to AAC by ffmpeg
-  on the server (503 with install guidance if ffmpeg is missing).
+  on the server (503 with the exact `pkg install ffmpeg` guidance if it is
+  missing — availability is re-probed while the server runs, so a late
+  install heals without a restart).
 - **HTTP transport**: NewPipeExtractor's `Downloader` and every other
   outbound call share one tuned Ktor CIO client (12 s/20 s timeouts,
   20 connections) — the default CIO client has NO timeouts.
+- **Compression & read-path caching**: JSON responses are gzipped
+  (content-type allow-list, 512-byte floor — audio is never recompressed);
+  GET read paths carry `Cache-Control: private, max-age=300`
+  (search/suggestions/related/playlist) or `private, max-age=5`
+  (favorites/playlists), 2xx only — see `API_CONTRACT.md`.
 - **Cookie handling**: read from `WEARSIC_YOUTUBE_COOKIE` on boot (env
   wins), falling back to the value persisted in SQLite, updatable at
   runtime via `POST /api/config/youtube-cookie` — persisted so it
@@ -64,7 +71,8 @@ persist the YouTube cookie) is additive.
   broken engine downloads, verifies and stages the newest release, and
   the supervisor applies it on restart (see the README's
   Self-healing section). Health is checked every 60 s; update discovery
-  every 6 h.
+  every 6 h; a missing ffmpeg is likewise re-probed while running (30 s
+  throttle) — installing it later needs no restart.
 - **Errors**: Ktor StatusPages maps every failure to JSON
   (`{"error": "..."}`); malformed bodies answer 400 instead of empty 500s.
 - **Auth**: `WEARSIC_API_KEY` compared with `MessageDigest.isEqual`

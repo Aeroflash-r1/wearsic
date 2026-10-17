@@ -20,7 +20,7 @@ Wearsic adopts a clean, modular Model-View-ViewModel (MVVM) architecture with st
          ▼                                   ▼
 [ WearsicDownloadManager ]          [ WearsicStreamDataSource ]
          │                             (in-memory buffering only —
-         ▼                              NO persistent disk cache)
+         ▼                              no on-disk stream cache)
 [ WearsicDownloadRepository ]              │
 (Room SQLite + ONE file per track   [ ExoPlayer ] (memory window)
  under wearsic_downloads/)
@@ -59,7 +59,7 @@ Wearsic adopts a clean, modular Model-View-ViewModel (MVVM) architecture with st
 - **Isolation**: Downloading bytes are written to `.part` files and atomically renamed to the final `.m4a` only after success; a failed/cancelled download never leaves a `COMPLETED` record.
 - **Storage Protection**: StatFs check verifies that at least 15MB of storage remains free before beginning any download.
 - **AUTO -> MANUAL promotion is metadata-only**: pressing Download on an auto-cached song flips the flag and reuses the same file — 0 new bytes, no re-download. A Download press during an in-flight AUTO download upgrades that same job. MANUAL is never downgraded by AutoCache.
-- **No persistent stream cache**: playback buffers in ExoPlayer memory only. AutoCache (45s-listening deferral, 15/50/100-song configurable cap, oldest-first eviction that never touches MANUAL) is the sole way songs land on disk.
+- **No persistent stream cache**: playback buffers in ExoPlayer memory only — the 16 MB OkHttp disk cache added in v1.9.1 stores JSON API responses only, never audio. AutoCache (45s-listening deferral, 15/50/100-song configurable cap, oldest-first eviction that never touches MANUAL) is the sole way songs land on disk.
 - **Playback-safe deletion**: eviction, Clear auto-saved and individual deletes never cut the AUTO file ExoPlayer currently has open. That file's deletion is DEFERRED and persisted on the Room row (`pendingDeletion` flag, DB v4) — so the intent survives process death and a restart deterministically rediscovers it — then retried automatically once playback releases the file (track change, queue clear, or after startup once the session state is known). A playing song therefore temporarily survives cleanup but never bypasses the 15/50/100 cap forever, and a MANUAL download request racing a deletion always wins (promotion intent is recorded synchronously before any delete can run).
 - **Startup reconciliation**: rows left `QUEUED`/`DOWNLOADING` by a killed process are removed (with their orphaned `.part` bytes); legacy `CANCELLED` rows are rescued to `COMPLETED` when a real file exists behind them (ownership preserved) or removed when dead — never touching valid AUTO/MANUAL downloads; legacy `wearsic_playback_cache` directories from older builds are wiped once. All idempotent.
 
@@ -75,7 +75,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 ```json
 {
   "status": "ok",
-  "version": "1.6.3",
+  "version": "1.9.1",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -140,7 +140,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 - **Stream reads never hard-cut a song**: the stream data source clears OkHttp's whole-call timeout and uses a 60 s per-read inactivity timeout, so songs longer than the base client's 45 s call budget no longer stop mid-playback.
 - **Sockets survive WiFi roaming**: the stream client retries a dropped connection (a watch hopping access points no longer surfaces as a buffering error) with a 15 s write timeout so a real outage still fails fast.
 - **64 KB proxy chunks**: the server copies CDN bytes to the watch in 64 KB blocks instead of Ktor's 8 KB default. `AudioProxyThroughputTest` measures this end-to-end over the real CIO stack (origin server → real module route → HTTP client). On this machine, 6 MB took **657 ms at 8 KB vs 523 ms at 64 KB (1.26x)**; 256 KB was faster still (382 ms). Honest caveat: those figures are loopback throughput, and real AAC streams at ~128 kbps need ~0.016 MB/s — roughly 500x less than the proxy already pushes at 8 KB. So this reduces CPU and syscalls, but it is **not** what makes playback feel fast; the buffering thresholds above are. 64 KB is kept as the balance point.
-- **Funnel round trips carry less on the wire**: the server gzips every JSON response. Search results, album/playlist listings and favorites shrink ~3–5×, which matters on a relayed Tailscale Funnel link where every byte is metered through a DERP. An explicit content-type allow-list keeps audio out of the compressor — streams are already compressed, and Range responses must stay byte-exact.
+- **Funnel round trips carry less on the wire**: the server gzips JSON responses (content-type allow-list, ≥512 bytes — audio is never recompressed, so streams stay byte-exact for Range/seek). Search results, album/playlist listings and favorites shrink ~3–5×, which matters on a relayed Tailscale Funnel link where every byte is metered through a DERP.
 - **Repeat screens paint from disk, not from the relay**: the watch keeps a 16 MB HTTP response cache for exactly the read endpoints that repeat — search, suggestions, related and album/playlist listings (5 min freshness), favorites/playlists (5 s). Re-opening a screen over Funnel becomes a disk hit instead of a 50–150 ms round trip. After a favorite/playlist edit the app flips to `Cache-Control: no-cache` for 6 s, longer than the 5 s freshness window, so a user can never be shown their own pre-mutation list. Audio is never cached (no cache headers on `/api/stream`).
 
 ## Relaunch Reliability (no more stuck splash on reopen)
@@ -189,13 +189,16 @@ The Wearsic watch application is a **lightweight streaming client**. To protect 
 
 ## 🤖 CI / Releases (GitHub Actions)
 
-`.github/workflows/android.yml` runs on every push/PR:
+`.github/workflows/android.yml` runs on pushes to `main`, `v*` tag pushes, pull requests, and manual dispatches:
 
-1. **test** — app Robolectric tests **plus** `:wearsic-server:test` and the
-   CLI shell tests (a broken server cannot merge silently while Android tests
-   pass).
+1. **test** — app Robolectric tests, `:wearsic-server:test`, the offline CLI
+   shell suites (funnel/Tailscale state detection, `update --pre` resolution,
+   `sideload` asset + adb selection), and a Roborazzi render of every
+   reachable screen (uploaded as the `screen-gallery` artifact) — a broken
+   server cannot merge silently while Android tests pass.
 2. **build-debug** — unsigned debug APK uploaded as a workflow artifact.
-3. **release** *(tag pushes only, `v*`)* — signed release APK **and** the
+3. **release** — runs on `main` pushes and `v*` tags, but only tag pushes
+   publish the GitHub Release. Builds the signed release APK **and** the
    server in two shapes, all attached to the GitHub Release and verified by
    booting + checking `/health` (and re-verifying the published checksum)
    before publishing:
@@ -242,7 +245,7 @@ verified exactly like a stable one.
 To install a specific build without touching the CLI at all:
 
 ```bash
-WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.6.1/wearsic-server-termux-v1.6.1.zip \
+WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.9.1/wearsic-server-termux-v1.9.1.zip \
   wearsic update
 ```
 
@@ -266,7 +269,7 @@ keytool -genkeypair -v -keystore my-upload-key.jks -alias upload \
 Then cut a release:
 
 ```bash
-git tag v1.6.3 && git push origin v1.6.3
+git tag v1.9.1 && git push origin v1.9.1
 ```
 
 

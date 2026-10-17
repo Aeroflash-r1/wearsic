@@ -26,6 +26,10 @@ jobs:
   test:
     name: Unit tests
     runs-on: ubuntu-latest
+    # Backstop: if anything in this job ever wedges (see the Robolectric
+    # pre-fetch step below for the 2026-10-17 Maven-stall incident), fail in
+    # 45 min instead of the 6-hour default.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +41,38 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+
+      # Robolectric fetches its Android framework jar (android-all-instrumented)
+      # from Maven Central at test runtime, INSIDE the test JVM, with no
+      # timeout of its own. When the runner's route to Central stalls, the
+      # test task hangs silently for 20+ minutes (three release attempts hit
+      # exactly this on 2026-10-17). Keep a copy in ~/.m2 via the CI cache
+      # and pre-fetch it here with hard timeouts, so a bad network fails this
+      # step in minutes — visibly — and a good one is a no-op. The version
+      # pairs with `robolectric` in gradle/libs.versions.toml (4.16.1, SDK 36,
+      # test sources pin sdk = [36]): bump both together.
+      - name: Cache Robolectric android-all runtime
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-android-all-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+
+      - name: Pre-fetch Robolectric android-all runtime (bounded)
+        run: |
+          set -euo pipefail
+          ver="16-robolectric-13921718-i7"
+          jar="$HOME/.m2/repository/org/robolectric/android-all-instrumented/$ver/android-all-instrumented-$ver.jar"
+          if [ -s "$jar" ]; then
+            echo "android-all already present, skipping download: $jar"
+            exit 0
+          fi
+          mkdir -p "$(dirname "$jar")"
+          curl -fSL --retry 2 --retry-all-errors --retry-delay 5 \
+            --connect-timeout 15 --max-time 120 \
+            -o "$jar.part" \
+            "https://repo1.maven.org/maven2/org/robolectric/android-all-instrumented/$ver/android-all-instrumented-$ver.jar"
+          mv "$jar.part" "$jar"
+          ls -la "$jar"
 
       - name: Run app unit tests (Robolectric)
         run: ./gradlew :app:testDebugUnitTest --stacktrace

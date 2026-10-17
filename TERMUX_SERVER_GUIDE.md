@@ -392,6 +392,29 @@ For Wi-Fi mode, make sure the phone and watch can reach each other.
 
 For Funnel mode, use the HTTPS URL printed by wearsic funnel.
 
+## No Wi-Fi address found
+
+`wearsic url` says "couldn't detect this phone's IP" (or `wearsic ip` fails
+with "no local IP found") when every address probe came up empty — nearly
+always because Wi-Fi is off.
+
+~~~bash
+wearsic ip
+~~~
+
+Turn Wi-Fi on, then try again:
+
+~~~bash
+wearsic url
+~~~
+
+Still empty (for example, a device that only routes through a VPN)? Skip
+Wi-Fi pairing and use the public URL instead — Option B above:
+
+~~~bash
+wearsic funnel
+~~~
+
 ## Watch gets HTTP 401/403
 
 The watch API key does not match the server API key.

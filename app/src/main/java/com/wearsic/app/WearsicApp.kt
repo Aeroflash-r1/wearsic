@@ -39,6 +39,12 @@ class WearsicApp : Application(), ImageLoaderFactory {
         // before any ViewModel is constructed).
         StartupDiagnostics.onApplicationCreate(this)
 
+        // Attach the API-response disk cache before ANY code path can build
+        // the shared OkHttpClient (the warm-up thread below does exactly
+        // that). Over Tailscale Funnel this is what turns a repeat screen
+        // visit into a zero-network paint.
+        com.wearsic.app.network.WearsicHttp.installCache(this)
+
         // Warm the dependency graph on a background thread while the system
         // splash is still up. Constructing DataStore, Room and the shared
         // OkHttp client takes real milliseconds on a watch SoC; doing it here

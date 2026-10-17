@@ -11,6 +11,7 @@
 #   wearsic url               Server URL + API key for the watch
 #   wearsic api-key [new]     show / change the API key
 #   wearsic update            update to the latest release (verified + rollback)
+#   wearsic sideload [tag]    install the release watch app onto the watch (adb)
 #   wearsic doctor            check the whole setup (exit 0 = READY)
 #
 # Also available: ready [--json], ip, version, cookies [str], funnel, public.
@@ -1157,6 +1158,136 @@ cmd_update() {
   return 1
 }
 
+# ── watch app sideload ─────────────────────────────────────────────────────
+# `wearsic sideload [tag]` downloads a RELEASED watch APK from GitHub and
+# installs it with adb. Releases since 1.9.0 publish a .sha256 next to the
+# APK; when it exists it MUST match — a corrupt download never reaches the
+# watch. Older releases have no checksum: that warns and continues.
+# `--apk FILE` installs a local build (no network), `--device SERIAL`
+# picks the target when several adb devices are attached, and
+# `--download-only` fetches the APK and stops before adb.
+cmd_sideload() {
+  local repo tag apk device download_only=0
+  repo="${WEARSIC_REPO:-Aeroflash-r1/wearsic}"
+  tag=""; apk=""; device=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --apk) [ -n "${2:-}" ] || die "--apk needs a file path"; apk="$2"; shift 2 ;;
+      --device|-s) [ -n "${2:-}" ] || die "--device needs an adb serial (see: adb devices)"; device="$2"; shift 2 ;;
+      --download-only) download_only=1; shift ;;
+      -h|--help) usage; return 0 ;;
+      v[0-9]*) tag="$1"; shift ;;
+      *) die "Unknown option for 'wearsic sideload': $1 (try: wearsic sideload [vX.Y.Z] [--apk FILE] [--device SERIAL] [--download-only])" ;;
+    esac
+  done
+  brand "sideload"
+  section "Watch app"
+
+  if [ -n "$apk" ]; then
+    [ -f "$apk" ] || die "APK not found: $apk"
+    say "Using the local build $(basename "$apk")"
+  else
+    if [ -z "$tag" ]; then
+      local json
+      say "Looking up the latest release…"
+      json="$(curl -fsSL --retry 2 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null || true)"
+      tag="$(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
+      [ -n "$tag" ] || die "could not reach GitHub for ${repo} — check your internet connection"
+    fi
+    local base cache url sha_url sha_file expected actual
+    base="https://github.com/${repo}/releases/download/${tag}"
+    url="${base}/Wearsic-${tag}.apk"
+    sha_url="${url}.sha256"
+    cache="${WEARSIC_APK_CACHE:-$HOME/.cache/wearsic}"
+    mkdir -p "$cache" || die "could not create $cache"
+    apk="$cache/Wearsic-${tag}.apk"
+    say "Release ${C_BOLD}${tag}${C_RESET}"
+    if [ -s "$apk" ]; then
+      say "Using the cached download (delete it to fetch again: rm \"$apk\")"
+    else
+      download_bar "$url" "$apk" "downloading Wearsic-${tag}.apk" \
+        || { rm -f "$apk"; die "download failed — is ${tag} a Wearsic release?"; }
+    fi
+    # Published checksum. Missing (pre-1.9.0 releases): warn and continue.
+    # Present: a mismatch deletes the file so a retry downloads it again.
+    sha_file="$cache/Wearsic-${tag}.apk.sha256"
+    [ -s "$sha_file" ] || curl -fsSL --retry 2 -o "$sha_file" "$sha_url" 2>/dev/null || rm -f "$sha_file"
+    if [ -s "$sha_file" ]; then
+      expected="$(awk 'NR==1 { print $1 }' "$sha_file")"
+      actual="$(sha256sum "$apk" 2>/dev/null | awk '{ print $1 }')"
+      if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+        rm -f "$apk" "$sha_file"
+        die "checksum mismatch — the download is corrupt; run the command again"
+      fi
+      ok "APK checksum verified"
+    else
+      warn "this release ships no APK checksum — skipping verification"
+    fi
+  fi
+
+  if [ "$download_only" = "1" ]; then
+    ok "saved $(basename "$apk")"
+    say "Install it later with: wearsic sideload --apk \"$apk\""
+    return 0
+  fi
+
+  command -v adb >/dev/null 2>&1 \
+    || die "adb is not installed — in Termux run: pkg install android-tools"
+  local devices serial count model
+  devices="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
+  if [ -n "$device" ]; then
+    serial="$device"
+    printf '%s\n' "$devices" | grep -qx "$serial" \
+      || die "adb device $serial is not connected (check: adb devices)"
+  else
+    count="$(printf '%s\n' "$devices" | grep -c .)"
+    if [ "$count" = "1" ]; then
+      serial="$devices"
+    elif [ "$count" = "0" ]; then
+      err "no watch is connected over adb"
+      say "  1. On the watch: Settings → System → Developer options → Wireless debugging → ON"
+      say "  2. Pair — a code appears on the watch:  adb pair <watch-ip>:<pair-port>"
+      say "  3. Connect:                             adb connect <watch-ip>:<port>"
+      say "  4. Run this command again."
+      exit 1
+    else
+      err "several adb devices are connected:"
+      printf '%s\n' "$devices" | sed 's/^/      /'
+      say "Pick one: wearsic sideload --device <serial>"
+      exit 1
+    fi
+  fi
+  model="$(adb -s "$serial" shell getprop ro.product.model 2>/dev/null | tr -d '\r' | head -1)"
+  [ -n "$model" ] && kv "device" "$model ($serial)"
+
+  local out
+  if out="$(adb -s "$serial" install -r "$apk" 2>&1)" && printf '%s' "$out" | grep -q "Success"; then
+    ok "installed $(basename "$apk")"
+  else
+    case "$out" in
+      *INSTALL_FAILED_UPDATE_INCOMPATIBLE*)
+        err "signature mismatch — a different build (e.g. the debug APK) is installed on the watch"
+        say "Remove it first (this clears watch-side app data):"
+        say "  adb -s $serial uninstall com.wearsic.app"
+        say "Then run this command again."
+        exit 1 ;;
+      *INSTALL_FAILED_VERSION_DOWNGRADE*)
+        err "the watch already runs a newer build than ${tag:-this APK}"
+        say "To force it anyway: adb -s $serial install -r -d \"$apk\""
+        exit 1 ;;
+      *)
+        err "adb install failed:"
+        printf '%s\n' "$out" | sed 's/^/      /'
+        exit 1 ;;
+    esac
+  fi
+  local onwatch
+  onwatch="$(adb -s "$serial" shell dumpsys package com.wearsic.app 2>/dev/null \
+    | awk -F= '/versionName=/ { print $2; exit }' | tr -d '\r')"
+  [ -n "$onwatch" ] && kv "on watch" "$onwatch"
+  return 0
+}
+
 # Installed vs running engine version (from /health when available).
 cmd_version() {
   installed
@@ -1445,6 +1576,7 @@ usage() {
   printf '    %s%-20s%s %s\n' "$C_BRAND" "url" "$C_RESET" "server URL + key to enter on the watch"
   printf '    %s%-20s%s %s\n' "$C_BRAND" "ip" "$C_RESET" "this phone's WiFi IP"
   printf '    %s%-20s%s %s\n' "$C_BRAND" "api-key [new]" "$C_RESET" "show or set the API key"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "sideload [tag]" "$C_RESET" "install the release app on the watch (adb)"
   printf '\n  %sEngine%s\n' "$C_BOLD" "$C_RESET"
   printf '    %s%-20s%s %s\n' "$C_BRAND" "update [--pre]" "$C_RESET" "update to the latest release (verified, rollback-safe)"
   printf '    %s%-20s%s %s\n' "$C_BRAND" "version" "$C_RESET" "installed + running engine version"
@@ -1474,6 +1606,7 @@ case "${1:-}" in
       ip)      cmd_ip ;;
       version) cmd_version ;;
       update)  shift 2; cmd_update "$@" ;;
+      sideload) shift 2; cmd_sideload "$@" ;;
       doctor)  cmd_doctor ;;
       api)
         case "${3:-}" in
@@ -1498,6 +1631,7 @@ case "${1:-}" in
   ip)        cmd_ip ;;
   version)   cmd_version ;;
   update)    shift; cmd_update "$@" ;;
+  sideload)  shift; cmd_sideload "$@" ;;
   doctor)    cmd_doctor ;;
   api-key|apikey) shift; cmd_api_key "$@" ;;
   cookies)   shift; cmd_cookies "$@" ;;

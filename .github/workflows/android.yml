@@ -1,7 +1,7 @@
 # Wearsic Android CI & Release pipeline.
 #
-# - Every push/PR: unit tests + debug APK artifact.
-# - Tag push (v*): signed release APK attached to a GitHub Release.
+# - Every push/PR: unit tests + debug APK artifact + screen gallery renders.
+# - Tag push (v*): signed release APK (+ its sha256) attached to a GitHub Release.
 #
 # Required repository secrets for the release job:
 #   KEYSTORE_BASE64  – base64 of my-upload-key.jks
@@ -59,11 +59,23 @@ jobs:
       - name: Run CLI shell tests (update --pre release resolution)
         run: bash wearsic-server/tests/update-pre-test.sh
 
+      # `wearsic sideload` picks a release APK and refuses to install when
+      # the published sha256 does not match. Offline: stubs the presentation
+      # helpers and fakes both curl and adb, covering asset resolution,
+      # checksum handling and device selection without a real watch.
+      - name: Run CLI shell tests (sideload asset + adb selection)
+        run: bash wearsic-server/tests/sideload-test.sh
+
       # Real pixels at Galaxy Watch7 dimensions. `ScreenGalleryTest` renders
       # every reachable screen through Robolectric and writes PNGs into
-      # app/src/test/screenshots/; publishing them as artifacts makes the
-      # shipped UI reviewable from any CI run — including the Engine
-      # dashboard and the live-volume Sound screen.
+      # app/src/test/screenshots/. Roborazzi only WRITES pixels in record
+      # mode — the plain test run above leaves the committed (possibly
+      # stale) PNGs untouched, so record them explicitly here: this reruns
+      # just the gallery class and refreshes every screen, including the
+      # Engine dashboard and the live-volume Sound screen.
+      - name: Render screen gallery (Robolectric + Roborazzi record)
+        run: ./gradlew :app:testDebugUnitTest --tests "com.wearsic.app.ScreenGalleryTest" -Proborazzi.test.record=true --stacktrace
+
       - name: Upload screen gallery renders
         if: always()
         uses: actions/upload-artifact@v4
@@ -161,6 +173,10 @@ jobs:
           echo "Packaging server version $VERSION as $RELEASE_REF"
           # Signed release APK built moments ago in this same job.
           cp app/build/outputs/apk/release/app-release.apk "dist/Wearsic-${RELEASE_REF}.apk"
+          # Authenticity for the WATCH APP too: `wearsic sideload` verifies
+          # this file before anything reaches the watch.
+          (cd dist && sha256sum "Wearsic-${RELEASE_REF}.apk" > "Wearsic-${RELEASE_REF}.apk.sha256" \
+            && sha256sum -c "Wearsic-${RELEASE_REF}.apk.sha256")
           # Server installDist output built moments ago in this same job.
           STAGE="dist/wearsic-server"
           mkdir -p "$STAGE"
@@ -264,27 +280,48 @@ jobs:
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
           PRERELEASE_FLAG=()
           if [ -n "$RELEASE_PRERELEASE" ]; then PRERELEASE_FLAG=(--prerelease); fi
-          # Remove stale draft releases for this version. Never delete a published release.
-          while true; do
-            RELEASE_STATE=$(gh release view "$RELEASE_REF" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
-            case "$RELEASE_STATE" in
-              true)
-                echo "Removing stale draft release $RELEASE_REF"
-                gh release delete "$RELEASE_REF" --yes
-                ;;
-              false)
-                echo "Published release $RELEASE_REF already exists; nothing to publish."
-                exit 0
-                ;;
-              *) break ;;
-            esac
+          # The whole publish is retried as a unit: a transient GitHub-side
+          # 403 ("Resource not accessible by integration") has been seen on
+          # an otherwise fully verified release. The cleanup loop runs again
+          # between attempts, so a draft left behind by a failed attempt is
+          # removed before the next try. Published releases are never touched.
+          published=0
+          for attempt in 1 2 3; do
+            # Remove stale draft releases for this version. Never delete a published release.
+            while true; do
+              RELEASE_STATE=$(gh release view "$RELEASE_REF" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+              case "$RELEASE_STATE" in
+                true)
+                  echo "Removing stale draft release $RELEASE_REF"
+                  gh release delete "$RELEASE_REF" --yes
+                  ;;
+                false)
+                  echo "Published release $RELEASE_REF already exists; nothing to publish."
+                  exit 0
+                  ;;
+                *) break ;;
+              esac
+            done
+            if gh release create "$RELEASE_REF" \
+              --target "$GITHUB_SHA" \
+              --title "Wearsic $RELEASE_REF" \
+              "${PRERELEASE_FLAG[@]}" \
+              --generate-notes \
+              "dist/Wearsic-${RELEASE_REF}.apk" \
+              "dist/Wearsic-${RELEASE_REF}.apk.sha256" \
+              "dist/wearsic-server-termux-${RELEASE_REF}.zip" \
+              "dist/wearsic-server-termux-${RELEASE_REF}.zip.sha256" \
+              "dist/wearsic-server-${RELEASE_REF}.sh"
+            then
+              published=1
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::release publish attempt $attempt failed — retrying in 20s"
+              sleep 20
+            fi
           done
-          gh release create "$RELEASE_REF" \
-            --target "$GITHUB_SHA" \
-            --title "Wearsic $RELEASE_REF" \
-            "${PRERELEASE_FLAG[@]}" \
-            --generate-notes \
-            "dist/Wearsic-${RELEASE_REF}.apk" \
-            "dist/wearsic-server-termux-${RELEASE_REF}.zip" \
-            "dist/wearsic-server-termux-${RELEASE_REF}.zip.sha256" \
-            "dist/wearsic-server-${RELEASE_REF}.sh"
+          if [ "$published" != "1" ]; then
+            echo "::error::could not publish release $RELEASE_REF after 3 attempts"
+            exit 1
+          fi

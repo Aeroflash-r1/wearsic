@@ -228,11 +228,22 @@ A YouTube cookie is an authentication credential. Treat it like a password.
 | Show/change API key | wearsic api-key [new] |
 | Phone Wi-Fi IP | wearsic ip |
 | Update Wearsic | wearsic update |
+| Install watch app | wearsic sideload |
 | Diagnose problems | wearsic doctor |
 | Set YouTube cookie | wearsic cookies [str] |
 | Start public Funnel | wearsic funnel |
 | Public URL options | wearsic public |
 | Installed version | wearsic version |
+
+Install (or update) the watch app over adb. This needs `android-tools` on
+the phone (`pkg install android-tools`) and Wireless debugging enabled on
+the watch:
+
+~~~bash
+wearsic sideload                         # latest release → the connected watch
+wearsic sideload v1.9.0                  # a specific release
+wearsic sideload --apk app-release.apk   # a local build
+~~~
 
 Run:
 

@@ -241,7 +241,7 @@ the watch:
 
 ~~~bash
 wearsic sideload                         # latest release → the connected watch
-wearsic sideload v1.9.0                  # a specific release
+wearsic sideload v1.9.1                  # a specific release
 wearsic sideload --apk app-release.apk   # a local build
 ~~~
 
@@ -322,6 +322,21 @@ wearsic doctor
 wearsic logs
 ~~~
 
+## Server will not start — port already in use
+
+Only one process can listen on the server port (default `8080`). If two
+installs (or a stray copy from another folder) are running, the second one
+cannot bind.
+
+Stop the other server, then start again:
+
+~~~bash
+wearsic stop
+wearsic start
+~~~
+
+`wearsic logs` shows the bind error if the port is still busy.
+
 ## Phone kills the server in the background
 
 Android battery management can stop Termux.
@@ -389,6 +404,18 @@ wearsic api-key
 
 Enter that exact key on the watch.
 
+## A song will not play — "needs server-side AAC conversion"
+
+Rare Opus/WebM-only songs need `ffmpeg` for conversion. Install it:
+
+~~~bash
+pkg install ffmpeg
+~~~
+
+The server re-checks while it runs (at most one probe per 30 seconds), so
+conversion comes online by itself — no restart needed. `wearsic doctor`
+shows the audio-conversion line.
+
 ## YouTube says "Sign in to confirm you're not a bot"
 
 Configure a YouTube cookie:
@@ -407,11 +434,12 @@ wearsic health
 
 # 8. 🔋 Start Wearsic automatically after reboot (optional)
 
-Install **Termux:Boot**:
+The installer already configures this (skip it with `WEARSIC_NO_BOOT=1`).
+Do this manually only if auto-start is missing — first install **Termux:Boot**:
 
 https://f-droid.org/en/packages/com.termux.boot/
 
-Then run:
+Then run (the snippet assumes the default install directory `~/wearsic-server`):
 
 ~~~bash
 mkdir -p ~/.termux/boot
@@ -472,7 +500,7 @@ You get a readable snapshot (status, version, extraction success, crashes):
   ♪ wearsic · health
 
   ● ok   http://127.0.0.1:8080 · 12ms
-    version           v1.9.0 · Wearsic Engine
+    version           v1.9.1 · Wearsic Engine
     transcoder         available
     extraction         75 ok · 1 failed (1%)
     crashes            0

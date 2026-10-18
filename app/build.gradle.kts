@@ -77,13 +77,16 @@ signingConfigs {
       // CI forensics (2026-10-18 wedge; remove after root cause is fixed):
       // DebugProbes.dumpCoroutines() only reports suspended coroutines when
       // the kotlinx-coroutines-debug java agent is attached — without it the
-      // dump is empty. Resolved here so the jar path is captured at
-      // configuration time (configuration cache friendly).
+      // dump is empty. The agent jar is looked up in the test task's own
+      // runtime classpath at execution time; a configuration-name lookup at
+      // task-creation time breaks for some test task variants of AGP.
       all { test ->
-        val probeJar = project.configurations.getByName("testRuntimeClasspath").files
-          .firstOrNull { it.name.startsWith("kotlinx-coroutines-debug-") }
-        if (probeJar != null) {
-          test.jvmArgs("-javaagent:$probeJar")
+        test.doFirst {
+          val probeJar = test.classpath.files
+            .firstOrNull { it.name.startsWith("kotlinx-coroutines-debug-") }
+          if (probeJar != null) {
+            test.jvmArgs("-javaagent:$probeJar")
+          }
         }
       }
     }

@@ -12,6 +12,7 @@
 #   wearsic api-key [new]     show / change the API key
 #   wearsic update            update to the latest release (verified + rollback)
 #   wearsic sideload [tag]    install the release watch app onto the watch (adb)
+#   wearsic pair [url]        send address + key to the watch (adb, no typing)
 #   wearsic doctor            check the whole setup (exit 0 = READY)
 #
 # Also available: ready [--json], ip, version, cookies [str], funnel, public.
@@ -578,6 +579,7 @@ show_pairing() {
   fi
   box_line ""
   box_line "   ${C_DIM}Wearsic app > Settings > enter both values.${C_RESET}"
+  box_line "   ${C_DIM}or send them over adb: wearsic pair${C_RESET}"
   box_end
 }
 
@@ -872,6 +874,21 @@ ts_state() {
     fi
   fi
   printf '%s' "$s"
+}
+
+# Public funnel URL from the tailscale node name — https://<node>.<tailnet>.ts.net.
+# Funnel serves the local port on 443 (no port suffix). The FIRST "DNSName"
+# in `tailscale status --json` is the node's own name (Self precedes Peer),
+# which the existing first-occurrence JSON reader gives us without jq.
+# Prints nothing when tailscale is absent or the node has no name yet
+# (fresh install, not logged in).
+funnel_url() {
+  command -v tailscale >/dev/null 2>&1 || return 0
+  local js dns
+  js="$(tailscale status --json 2>/dev/null)"
+  dns="$(jstr "$js" DNSName)"
+  dns="${dns%.}"
+  [ -n "$dns" ] && printf 'https://%s' "$dns"
 }
 
 cmd_funnel() {
@@ -1413,6 +1430,173 @@ cmd_sideload() {
   return 0
 }
 
+# Send the server address + API key straight to the watch app over adb —
+# no typing a 24-character address (and a secret) on a 1.4" keyboard.
+#
+# File contract with the watch app (imported on next launch, then deleted):
+#   /sdcard/Android/data/com.wearsic.app/files/wearsic-pairing.env
+#     WEARSIC_SERVER_URL=<url>
+#     WEARSIC_API_KEY=<key>      (empty value clears the stored key)
+#
+# The address is probed (/health) BEFORE it reaches the watch: "can't
+# connect" after pairing is nearly always a stopped server or a funnel that
+# is not actually serving, and this command is the last moment the user is
+# looking at a keyboard. --skip-check overrides.
+cmd_pair() {
+  installed
+  local url="" mode="lan" device="" skip_check=0 restart=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --funnel) mode="funnel"; shift ;;
+      --lan)    mode="lan"; shift ;;
+      --device|-s) [ -n "${2:-}" ] || die "--device needs an adb serial (see: adb devices)"; device="$2"; shift 2 ;;
+      --skip-check) skip_check=1; shift ;;
+      --restart) restart=1; shift ;;
+      -h|--help) usage; return 0 ;;
+      http://*|https://*) url="$1"; shift ;;
+      *) die "Unknown option for 'wearsic pair': $1 (try: wearsic pair [URL] [--funnel|--lan] [--device SERIAL])" ;;
+    esac
+  done
+  brand "pair"
+  section "Watch pairing"
+
+  # 1. Which address will the watch get?
+  if [ -z "$url" ]; then
+    if [ "$mode" = "funnel" ]; then
+      url="$(funnel_url)"
+      if [ -z "$url" ]; then
+        if ! command -v tailscale >/dev/null 2>&1; then
+          die "Tailscale is not installed — set up the public URL first: wearsic funnel"
+        fi
+        die "Could not read the funnel URL (logged out?) — run: wearsic funnel"
+      fi
+    else
+      url="$(server_url)"
+      if [ -z "$url" ]; then
+        err "couldn't detect this phone's Wi-Fi IP"
+        say "  1. is Wi-Fi on?   (check: wearsic ip)"
+        say "  2. pair through the internet instead:  wearsic pair --funnel"
+        say "  3. or pass the address yourself:        wearsic pair http://<host>:<port>"
+        exit 1
+      fi
+    fi
+  fi
+  url="${url%/}"
+  case "$url" in
+    *[[:space:]]*) die "the address must not contain spaces: $url" ;;
+    http://[!/]*|https://[!/]*) : ;;
+    *) die "the address must look like http://host:port — got: $url" ;;
+  esac
+
+  # 2. The key. A funnel address is public — same rule as cmd_funnel.
+  local key; key="$(api_key)"
+  if [ "$mode" = "funnel" ] && [ -z "$key" ]; then
+    die "The funnel address is public — set an API key first:  wearsic api-key <your-key>"
+  fi
+  if [ -n "$key" ] && [ "${#key}" -lt 8 ]; then
+    die "the watch app rejects API keys shorter than 8 characters — set a longer one: wearsic api-key <new>"
+  fi
+
+  # 3. adb first — fail fast before any network probing.
+  command -v adb >/dev/null 2>&1 \
+    || die "adb is not installed — in Termux run: pkg install android-tools"
+
+  # 4. Prove the address answers from this phone BEFORE it reaches the watch.
+  if [ "$skip_check" = "0" ]; then
+    local probe_timeout=8
+    case "$url" in https://*) probe_timeout=15 ;; esac
+    say "Checking $url/health …"
+    if curl -fsS -m "$probe_timeout" "$url/health" >/dev/null 2>&1; then
+      ok "the server answers at $url"
+    else
+      err "no answer from $url/health"
+      case "$url" in
+        https://*)
+          say "  ▸ is the server running?   wearsic start"
+          say "  ▸ is the funnel enabled?   wearsic funnel"
+          say "  ▸ HTTPS certs on for your tailnet?  login.tailscale.com/admin/dns" ;;
+        *)
+          say "  ▸ is the server running?   wearsic start" ;;
+      esac
+      say "Override the check with:  wearsic pair --skip-check"
+      exit 1
+    fi
+  fi
+
+  # 5. Pick the watch (same rules as sideload).
+  local devices serial count model
+  devices="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
+  if [ -n "$device" ]; then
+    serial="$device"
+    printf '%s\n' "$devices" | grep -qx "$serial" \
+      || die "adb device $serial is not connected (check: adb devices)"
+  else
+    count="$(printf '%s\n' "$devices" | grep -c .)"
+    if [ "$count" = "1" ]; then
+      serial="$devices"
+    elif [ "$count" = "0" ]; then
+      err "no watch is connected over adb"
+      say "  1. On the watch: Settings → System → Developer options → Wireless debugging → ON"
+      say "  2. Pair — a code appears on the watch:  adb pair <watch-ip>:<pair-port>"
+      say "  3. Connect:                             adb connect <watch-ip>:<port>"
+      say "  4. Run this command again."
+      exit 1
+    else
+      err "several adb devices are connected:"
+      printf '%s\n' "$devices" | sed 's/^/      /'
+      say "Pick one: wearsic pair --device <serial>"
+      exit 1
+    fi
+  fi
+  model="$(adb -s "$serial" shell getprop ro.product.model 2>/dev/null | tr -d '\r' | head -1)"
+  [ -n "$model" ] && kv "device" "$model ($serial)"
+
+  # 6. Deliver the pairing file, then read it back: a silently truncated
+  #    push must fail HERE, not on the watch.
+  local dir="/sdcard/Android/data/com.wearsic.app/files"
+  local pfile="$dir/wearsic-pairing.env" pw
+  pw="$(mktemp)"
+  printf 'WEARSIC_SERVER_URL=%s\nWEARSIC_API_KEY=%s\n' "$url" "$key" > "$pw"
+  adb -s "$serial" shell mkdir -p "$dir" >/dev/null 2>&1
+  if ! adb -s "$serial" push "$pw" "$pfile" >/dev/null 2>&1; then
+    rm -f "$pw"
+    err "adb push failed — is the watch still connected? (check: adb devices)"
+    exit 1
+  fi
+  local back; back="$(adb -s "$serial" shell cat "$pfile" 2>/dev/null | tr -d '\r')"
+  if [ "$back" != "$(tr -d '\r' < "$pw")" ]; then
+    rm -f "$pw"
+    err "the pushed file did not read back correctly — try again (watch storage full?)"
+    exit 1
+  fi
+  rm -f "$pw"
+  ok "address + key delivered to the watch"
+
+  if [ "$restart" = "1" ]; then
+    adb -s "$serial" shell am force-stop com.wearsic.app >/dev/null 2>&1
+    say "closed Wearsic on the watch so the next open applies the pairing"
+  fi
+
+  # 7. Summary — the address yes, the key never (it stays in your .env and
+  #    on the watch; `wearsic url` shows it when you need it).
+  printf '\n'
+  kv "server" "$url"
+  if [ -n "$key" ]; then
+    kv "api key" "delivered — the same one 'wearsic url' shows"
+  else
+    kv "api key" "${C_WARN}none set — anyone on your network can use this server${C_RESET}"
+  fi
+  printf '\n'
+  box_begin "one step left"
+  box_line ""
+  box_line "   Open Wearsic on the watch — the address applies"
+  box_line "   automatically and a toast confirms it."
+  box_line ""
+  box_line "   ${C_DIM}Nothing happened? Update the watch app: wearsic sideload${C_RESET}"
+  box_end
+  return 0
+}
+
 # Installed vs running engine version (from /health when available).
 cmd_version() {
   installed
@@ -1713,6 +1897,7 @@ usage() {
   printf '    %s%-20s%s %s\n' "$C_BRAND" "ip" "$C_RESET" "this phone's WiFi IP"
   printf '    %s%-20s%s %s\n' "$C_BRAND" "api-key [new]" "$C_RESET" "show or set the API key"
   printf '    %s%-20s%s %s\n' "$C_BRAND" "sideload [tag]" "$C_RESET" "install the release app on the watch (adb)"
+  printf '    %s%-20s%s %s\n' "$C_BRAND" "pair [URL]" "$C_RESET" "send address + key to the watch (adb, no typing)"
   printf '\n  %sEngine%s\n' "$C_BOLD" "$C_RESET"
   printf '    %s%-20s%s %s\n' "$C_BRAND" "update [--pre]" "$C_RESET" "update to the latest release (verified, rollback-safe)"
   printf '    %s%-20s%s %s\n' "$C_BRAND" "version" "$C_RESET" "installed + running engine version"
@@ -1743,6 +1928,7 @@ case "${1:-}" in
       version) cmd_version ;;
       update)  shift 2; cmd_update "$@" ;;
       sideload) shift 2; cmd_sideload "$@" ;;
+      pair)     shift 2; cmd_pair "$@" ;;
       doctor)  cmd_doctor ;;
       api)
         case "${3:-}" in
@@ -1768,6 +1954,7 @@ case "${1:-}" in
   version)   cmd_version ;;
   update)    shift; cmd_update "$@" ;;
   sideload)  shift; cmd_sideload "$@" ;;
+  pair)      shift; cmd_pair "$@" ;;
   doctor)    cmd_doctor ;;
   api-key|apikey) shift; cmd_api_key "$@" ;;
   cookies)   shift; cmd_cookies "$@" ;;

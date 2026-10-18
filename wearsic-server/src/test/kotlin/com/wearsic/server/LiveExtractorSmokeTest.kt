@@ -112,8 +112,16 @@ class LiveExtractorSmokeTest {
         @JvmStatic
         @BeforeAll
         fun armSessionCookie() {
-            YoutubeSession.cookie = System.getenv("WEARSIC_YOUTUBE_COOKIE")
-            println("live smoke: cookie-backed=${YoutubeSession.hasCookie()}")
+            val raw = System.getenv("WEARSIC_YOUTUBE_COOKIE")
+            YoutubeSession.cookie = raw
+            // Printed to both streams: whichever one Gradle surfaces for this
+            // run, the cookie state is never a mystery in CI logs. Lengths
+            // only — never the value.
+            val line = "live smoke: cookie-backed=${YoutubeSession.hasCookie()}" +
+                if (raw == null) " (env not set)" else
+                    " (raw-len=${raw.length}, effective-len=${YoutubeSession.cookie?.length ?: 0})"
+            println(line)
+            System.err.println(line)
         }
     }
 }

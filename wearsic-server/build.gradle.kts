@@ -101,4 +101,11 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
+    // CI live-smoke cookie: forwarded straight into the forked test JVM so a
+    // reused Gradle daemon (whose cached environment may predate the secret)
+    // can never hide it. The plain WEARSIC_YOUTUBE_COOKIE env var keeps
+    // working for local runs.
+    providers.gradleProperty("wearsic.youtube.cookie").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { environment("WEARSIC_YOUTUBE_COOKIE", it) }
 }

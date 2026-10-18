@@ -16,6 +16,7 @@ PASS=0
 FAIL=0
 t_eq()    { if [ "$2" = "$3" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  FAIL: $1: expected [$2] got [$3]"; fi; }
 t_has()   { if grep -qF -- "$2" "$3"; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  FAIL: $1: [$2] missing from $3"; fi; }
+t_has_re(){ if grep -qE -- "$2" "$3"; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  FAIL: $1: [/$2/] missing from $3"; fi; }
 t_lacks() { if grep -qF -- "$2" "$3"; then FAIL=$((FAIL+1)); echo "  FAIL: $1: [$2] unexpectedly present in $3"; else PASS=$((PASS+1)); fi; }
 
 fresh() {
@@ -62,7 +63,9 @@ t_has "zip URL sample (README)"       "download/v$NEW/wearsic-server-termux-v$NE
 t_has "release tag example (README)"  "git tag v$NEW && git push origin v$NEW" "$TMP/repo/README.md"
 t_has "engineVersion (contract)"      "\"engineVersion\": \"$NEW\"" "$TMP/repo/API_CONTRACT.md"
 t_has "sideload example (guide)"      "wearsic sideload v$NEW" "$TMP/repo/TERMUX_SERVER_GUIDE.md"
-t_has "engine banner (guide)"         "v$NEW · Wearsic Engine" "$TMP/repo/TERMUX_SERVER_GUIDE.md"
+# `wearsic status` renders `version     vX.Y.Z` and nothing more — pin the
+# bump against the row the CLI actually prints (box_kv2 "version").
+t_has_re "health panel version row (guide)" "version[[:space:]]+v$NEW([[:space:]]|│)" "$TMP/repo/TERMUX_SERVER_GUIDE.md"
 t_lacks "no stale sideload example"   "wearsic sideload v$OLD" "$TMP/repo/TERMUX_SERVER_GUIDE.md"
 
 # --- 2. repeatability: a second bump walks the patterns forward again ---
@@ -78,7 +81,7 @@ t_has  "historical notes preserved" "added in v1.9.1" "$TMP/repo/README.md"
 
 # --- 3. drift guard: a missing pattern refuses AND writes nothing ---
 fresh
-grep -v '· Wearsic Engine' "$TMP/repo/TERMUX_SERVER_GUIDE.md" > "$TMP/guide.tmp" \
+grep -vE 'version[[:space:]]+v[0-9]' "$TMP/repo/TERMUX_SERVER_GUIDE.md" > "$TMP/guide.tmp" \
   && mv "$TMP/guide.tmp" "$TMP/repo/TERMUX_SERVER_GUIDE.md"
 BEFORE="$(tree_state "$TMP/repo")"
 python3 "$SCRIPT" --repo-root "$TMP/repo" > "$TMP/run3.log" 2>&1

@@ -15,6 +15,8 @@ import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.core.app.ApplicationProvider
+import com.wearsic.app.data.DataStoreForensics
+import com.wearsic.app.data.TapDispatcher
 import com.wearsic.app.data.WearsicDownloadRepository
 import com.wearsic.app.data.WearsicMusicRepository
 import com.wearsic.app.data.WearsicPreferencesRepository
@@ -73,9 +75,16 @@ class ExampleRobolectricTest {
 
     companion object {
         init {
-            // Forensics only (2026-10-18 wedge): track every coroutine this
-            // class creates so the watchdog can dump their suspension points —
-            // suspended coroutines are invisible to jstack.
+            // Forensics only (2026-10-18 wedge): pipe the pass-through
+            // dispatcher taps (caller event loop + DataStore scope) into the
+            // CI log. Must be set before this class's first test method runs.
+            DataStoreForensics.tap = { message ->
+                println("WEDGE-PROBE [DSTAP ${Thread.currentThread().name}] $message")
+                System.out.flush()
+            }
+            // Track every coroutine this class creates so the watchdog can
+            // dump their suspension points — suspended coroutines are
+            // invisible to jstack.
             runCatching {
                 DebugProbes.install()
                 println("WEDGE-PROBE [init] DebugProbes installed")
@@ -105,7 +114,9 @@ class ExampleRobolectricTest {
                 Thread.sleep(10_000)
                 probe("[watchdog] 10s inside saveServerUrl")
                 probeCoroutineDump("watchdog @10s")
-                probeLooperState("watchdog @10s")
+                // Thread dump first: the looper-state reflection must NOT run on
+                // this thread (a ShadowPausedLooper getter blocked for 20s here
+                // when the main thread was parked).
                 probe("[watchdog] thread dump follows")
                 for ((t, stack) in Thread.getAllStackTraces()) {
                     println("WEDGE-PROBE [watchdog] thread=${t.name} state=${t.state}")
@@ -115,7 +126,6 @@ class ExampleRobolectricTest {
                 Thread.sleep(10_000)
                 probe("[watchdog] 20s inside saveServerUrl")
                 probeCoroutineDump("watchdog @20s")
-                probeLooperState("watchdog @20s")
                 fireAndForgetDispatchProbe("watchdog@20s-main", Dispatchers.Main)
                 fireAndForgetDispatchProbe("watchdog@20s-io", Dispatchers.IO)
                 System.out.flush()
@@ -228,6 +238,15 @@ class ExampleRobolectricTest {
         // the exact stuck stage: coroutine dump (via the debug java agent),
         // looper state, pump-vs-cancel separation, and a write from IO.
         probe("saveServerUrl begin interceptor=${coroutineContext[ContinuationInterceptor]}")
+        // Forensics: wrap the caller's dispatcher (the runBlocking event loop)
+        // so every dispatch through it — including the DataStore actor's
+        // withContext(callerContext) hop that runs the transform — is logged
+        // as ENQUEUE/RUN/DONE with thread names. The wedge's missing wake-up
+        // must show up here (enqueued but never run, or never enqueued).
+        val callerTap = TapDispatcher(
+            coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+            "CALLER"
+        )
         // Fire-and-forget sanity markers. The main one stays queued while the
         // Looper is paused and must appear right after the first looper pump
         // in the wedge experiments; the IO one prints within milliseconds.
@@ -236,7 +255,9 @@ class ExampleRobolectricTest {
         val watchdog = startWedgeWatchdog()
         val saveOutcome: String? = try {
             withTimeoutOrNull(30_000) {
-                repository.saveServerUrl("https://wearsic.server.internal")
+                withContext(callerTap) {
+                    repository.saveServerUrl("https://wearsic.server.internal")
+                }
                 "ok"
             }
         } catch (t: Throwable) {
@@ -267,7 +288,9 @@ class ExampleRobolectricTest {
             fireAndForgetDispatchProbe("postPumpA-main", Dispatchers.Main)
             val write2 = try {
                 withTimeoutOrNull(15_000) {
-                    repository.saveServerUrl("https://wearsic.server.internal")
+                    withContext(callerTap) {
+                        repository.saveServerUrl("https://wearsic.server.internal")
+                    }
                     "ok"
                 }
             } catch (t: Throwable) {
@@ -281,7 +304,9 @@ class ExampleRobolectricTest {
                 .onFailure { probe("experimentB pump failed: $it") }
             val write3 = try {
                 withTimeoutOrNull(15_000) {
-                    repository.saveServerUrl("https://wearsic.server.internal")
+                    withContext(callerTap) {
+                        repository.saveServerUrl("https://wearsic.server.internal")
+                    }
                     "ok"
                 }
             } catch (t: Throwable) {

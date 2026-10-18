@@ -19,7 +19,13 @@ import kotlinx.coroutines.flow.catch
 import java.io.IOException
 import java.net.URI
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "wearsic_settings")
+// Forensics only (2026-10-18 CI wedge): the scope is a pass-through tap that
+// logs every dispatch of the DataStore's internal coroutines; revert to the
+// plain default delegate (no scope argument) once the wedge is fixed.
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "wearsic_settings",
+    scope = tappedDataStoreScope(),
+)
 
 class WearsicPreferencesRepository(private val context: Context) {
 

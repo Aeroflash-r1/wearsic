@@ -99,7 +99,9 @@ jobs:
       # (DebugProbes) after 10s/20s of stall. Run the suspect test alone, with
       # its whole class, and paired with each preceding class before the full
       # suite below: whichever scope reproduces the wedge tells us what
-      # cross-test state is involved.
+      # cross-test state is involved. The pair scopes are repeated because the
+      # wedge clustered there (download pair, 2/3 runs on 2026-10-18), giving
+      # each run more chances to capture the wedge with the taps live.
       - name: Unit tests (wedge forensics, flaky test in isolation)
         timeout-minutes: 20
         continue-on-error: true
@@ -115,7 +117,16 @@ jobs:
           echo "::group::flaky test after AlbumBrowsingTest (fresh JVM)"
           timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.AlbumBrowsingTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
           echo "::endgroup::"
+          echo "::group::flaky test after AlbumBrowsingTest (fresh JVM, repeat 2)"
+          timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.AlbumBrowsingTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
+          echo "::endgroup::"
           echo "::group::flaky test after DownloadOwnershipTest (fresh JVM)"
+          timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.DownloadOwnershipTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
+          echo "::endgroup::"
+          echo "::group::flaky test after DownloadOwnershipTest (fresh JVM, repeat 2)"
+          timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.DownloadOwnershipTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
+          echo "::endgroup::"
+          echo "::group::flaky test after DownloadOwnershipTest (fresh JVM, repeat 3)"
           timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.DownloadOwnershipTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
           echo "::endgroup::"
           exit $status

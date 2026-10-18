@@ -298,6 +298,12 @@ minutes — no phone interaction.
 | `emergency_override` | ship even if the live smoke fails (CI datacenter IPs can hit YouTube bot-walls) |
 | `mode=branch` | the fix is our own resolver code — release the current tip as-is |
 
+> **CI bot-wall:** GitHub's runner IPs are sometimes challenged by YouTube
+> (`SignInConfirmNotBotException` in the smoke log). Either tick
+> `emergency_override`, or better, add a repo secret `YT_COOKIE` with the
+> same cookie string as `wearsic cookies` — the live smoke then runs
+> cookie-backed and the gate stays honest.
+
 > **First-time setup:** GitHub only shows the Run-workflow button for files
 > that exist on `main` — this workflow must be cherry-picked/merged there
 > before the button appears.

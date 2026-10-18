@@ -163,8 +163,10 @@ for GitHub to show the button). One press:
 
 `dry_run` proves the whole pipeline without shipping anything;
 `emergency_override` ships despite a failing live smoke (CI datacenter IPs
-can hit YouTube bot-walls) — recorded as a warning; `mode=branch` releases
-the current tip as-is for fixes to our own resolver code.
+can hit YouTube bot-walls) — recorded as a warning; set the optional
+`YT_COOKIE` repo secret (the same cookie string as `wearsic cookies`) to
+make the smoke cookie-backed instead; `mode=branch` releases the current
+tip as-is for fixes to our own resolver code.
 
 Also authenticated when `WEARSIC_API_KEY` is set:
 

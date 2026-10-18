@@ -111,8 +111,9 @@ In order, that press:
 
 `dry_run` runs every gate and pushes nothing; `emergency_override` ships
 despite a failing live smoke (CI datacenter IPs can hit YouTube bot-walls);
-`mode=branch` releases the current tip as-is for fixes to our own resolver
-code. The offline suite `scripts/tests/bump-version-test.sh` runs on every
+set the optional `YT_COOKIE` repo secret (same cookie string as
+`wearsic cookies`) to make the smoke cookie-backed instead; `mode=branch`
+releases the current tip as-is for fixes to our own resolver code. The offline suite `scripts/tests/bump-version-test.sh` runs on every
 push in CI, so pattern drift fails a normal build — not a release.
 
 ## Verified

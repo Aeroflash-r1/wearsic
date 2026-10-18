@@ -81,6 +81,13 @@ jobs:
       - name: Run server tests
         run: ./gradlew :wearsic-server:test --stacktrace
 
+      # The Extractor Hotfix workflow rewrites version pins across the repo
+      # through scripts/bump-version.py; a silent pattern drift there would
+      # cut a malformed release, so the script's offline suite runs on every
+      # push — not only at release time.
+      - name: Run bump-script test (offline version pin rewrite)
+        run: bash scripts/tests/bump-version-test.sh
+
       # Shell logic lives in the `wearsic` CLI, which no Kotlin test covers.
       # This one is fast and offline: it fakes `tailscale` and pins the state
       # detection that `wearsic funnel` depends on to tell a dead daemon from
@@ -124,6 +131,14 @@ jobs:
       # curl so the GET lags the HEAD, then pins 0% -> 100% + zero stderr.
       - name: Run CLI shell tests (download progress race)
         run: bash wearsic-server/tests/download-bar-test.sh
+
+      # The UI kit draws terminal-width panels: a wrap path once padded rows
+      # with colour codes counted as visible width (ragged right borders)
+      # before, and word wrap ate content indents. Offline: renders every
+      # screen at five widths with colour forced on, strips the codes back
+      # off, then measures every line and panel border.
+      - name: Run CLI shell tests (screen layout at phone widths)
+        run: bash wearsic-server/tests/ui-layout-test.sh
 
       # Real pixels at Galaxy Watch7 dimensions. `ScreenGalleryTest` renders
       # every reachable screen through Robolectric and writes PNGs into

@@ -255,7 +255,7 @@ the watch:
 
 ~~~bash
 wearsic sideload                         # latest release → the connected watch
-wearsic sideload v1.9.1                  # a specific release
+wearsic sideload v1.9.2                  # a specific release
 wearsic sideload --apk app-release.apk   # a local build
 ~~~
 
@@ -284,6 +284,10 @@ Check the installed/running version:
 ~~~bash
 wearsic version
 ~~~
+
+You rarely need to update for a YouTube fix: when extraction breaks, the
+server detects it and installs the fixed release by itself (see §7,
+"YouTube changed something").
 
 ---
 
@@ -478,6 +482,14 @@ Then check:
 wearsic health
 ~~~
 
+## YouTube changed something — nothing plays
+
+Not yours to fix. The server notices by itself (`canaryHealthy` turns
+false), then downloads, verifies and installs a fixed engine release as
+soon as one exists — usually within 10 minutes, no command needed. If no
+fix has shipped yet, it keeps retrying every 10 minutes and plays again by
+itself the moment one does.
+
 ---
 
 # 8. 🔋 Start Wearsic automatically after reboot (optional)
@@ -547,11 +559,17 @@ You get a readable snapshot (status, version, extraction success, crashes):
 ~~~text
   ♪ wearsic · health
 
-  ● ok   http://127.0.0.1:8080 · 12ms
-    version           v1.9.1 · Wearsic Engine
-    transcoder         available
-    extraction         75 ok · 1 failed (1%)
-    crashes            0
+  ╭─ health ───────────────────────────────╮
+  │                                        │
+  │    ● ok   127.0.0.1:8080 · 4ms         │
+  │                                        │
+  │    version     v1.9.2 · Wearsic Engine │
+  │    transcoder  available               │
+  │    extraction  75 ok · 1 failed (1%)   │
+  │    update      idle                    │
+  │    crashes     0                       │
+  │    cdn         0 refused               │
+  ╰────────────────────────────────────────╯
 ~~~
 
 Scripts that want the raw JSON use `--json`:

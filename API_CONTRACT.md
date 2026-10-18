@@ -48,7 +48,7 @@ X-Wearsic-Key: <key>
 ```json
 {
   "status": "ok",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -64,7 +64,9 @@ reports the **live** ffmpeg status for Opus/WebM→AAC transcoding — the
 server re-probes a missing binary while running (30 s throttle,
 single-flight), so installing ffmpeg later flips it true without a restart;
 `extraction`/`canaryHealthy`/`update` expose the self-healing engine
-state (see `wearsic-server/README.md`).
+state: a broken extraction is detected via the canary and healed by
+auto-installing a checksum-verified newer release when one exists (see
+`wearsic-server/README.md`).
 
 ### 1-b. Readiness
 
@@ -80,7 +82,7 @@ state (see `wearsic-server/README.md`).
   "database": true,
   "extractor": true,
   "transcoder": true,
-  "engineVersion": "1.9.1"
+  "engineVersion": "1.9.2"
 }
 ```
 

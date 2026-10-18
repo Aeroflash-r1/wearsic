@@ -92,71 +92,12 @@ jobs:
       - name: Warm Robolectric runtime (bounded)
         run: timeout 600 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.GreetingScreenshotTest' --stacktrace
 
-      # CI forensics for the 2026-10-18 wedge: the full suite hangs ~50% of
-      # runs inside ExampleRobolectricTest.testMusicRepositoryIntegration with
-      # every thread idle, so a jstack dump cannot show what the suspended
-      # coroutine awaits. The wedged test now dumps every live coroutine
-      # (DebugProbes) after 10s/20s of stall. Run the suspect test alone, with
-      # its whole class, and paired with each preceding class before the full
-      # suite below: whichever scope reproduces the wedge tells us what
-      # cross-test state is involved. The pair scopes are repeated because the
-      # wedge clustered there (download pair, 2/3 runs on 2026-10-18), giving
-      # each run more chances to capture the wedge with the taps live.
-      - name: Unit tests (wedge forensics, flaky test in isolation)
-        timeout-minutes: 20
-        continue-on-error: true
-        run: |
-          set +e
-          status=0
-          echo "::group::flaky test alone (fresh JVM)"
-          timeout 240 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.ExampleRobolectricTest.testMusicRepositoryIntegration' --stacktrace || status=1
-          echo "::endgroup::"
-          echo "::group::flaky test with its whole class"
-          timeout 240 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
-          echo "::endgroup::"
-          echo "::group::flaky test after AlbumBrowsingTest (fresh JVM)"
-          timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.AlbumBrowsingTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
-          echo "::endgroup::"
-          echo "::group::flaky test after AlbumBrowsingTest (fresh JVM, repeat 2)"
-          timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.AlbumBrowsingTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
-          echo "::endgroup::"
-          echo "::group::flaky test after DownloadOwnershipTest (fresh JVM)"
-          timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.DownloadOwnershipTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
-          echo "::endgroup::"
-          echo "::group::flaky test after DownloadOwnershipTest (fresh JVM, repeat 2)"
-          timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.DownloadOwnershipTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
-          echo "::endgroup::"
-          echo "::group::flaky test after DownloadOwnershipTest (fresh JVM, repeat 3)"
-          timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.DownloadOwnershipTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
-          echo "::endgroup::"
-          exit $status
-
       # Fast-fail instead of the 45-minute job backstop if the suite ever
       # wedges again; per-test start logging (app/build.gradle.kts) names the
-      # hanging test in the log, and a 2.5-minute watchdog dumps the stuck JVM
-      # stacks (test worker + daemon) into the log before the 10-minute step
-      # timeout ends the run — so a repeat is fully self-diagnosing.
+      # hanging test in the log, so a repeat is self-diagnosing.
       - name: Run app unit tests (Robolectric)
         timeout-minutes: 10
-        run: |
-          ./gradlew :app:testDebugUnitTest --stacktrace &
-          GRADLE_PID=$!
-          (
-            sleep 150
-            if kill -0 "$GRADLE_PID" 2>/dev/null; then
-              echo "::group::Stuck thread dump (unit suite still running after 150s)"
-              for p in $( { pgrep -f 'GradleWorkerMain' || true; pgrep -f 'GradleDaemon' || true; } | sort -u ); do
-                echo "== process $p: $(ps -o args= -p "$p" 2>/dev/null || echo unknown) =="
-                timeout 30 "$JAVA_HOME/bin/jstack" -l "$p" 2>&1 || true
-              done
-              echo "::endgroup::"
-            fi
-          ) &
-          WATCHDOG_PID=$!
-          RC=0
-          wait "$GRADLE_PID" || RC=$?
-          kill "$WATCHDOG_PID" 2>/dev/null || true
-          exit "$RC"
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       # A broken server must not merge silently while only Android tests run.
       - name: Run server tests

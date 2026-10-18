@@ -102,6 +102,14 @@ jobs:
       - name: Run CLI shell tests (sideload asset + adb selection)
         run: bash wearsic-server/tests/sideload-test.sh
 
+      # `wearsic pair` delivers the server address + key to the watch over
+      # adb — no watch keyboard. Offline: fakes adb + curl + tailscale and
+      # pins the two-line file contract, the reachability gate before
+      # delivery, the public-requires-a-key rule, the 8-char key floor and
+      # device selection; plus funnel_url's first-occurrence DNSName read.
+      - name: Run CLI shell tests (pair sends address + key over adb)
+        run: bash wearsic-server/tests/pair-test.sh
+
       # `wearsic url` was a permanent false negative on stock Termux (the
       # probe order assumed iproute2's `ip`, which Termux never ships) and
       # then printed a literal `http://<phone-IP>` placeholder users typed

@@ -58,7 +58,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$serializationVersion")
 
     // --- Extraction ---
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.4")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
 
     // --- Persistence ---
     implementation("org.xerial:sqlite-jdbc:3.46.1.0")

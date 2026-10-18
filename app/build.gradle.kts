@@ -71,26 +71,7 @@ signingConfigs {
     compose = true
     buildConfig = true
   }
-  testOptions {
-    unitTests {
-      isIncludeAndroidResources = true
-      // CI forensics (2026-10-18 wedge; remove after root cause is fixed):
-      // DebugProbes.dumpCoroutines() only reports suspended coroutines when
-      // the kotlinx-coroutines-debug java agent is attached — without it the
-      // dump is empty. The agent jar is looked up in the test task's own
-      // runtime classpath at execution time; a configuration-name lookup at
-      // task-creation time breaks for some test task variants of AGP.
-      all { test ->
-        test.doFirst {
-          val probeJar = test.classpath.files
-            .firstOrNull { it.name.startsWith("kotlinx-coroutines-debug-") }
-          if (probeJar != null) {
-            test.jvmArgs("-javaagent:$probeJar")
-          }
-        }
-      }
-    }
-  }
+  testOptions { unitTests { isIncludeAndroidResources = true } }
   // Opt in to the experimental screenshotTest source set (layoutlib renders).
   experimentalProperties["android.experimental.enableScreenshotTest"] = true
   dependenciesInfo {
@@ -145,12 +126,6 @@ dependencies {
   testImplementation(libs.roborazzi)
   testImplementation(libs.roborazzi.compose)
   testImplementation(libs.roborazzi.junit.rule)
-  // CI forensics (2026-10-18 Robolectric wedge; remove once the root cause is
-  // fixed): suspended coroutines are invisible to jstack, so the wedged test
-  // dumps every live coroutine via DebugProbes.dumpCoroutines(). Hardcoded on
-  // purpose — editing libs.versions.toml would change the Robolectric
-  // android-all cache key in .github/workflows/android.yml.
-  testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-debug:1.10.2")
   androidTestImplementation(platform(libs.androidx.compose.bom))
   androidTestImplementation(libs.androidx.compose.ui.test.junit4)
   androidTestImplementation(libs.androidx.junit)
@@ -188,12 +163,7 @@ tasks.withType<Test>().configureEach {
   // CI diagnostic: log every test as it starts, so if the suite ever wedges,
   // the CI log names the test it died in instead of going silent until the
   // job backstop kills the run (see the 2026-10-18 Robolectric wedge).
-  testLogging {
-    events("started", "failed")
-    // Stream each test's stdout as well: the WEDGE-PROBE markers in
-    // ExampleRobolectricTest name the exact step a hanging run died in.
-    showStandardStreams = true
-  }
+  testLogging { events("started") }
   val arch = System.getProperty("os.arch") ?: ""
   val os = System.getProperty("os.name")?.lowercase() ?: ""
   if (os.contains("linux") && arch == "aarch64") {

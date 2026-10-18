@@ -22,13 +22,7 @@ import kotlinx.coroutines.flow.catch
 import java.io.IOException
 import java.net.URI
 
-// Forensics only (2026-10-18 CI wedge): the scope is a pass-through tap that
-// logs every dispatch of the DataStore's internal coroutines; revert to the
-// plain default delegate (no scope argument) once the wedge is fixed.
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
-    name = "wearsic_settings",
-    scope = tappedDataStoreScope(),
-)
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "wearsic_settings")
 
 class WearsicPreferencesRepository(private val context: Context) {
 
@@ -99,20 +93,9 @@ class WearsicPreferencesRepository(private val context: Context) {
             return
         }
         val cleanUrl = Validation.validateServerUrl(url).getOrNull() ?: return
-        println("WEDGE-PROBE [${Thread.currentThread().name}] saveServerUrl edit() entered")
-        System.out.flush()
         editPreferences { preferences ->
-            // CI forensics (2026-10-18 wedge; remove after root cause is fixed):
-            // marks whether the DataStore actor reached the transform it runs
-            // via withContext(callerContext) inside transformAndWrite.
-            println("WEDGE-PROBE [${Thread.currentThread().name}] transform executing saveServerUrl")
-            System.out.flush()
             preferences[KEY_SERVER_URL] = cleanUrl.trimEnd('/')
-            println("WEDGE-PROBE [${Thread.currentThread().name}] transform completed saveServerUrl")
-            System.out.flush()
         }
-        println("WEDGE-PROBE [${Thread.currentThread().name}] saveServerUrl edit() returned")
-        System.out.flush()
     }
 
     val autoCacheEnabledFlow: Flow<Boolean> = context.dataStore.data

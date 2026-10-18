@@ -1,0 +1,223 @@
+# One-button extractor hotfix.
+#
+# "YouTube broke" should be a button press, not a checklist. This workflow:
+#
+#   1. picks the target NewPipeExtractor ref — the newest upstream release by
+#      default, or anything typed: v0.27.0, a commit/PR hash, or
+#      master-SNAPSHOT when upstream merged a fix but has not released it
+#      (JitPack builds all three),
+#   2. rewrites the pin + patches the project version via
+#      scripts/bump-version.py (server, app, living doc samples) and shows
+#      the full diff,
+#   3. gates the release on: the offline bump-script test, the full server
+#      unit suite, and a LIVE dual-path smoke against real YouTube — the
+#      only check that can tell a fix from a non-fix,
+#   4. commits, tags vX.Y.Z, pushes, and dispatches Android CI on the tag,
+#      which publishes the GitHub Release (zip + sha256) that every installed
+#      server auto-downloads within minutes (≤10 min while broken, ≤6 h via
+#      the periodic discovery check when healthy).
+#
+# Nothing is pushed when a gate fails. `dry_run` proves the whole pipeline
+# without shipping. `emergency_override` ships despite a failing live smoke
+# (e.g. a CI datacenter-IP bot-wall) — recorded as a warning, use it
+# deliberately.
+#
+# mode=branch releases the current tip as-is — that is how a fix to OUR OWN
+# extractor (YoutubeGateway's lean path), or any other code fix, ships with
+# the same one press.
+#
+# Uses only the built-in GITHUB_TOKEN: repo pushes are allowed with
+# contents:write, and workflow_dispatch is exempt from the "events triggered
+# by GITHUB_TOKEN create no new runs" rule — so the Android CI dispatch on
+# the new tag works without storing a PAT anywhere.
+#
+# First-time note: GitHub shows the "Run workflow" button only for workflow
+# files that exist on the default branch — this file must be on `main`
+# (a one-file cherry-pick is fine). The run itself checks out the branch you
+# select in the dispatch dialog, so pick `license-and-rename` until the full
+# merge lands.
+
+name: Extractor Hotfix
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "newpipe = bump the NewPipeExtractor pin; branch = release the current tip as-is"
+        type: choice
+        options: [newpipe, branch]
+        default: newpipe
+      newpipe_ref:
+        description: "Exact NewPipeExtractor ref (v0.26.5 / commit / master-SNAPSHOT). Blank = newest upstream release"
+        type: string
+        default: ""
+      dry_run:
+        description: "Run every gate and show the diff, push nothing"
+        type: boolean
+        default: false
+      emergency_override:
+        description: "Ship even if the live smoke fails (datacenter-IP bot-walls etc.) — use deliberately"
+        type: boolean
+        default: false
+
+# Two hotfixes must never race for version numbers or tags.
+concurrency:
+  group: extractor-hotfix
+  cancel-in-progress: false
+
+jobs:
+  hotfix:
+    name: Bump, verify, ship
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit + tag + push
+      actions: write  # dispatch Android CI on the new tag
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve the target ref and the current pin
+        id: precheck
+        env:
+          MODE: ${{ inputs.mode }}
+          REF_INPUT: ${{ inputs.newpipe_ref }}
+        run: |
+          set -euo pipefail
+          if [ ! -f scripts/bump-version.py ] || [ ! -f scripts/tests/bump-version-test.sh ]; then
+            echo "::error::release tooling missing — select a ref that has scripts/ (e.g. license-and-rename), not main. See the header of this workflow."
+            exit 1
+          fi
+          CURRENT=$(sed -n 's/.*NewPipeExtractor:\([^"]*\)").*/\1/p' wearsic-server/build.gradle.kts | head -1)
+          # Git refs never contain whitespace; stripping also keeps dispatch
+          # input from ever reaching the shell or $GITHUB_OUTPUT as code.
+          TARGET="$(printf '%s' "$REF_INPUT" | tr -d '[:space:]')"
+          if [ "$MODE" = "newpipe" ] && [ -z "$TARGET" ]; then
+            TARGET=$(curl -fsS --retry 3 -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/TeamNewPipe/NewPipeExtractor/releases/latest \
+              | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])")
+          fi
+          echo "current=$CURRENT target=$TARGET"
+          SKIP=false
+          if [ "$MODE" = "newpipe" ] && [ "$CURRENT" = "$TARGET" ]; then
+            echo "::notice::Already on NewPipeExtractor $TARGET — nothing to bump. (mode=branch cuts a release of the current tip.)"
+            SKIP=true
+          fi
+          {
+            echo "current=$CURRENT"
+            echo "target=$TARGET"
+            echo "skip=$SKIP"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Offline bump-script test
+        if: steps.precheck.outputs.skip != 'true'
+        run: bash scripts/tests/bump-version-test.sh
+
+      - name: Apply the bump
+        if: steps.precheck.outputs.skip != 'true'
+        env:
+          MODE: ${{ inputs.mode }}
+          TARGET: ${{ steps.precheck.outputs.target }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = "newpipe" ]; then
+            python3 scripts/bump-version.py --newpipe-ref "$TARGET"
+          else
+            python3 scripts/bump-version.py
+          fi
+          NEWVER=$(sed -n 's/.*VERSION: String = "\([^"]*\)".*/\1/p' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
+          echo "NEWVER=$NEWVER" >> "$GITHUB_ENV"
+          echo "== diff =="
+          git diff
+
+      - name: Server unit tests (compiles the new pin)
+        if: steps.precheck.outputs.skip != 'true'
+        run: ./gradlew :wearsic-server:test --stacktrace
+
+      - name: LIVE dual-path smoke against real YouTube
+        id: smoke
+        if: steps.precheck.outputs.skip != 'true'
+        continue-on-error: ${{ inputs.emergency_override }}
+        run: WEARSIC_LIVE_SMOKE=1 ./gradlew :wearsic-server:test --tests "com.wearsic.server.LiveExtractorSmokeTest" --stacktrace
+
+      - name: Record an overridden smoke failure
+        if: steps.precheck.outputs.skip != 'true' && steps.smoke.outcome == 'failure' && inputs.emergency_override
+        run: echo "::warning::Live smoke FAILED but emergency_override is set — shipping anyway. Investigate the smoke log."
+
+      - name: Commit + tag + push
+        id: ship
+        if: steps.precheck.outputs.skip != 'true' && !inputs.dry_run
+        env:
+          MODE: ${{ inputs.mode }}
+          CURRENT: ${{ steps.precheck.outputs.current }}
+          TARGET: ${{ steps.precheck.outputs.target }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAG="v$NEWVER"
+          if git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::tag $TAG already exists on origin — nothing was shipped. If a previous run stopped before dispatching Android CI, dispatch it manually on the existing tag; otherwise re-run."
+            exit 1
+          fi
+          git config user.name "wearsic-hotfix[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          MSG="release $NEWVER: extractor hotfix"
+          if [ "$MODE" = "newpipe" ]; then
+            MSG="$MSG (NewPipeExtractor $CURRENT -> $TARGET)"
+          fi
+          git add -u
+          git commit -m "$MSG"
+          git tag -a "$TAG" -m "$MSG"
+          git push origin "HEAD:refs/heads/$REF_NAME"
+          git push origin "refs/tags/$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch Android CI on the new tag
+        if: steps.precheck.outputs.skip != 'true' && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ship.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run android.yml --ref "$TAG"
+          SHA=$(git rev-parse "$TAG")
+          for i in $(seq 1 12); do
+            sleep 10
+            URL=$(gh run list --workflow android.yml --limit 10 --json headSha,event,url \
+              --jq ".[] | select(.headSha == \"$SHA\" and .event == \"workflow_dispatch\") | .url" | head -1)
+            if [ -n "$URL" ]; then
+              echo "Release run: $URL"
+              echo "RELEASE_RUN=$URL" >> "$GITHUB_ENV"
+              break
+            fi
+          done
+
+      - name: Summary
+        if: always()
+        env:
+          MODE: ${{ inputs.mode }}
+          CURRENT: ${{ steps.precheck.outputs.current }}
+          TARGET: ${{ steps.precheck.outputs.target }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          OVERRIDE: ${{ inputs.emergency_override }}
+        run: |
+          {
+            echo "## Extractor hotfix"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| mode | \`$MODE\` |"
+            echo "| current ref | \`$CURRENT\` |"
+            echo "| target ref | \`$TARGET\` |"
+            echo "| dry run | $DRY_RUN |"
+            echo "| emergency override | $OVERRIDE |"
+            if [ -n "${NEWVER:-}" ]; then echo "| new version | \`$NEWVER\` |"; fi
+            if [ -n "${RELEASE_RUN:-}" ]; then echo "| release run | $RELEASE_RUN |"; fi
+          } >> "$GITHUB_STEP_SUMMARY"

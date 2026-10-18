@@ -595,6 +595,11 @@ class YoutubeGateway(
                         url = audio.content,
                         mimeType = audio.format?.mimeType ?: "audio/webm",
                         itag = audio.itagItem?.id ?: 0,
+                        // ItagItem carries the full stream size from the
+                        // player response. Passing it here lets the proxy
+                        // skip its 1-byte upstream probe — a whole CDN round
+                        // trip — before the first audio byte.
+                        contentLength = audio.itagItem?.contentLength?.takeIf { it > 0L } ?: 0L,
                     )
                     streamCache.put(videoId, CachedStreamTarget(target, System.currentTimeMillis() + STREAM_CACHE_TTL_MILLIS))
                     target
@@ -1160,6 +1165,9 @@ class YoutubeGateway(
                 bitrateKbps = s.averageBitrate,
                 itag = s.itagItem?.id ?: 0,
                 client = "extractor",
+                // Same reason as the direct extractor target: skip the
+                // proxy's length probe when the size is already known.
+                contentLength = s.itagItem?.contentLength?.takeIf { it > 0L } ?: 0L,
             )
         }
 }

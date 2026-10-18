@@ -3,12 +3,12 @@ package com.wearsic.app.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.wearsic.app.data.WearsicMusicRepository
-import com.wearsic.app.data.WearsicRecentRepository
+import com.wearsic.app.WearsicApp
 import com.wearsic.app.model.Album
 import com.wearsic.app.model.ArtistGroup
 import com.wearsic.app.model.Playlist
 import com.wearsic.app.model.Track
+import com.wearsic.app.model.displayMessage
 import com.wearsic.app.network.model.ConnectionTestState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,8 +28,17 @@ import kotlinx.coroutines.withContext
  */
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val musicRepository = WearsicMusicRepository(application.applicationContext)
-    private val recentRepository = WearsicRecentRepository(application.applicationContext)
+    /**
+     * Share the process-wide graph that WearsicApp's warm-up thread already
+     * built. Constructing fresh repositories here would redo that work on the
+     * main thread and leave the app with two sets of clients/repositories
+     * (the warm-up's copies went unused). The fallback keeps plain-Application
+     * hosts — unit tests — working.
+     */
+    private val container = (application as? WearsicApp)?.container
+        ?: com.wearsic.app.di.AppContainer(application)
+    private val musicRepository = container.musicRepository
+    private val recentRepository = container.recentRepository
 
     val recentTracks: StateFlow<List<Track>> = recentRepository.recentTracksFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -47,6 +56,28 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val _favoritesState = MutableStateFlow(FavoritesUiState())
     val favoritesState: StateFlow<FavoritesUiState> = _favoritesState.asStateFlow()
 
+    /** Favorites already warmed in this process (avoids re-resolving on refresh). */
+    private val prewarmedFavoriteIds = mutableSetOf<String>()
+
+    /**
+     * Resolve the top favorites as soon as the list loads, so tapping one
+     * starts playback from a cached target instead of a cold extraction.
+     * Capped at three and de-duplicated per process.
+     */
+    private fun prewarmFavorites(tracks: List<Track>) {
+        val ids = tracks.asSequence()
+            .map { it.id }
+            .filter { it.isNotBlank() && it !in prewarmedFavoriteIds }
+            .distinct()
+            .take(3)
+            .toList()
+        if (ids.isEmpty()) return
+        prewarmedFavoriteIds.addAll(ids)
+        viewModelScope.launch(Dispatchers.IO) {
+            musicRepository.prewarmTracks(ids)
+        }
+    }
+
     fun refreshFavorites() {
         if (_favoritesState.value.isLoading) return
         _favoritesState.update { it.copy(isLoading = true, errorMessage = null) }
@@ -54,9 +85,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             val result = musicRepository.getFavorites()
             result.onSuccess { tracks ->
                 _favoritesState.update { it.copy(tracks = tracks, isLoading = false, errorMessage = null) }
+                prewarmFavorites(tracks)
             }.onFailure { err ->
                 _favoritesState.update {
-                    it.copy(isLoading = false, errorMessage = err.message ?: "Could not load favorites")
+                    it.copy(isLoading = false, errorMessage = err.displayMessage("Could not load favorites"))
                 }
             }
         }
@@ -70,7 +102,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 _favoritesState.update { it.copy(tracks = updatedFavorites, errorMessage = null) }
             }.onFailure { err ->
                 _favoritesState.update {
-                    it.copy(errorMessage = err.message ?: "Could not remove favorite")
+                    it.copy(errorMessage = err.displayMessage("Could not remove favorite"))
                 }
             }
         }
@@ -101,8 +133,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             val favorites = favoritesResult.getOrNull()
             if (favorites != null) {
                 _favoritesState.update { it.copy(tracks = favorites, errorMessage = null) }
+                prewarmFavorites(favorites)
             } else {
-                errorMessage = favoritesResult.exceptionOrNull()?.message ?: "Could not load favorites"
+                errorMessage = favoritesResult.exceptionOrNull()?.displayMessage("Could not load favorites")
+                    ?: "Could not load favorites"
             }
             val playlists = playlistsResult.getOrNull()
             if (playlists == null) {
@@ -158,7 +192,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             }.onFailure { err ->
                 if (_playlistDetailState.value.playlistId != playlistId) return@launch
                 _playlistDetailState.update {
-                    it.copy(playlistId = playlistId, isLoading = false, errorMessage = err.message ?: "Could not load playlist")
+                    it.copy(playlistId = playlistId, isLoading = false, errorMessage = err.displayMessage("Could not load playlist"))
                 }
             }
         }
@@ -177,7 +211,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 refreshLibrary()
             }.onFailure { err ->
                 _playlistDetailState.update {
-                    it.copy(errorMessage = err.message ?: "Could not remove track")
+                    it.copy(errorMessage = err.displayMessage("Could not remove track"))
                 }
             }
         }
@@ -250,7 +284,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 _albumsState.update { it.copy(albums = albums, isLoading = false) }
             }.onFailure { err ->
                 _albumsState.update {
-                    it.copy(albums = emptyList(), isLoading = false, errorMessage = err.message ?: "Could not load albums")
+                    it.copy(albums = emptyList(), isLoading = false, errorMessage = err.displayMessage("Could not load albums"))
                 }
             }
         }
@@ -329,7 +363,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     it.copy(
                         results = emptyList(),
                         isSearching = false,
-                        errorMessage = err.message ?: "Search failed",
+                        errorMessage = err.displayMessage("Search failed"),
                         hasSearched = true,
                         canLoadMore = false
                     )
@@ -368,7 +402,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 _searchState.update {
                     it.copy(
                         isLoadingMore = false,
-                        errorMessage = err.message ?: "Could not load more",
+                        errorMessage = err.displayMessage("Could not load more"),
                         canLoadMore = false
                     )
                 }
@@ -428,7 +462,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 playbackViewModel.addToQueue(fresh)
                 _radioState.value = RadioState.Idle
             }.onFailure { err ->
-                _radioState.value = RadioState.Error(err.message ?: "Radio unavailable")
+                _radioState.value = RadioState.Error(err.displayMessage("Radio unavailable"))
                 delay(2500)
                 _radioState.value = RadioState.Idle
             }

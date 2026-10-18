@@ -3,7 +3,7 @@ package com.wearsic.app.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.wearsic.app.data.WearsicDownloadRepository
+import com.wearsic.app.WearsicApp
 import com.wearsic.app.data.db.WearsicDownloadEntity
 import com.wearsic.app.media.download.WearsicDownloadManager
 import com.wearsic.app.model.Track
@@ -22,7 +22,10 @@ import kotlinx.coroutines.withContext
  */
 class DownloadsViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val downloadRepository = WearsicDownloadRepository(application.applicationContext)
+    /** Shared with every other screen — see LibraryViewModel's note. */
+    private val container = (application as? WearsicApp)?.container
+        ?: com.wearsic.app.di.AppContainer(application)
+    private val downloadRepository = container.downloadRepository
     private val downloadManager = WearsicDownloadManager(application.applicationContext, downloadRepository)
 
     val allDownloads: StateFlow<List<WearsicDownloadEntity>> = downloadManager.allDownloadsFlow

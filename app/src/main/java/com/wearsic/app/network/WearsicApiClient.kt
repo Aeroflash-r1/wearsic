@@ -15,6 +15,11 @@ interface WearsicApiClient {
     suspend fun searchTracks(baseUrl: String, query: String): Result<SearchResponseDto>
     /** Same search with an explicit page size (1..25, server-clamped). */
     suspend fun searchTracks(baseUrl: String, query: String, limit: Int): Result<SearchResponseDto>
+    /**
+     * Resolve a track server-side without streaming audio (`/api/prewarm`).
+     * True when the server has a cached, playable target ready.
+     */
+    suspend fun prewarmTrack(baseUrl: String, videoId: String): Result<Boolean>
     suspend fun getFavorites(baseUrl: String): Result<List<TrackDto>>
     suspend fun addFavorite(baseUrl: String, track: TrackDto): Result<Unit>
     suspend fun removeFavorite(baseUrl: String, videoId: String): Result<Unit>

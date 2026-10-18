@@ -121,15 +121,38 @@ class WearsicMusicRepository(
         
         val httpResult = httpApiClient.searchTracks(currentUrl, queryValidation.getOrThrow(), limit)
         if (httpResult.isSuccess) {
-            val dtoList = httpResult.getOrThrow().tracks
-            val domainTracks = dtoList.map { it.toDomainTrack() }
-            if (domainTracks.isNotEmpty()) {
-                return Result.success(domainTracks)
-            }
+            // An empty page is a VALID answer ("no matches for this query"),
+            // not a failure. Treating it as an error made the search screen
+            // show a red banner instead of its "No tracks found for …" empty
+            // state, and blocked the paging code from deciding on its own.
+            return Result.success(httpResult.getOrThrow().tracks.map { it.toDomainTrack() })
         }
 
-        val exception = httpResult.exceptionOrNull() ?: Exception("No tracks found on server")
+        val exception = httpResult.exceptionOrNull() ?: UnknownError("Search failed")
         return Result.failure(exception)
+    }
+
+    /**
+     * Resolve a track ahead of playback without transferring audio. Used on
+     * tap and for the next queue item so the server's stream cache and CDN
+     * connection are hot when playback actually starts.
+     */
+    suspend fun prewarmTrack(trackId: String): Result<Boolean> {
+        if (trackId.isBlank()) return Result.success(false)
+        val currentUrl = getServerUrl()
+        if (currentUrl.isBlank()) return Result.success(false)
+        return httpApiClient.prewarmTrack(currentUrl, trackId)
+    }
+
+    /** Best-effort warm-up of the first [limit] ids of a freshly loaded list. */
+    suspend fun prewarmTracks(trackIds: List<String>, limit: Int = 3) {
+        val currentUrl = getServerUrl()
+        if (currentUrl.isBlank()) return
+        trackIds.asSequence()
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(limit)
+            .forEach { httpApiClient.prewarmTrack(currentUrl, it) }
     }
 
     suspend fun getFavorites(): Result<List<Track>> {

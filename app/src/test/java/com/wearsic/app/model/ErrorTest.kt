@@ -551,6 +551,30 @@ class ErrorTest {
         assertTrue(error1 != error2)
     }
 
+    // ============================================================================
+    // displayMessage() Tests
+    // ============================================================================
+
+    @Test
+    fun `displayMessage prefers the curated wording for HTTP errors`() {
+        // The raw message ("Server error: HTTP 401") is what the API client
+        // used to put straight on screen; the curated text tells the user
+        // what to DO about it.
+        val error = HttpError("http://x/api/favorites", 401, "Server error: HTTP 401")
+        assertEquals("Unauthorized. Check API key.", error.displayMessage("fallback"))
+    }
+
+    @Test
+    fun `displayMessage keeps a plain exception message`() {
+        assertEquals("disk full", Exception("disk full").displayMessage("fallback"))
+    }
+
+    @Test
+    fun `displayMessage falls back when the message is blank`() {
+        assertEquals("Could not load favorites", Exception("  ").displayMessage("Could not load favorites"))
+        assertEquals("Could not load favorites", Exception().displayMessage("Could not load favorites"))
+    }
+
     @Test
     fun `Singleton errors are equal to themselves`() {
         val errors = listOf(

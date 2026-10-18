@@ -4,7 +4,7 @@ import android.app.Application
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.wearsic.app.data.WearsicMusicRepository
+import com.wearsic.app.WearsicApp
 import com.wearsic.app.data.WearsicPreferencesRepository
 import com.wearsic.app.media.crossfade.CrossfadeLengths
 import com.wearsic.app.model.WearsicError
@@ -41,8 +41,11 @@ data class ServerDashboardState(
  */
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val preferencesRepository = WearsicPreferencesRepository(application.applicationContext)
-    private val musicRepository = WearsicMusicRepository(application.applicationContext)
+    /** Shared with every other screen — see LibraryViewModel's note. */
+    private val container = (application as? WearsicApp)?.container
+        ?: com.wearsic.app.di.AppContainer(application)
+    private val preferencesRepository = container.preferencesRepository
+    private val musicRepository = container.musicRepository
 
     val serverUrl: StateFlow<String> = preferencesRepository.serverUrlFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), WearsicPreferencesRepository.DEFAULT_SERVER_URL)

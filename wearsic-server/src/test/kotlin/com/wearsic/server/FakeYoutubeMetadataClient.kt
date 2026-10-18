@@ -6,6 +6,7 @@ class FakeYoutubeMetadataClient : YoutubeMetadataClient {
     var streamTargets: MutableMap<String, StreamTarget> = mutableMapOf()
     var lastQuery: String? = null
     val searchCalls: MutableList<String> = mutableListOf()
+    val streamTargetCalls: MutableList<String> = mutableListOf()
 
     override suspend fun search(query: String): List<TrackDto> {
         lastQuery = query
@@ -13,8 +14,10 @@ class FakeYoutubeMetadataClient : YoutubeMetadataClient {
         return results
     }
 
-    override suspend fun streamTarget(videoId: String): StreamTarget? =
-        streamTargets[videoId]
+    override suspend fun streamTarget(videoId: String): StreamTarget? {
+        streamTargetCalls.add(videoId)
+        return streamTargets[videoId]
+    }
 
     override suspend fun suggestions(prefix: String): List<String> = emptyList()
 

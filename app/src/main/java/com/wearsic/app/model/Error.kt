@@ -17,6 +17,19 @@ sealed class WearsicError(
     open fun getDisplayMessage(): String = message
 }
 
+/**
+ * The text a screen should show for this failure.
+ *
+ * Prefers the curated [WearsicError.getDisplayMessage] wording, so a 401 reads
+ * "Unauthorized. Check API key." instead of the raw "Server error: HTTP 401"
+ * that [Throwable.message] carries. Falls back to the raw message, then to
+ * [fallback], so no failure can ever render as a blank error row.
+ */
+fun Throwable.displayMessage(fallback: String): String =
+    (this as? WearsicError)?.getDisplayMessage()
+        ?: message?.takeIf { it.isNotBlank() }
+        ?: fallback
+
 // ============================================================================
 // Network Errors
 // ============================================================================

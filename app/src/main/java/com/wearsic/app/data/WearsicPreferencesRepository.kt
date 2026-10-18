@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -14,12 +15,20 @@ import com.wearsic.app.util.Validation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.datastore.preferences.core.emptyPreferences
 import kotlinx.coroutines.flow.catch
 import java.io.IOException
 import java.net.URI
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "wearsic_settings")
+// Forensics only (2026-10-18 CI wedge): the scope is a pass-through tap that
+// logs every dispatch of the DataStore's internal coroutines; revert to the
+// plain default delegate (no scope argument) once the wedge is fixed.
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "wearsic_settings",
+    scope = tappedDataStoreScope(),
+)
 
 class WearsicPreferencesRepository(private val context: Context) {
 
@@ -39,6 +48,26 @@ class WearsicPreferencesRepository(private val context: Context) {
         const val DEFAULT_SERVER_URL = ""
         const val DEFAULT_OFFLINE_LIMIT = 15
     }
+
+    /**
+     * Runs a preferences write on [Dispatchers.IO].
+     *
+     * The preferences DataStore funnels every write through a single actor
+     * and executes each write's transform in the *caller's* coroutine
+     * context. A write started from the main thread therefore makes the
+     * actor dispatch its very next step onto the main Looper, and every
+     * later write queues behind whatever that Looper is doing. On a real
+     * device that is merely wasteful; under Robolectric the Looper is
+     * paused between idles, so the queue can stall until the next pump —
+     * the 2026-10-18 CI wedge that blocked the next DataStore write for a
+     * full 30 s (reads were unaffected, which is why only writers hung).
+     * Writing from IO keeps the actor independent of the main thread and
+     * keeps the disk work off the UI thread.
+     */
+    private suspend fun editPreferences(block: (MutablePreferences) -> Unit) =
+        withContext(Dispatchers.IO) {
+            context.dataStore.edit(block)
+        }
 
     val serverUrlFlow: Flow<String> = context.dataStore.data
         .catch { exception ->
@@ -64,15 +93,26 @@ class WearsicPreferencesRepository(private val context: Context) {
      */
     suspend fun saveServerUrl(url: String) {
         if (url.isBlank()) {
-            context.dataStore.edit { preferences ->
+            editPreferences { preferences ->
                 preferences[KEY_SERVER_URL] = ""
             }
             return
         }
         val cleanUrl = Validation.validateServerUrl(url).getOrNull() ?: return
-        context.dataStore.edit { preferences ->
+        println("WEDGE-PROBE [${Thread.currentThread().name}] saveServerUrl edit() entered")
+        System.out.flush()
+        editPreferences { preferences ->
+            // CI forensics (2026-10-18 wedge; remove after root cause is fixed):
+            // marks whether the DataStore actor reached the transform it runs
+            // via withContext(callerContext) inside transformAndWrite.
+            println("WEDGE-PROBE [${Thread.currentThread().name}] transform executing saveServerUrl")
+            System.out.flush()
             preferences[KEY_SERVER_URL] = cleanUrl.trimEnd('/')
+            println("WEDGE-PROBE [${Thread.currentThread().name}] transform completed saveServerUrl")
+            System.out.flush()
         }
+        println("WEDGE-PROBE [${Thread.currentThread().name}] saveServerUrl edit() returned")
+        System.out.flush()
     }
 
     val autoCacheEnabledFlow: Flow<Boolean> = context.dataStore.data
@@ -84,7 +124,7 @@ class WearsicPreferencesRepository(private val context: Context) {
         }
 
     suspend fun setAutoCacheEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences ->
+        editPreferences { preferences ->
             preferences[KEY_AUTO_CACHE_ENABLED] = enabled
         }
     }
@@ -96,7 +136,7 @@ class WearsicPreferencesRepository(private val context: Context) {
         }
 
     suspend fun saveOfflineLimit(limitSongs: Int) {
-        context.dataStore.edit { preferences ->
+        editPreferences { preferences ->
             preferences[KEY_OFFLINE_LIMIT] = limitSongs.coerceIn(5, 200)
         }
     }
@@ -115,7 +155,7 @@ class WearsicPreferencesRepository(private val context: Context) {
         }
 
     suspend fun saveCrossfadeMs(ms: Long) {
-        context.dataStore.edit { preferences ->
+        editPreferences { preferences ->
             preferences[KEY_CROSSFADE_MS] = CrossfadeLengths.sanitize(ms).toInt()
         }
     }
@@ -147,13 +187,13 @@ class WearsicPreferencesRepository(private val context: Context) {
      */
     suspend fun saveApiKey(key: String): String? {
         if (key.isBlank()) {
-            context.dataStore.edit { preferences ->
+            editPreferences { preferences ->
                 preferences[KEY_API_KEY] = ""
             }
             return ""
         }
         val cleanKey = Validation.validateApiKey(key).getOrNull() ?: return null
-        context.dataStore.edit { preferences ->
+        editPreferences { preferences ->
             preferences[KEY_API_KEY] = cleanKey
         }
         return cleanKey
@@ -170,7 +210,7 @@ class WearsicPreferencesRepository(private val context: Context) {
         }
 
     suspend fun toggleHiddenPlaylist(id: String) {
-        context.dataStore.edit { preferences ->
+        editPreferences { preferences ->
             val current = preferences[KEY_HIDDEN_PLAYLISTS] ?: emptySet()
             preferences[KEY_HIDDEN_PLAYLISTS] =
                 if (id in current) current - id else current + id

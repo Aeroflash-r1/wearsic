@@ -33,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.debug.DebugProbes
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
@@ -92,17 +93,21 @@ class ExampleRobolectricTest {
         val thread = Thread {
             try {
                 Thread.sleep(10_000)
-                probe("[watchdog] 10s inside saveServerUrl: coroutine dump follows")
-                DebugProbes.dumpCoroutines(System.out)
-                probe("[watchdog] coroutine dump done; thread dump follows")
+                probe("[watchdog] 10s inside saveServerUrl")
+                probeCoroutineDump("watchdog @10s")
+                probeLooperState("watchdog @10s")
+                probe("[watchdog] thread dump follows")
                 for ((t, stack) in Thread.getAllStackTraces()) {
                     println("WEDGE-PROBE [watchdog] thread=${t.name} state=${t.state}")
                     stack.forEach { frame -> println("    at $frame") }
                 }
                 System.out.flush()
                 Thread.sleep(10_000)
-                probe("[watchdog] 20s inside saveServerUrl: second coroutine dump")
-                DebugProbes.dumpCoroutines(System.out)
+                probe("[watchdog] 20s inside saveServerUrl")
+                probeCoroutineDump("watchdog @20s")
+                probeLooperState("watchdog @20s")
+                runCatching { runBlocking { probeDispatchability(timeoutMillis = 3_000) } }
+                    .onFailure { probe("[watchdog] dispatch probes failed: $it") }
                 System.out.flush()
             } catch (_: InterruptedException) {
                 // Write completed in time — nothing to dump.
@@ -114,6 +119,49 @@ class ExampleRobolectricTest {
         thread.name = "WEDGE-WATCHDOG"
         thread.start()
         return thread
+    }
+
+    /** Forensics: dump every live coroutine with its suspension point. */
+    private fun probeCoroutineDump(label: String) {
+        runCatching {
+            println("WEDGE-PROBE [${Thread.currentThread().name}] coroutine dump ($label) start")
+            DebugProbes.dumpCoroutines(System.out)
+            println("WEDGE-PROBE [${Thread.currentThread().name}] coroutine dump ($label) end")
+            System.out.flush()
+        }.onFailure { probe("coroutine dump ($label) failed: $it") }
+    }
+
+    /** Forensics: print every get/is getter of the main Looper's shadow. */
+    private fun probeLooperState(label: String) {
+        val shadow = runCatching { shadowOf(Looper.getMainLooper()) }.getOrNull()
+        if (shadow == null) {
+            probe("looper state ($label): no shadow")
+            return
+        }
+        val getters = shadow.javaClass.methods
+            .filter { it.parameterCount == 0 && (it.name.startsWith("get") || it.name.startsWith("is")) }
+            .sortedBy { it.name }
+        for (method in getters) {
+            val value = runCatching { method.invoke(shadow) }
+                .getOrElse { "err:${it::class.java.simpleName}" }
+            probe("looper state ($label): ${method.name}=$value")
+        }
+    }
+
+    /** Forensics: can Main and IO dispatches actually complete right now? */
+    private suspend fun probeDispatchability(timeoutMillis: Long = 5_000) {
+        val main = try {
+            withTimeoutOrNull(timeoutMillis) { withContext(Dispatchers.Main) { "ok" } }
+        } catch (t: Throwable) {
+            "threw ${t::class.java.simpleName}"
+        }
+        probe("dispatch probe Main=${main ?: "STUCK_${timeoutMillis}ms"}")
+        val io = try {
+            withTimeoutOrNull(timeoutMillis) { withContext(Dispatchers.IO) { "ok" } }
+        } catch (t: Throwable) {
+            "threw ${t::class.java.simpleName}"
+        }
+        probe("dispatch probe IO=${io ?: "STUCK_${timeoutMillis}ms"}")
     }
 
     @Test
@@ -164,11 +212,12 @@ class ExampleRobolectricTest {
         probe("repository constructed")
 
         // Pre-configure server URL as the real production app would require.
-        // Forensics: the write stays the very FIRST DataStore operation, but a
-        // wedge no longer aborts the test at the timeout — the caller is
-        // cancelled, then we probe whether the DataStore actor heals — and a
-        // daemon watchdog dumps coroutines/threads while the write is stuck.
+        // Forensics: the write stays the very FIRST DataStore operation. If it
+        // wedges, the caller is cancelled and a series of experiments isolates
+        // the exact stuck stage: coroutine dump (via the debug java agent),
+        // looper state, pump-vs-cancel separation, and a write from IO.
         probe("saveServerUrl begin interceptor=${coroutineContext[ContinuationInterceptor]}")
+        probeDispatchability()
         val watchdog = startWedgeWatchdog()
         val saveOutcome: String? = try {
             withTimeoutOrNull(30_000) {
@@ -184,6 +233,8 @@ class ExampleRobolectricTest {
         probe("saveServerUrl outcome=${saveOutcome ?: "TIMEOUT_30s"}")
         val wedgeReproduced = saveOutcome == null
         if (wedgeReproduced) {
+            probeCoroutineDump("main-thread after wedge")
+            probeLooperState("after wedge")
             probe("post-wedge getServerUrl begin")
             val readOutcome = try {
                 withTimeoutOrNull(15_000) { repository.getServerUrl(); "ok" }
@@ -191,7 +242,13 @@ class ExampleRobolectricTest {
                 "threw ${t::class.java.simpleName}"
             }
             probe("post-wedge getServerUrl outcome=${readOutcome ?: "TIMEOUT_15s"}")
-            probe("post-wedge saveServerUrl#2 begin")
+
+            // Experiment A: does pumping the paused main Looper alone release
+            // the stuck write? (v2 could not separate pump from write-cancel.)
+            probe("experimentA: pump main looper, then write#2")
+            runCatching { shadowOf(Looper.getMainLooper()).idle() }
+                .onFailure { probe("experimentA pump failed: $it") }
+            probeLooperState("after pumpA")
             val write2 = try {
                 withTimeoutOrNull(15_000) {
                     repository.saveServerUrl("https://wearsic.server.internal")
@@ -200,11 +257,12 @@ class ExampleRobolectricTest {
             } catch (t: Throwable) {
                 "threw ${t::class.java.simpleName}"
             }
-            probe("post-wedge saveServerUrl#2 outcome=${write2 ?: "TIMEOUT_15s"}")
-            probe("post-wedge main-looper pump begin")
+            probe("saveServerUrl#2(after pumpA) outcome=${write2 ?: "TIMEOUT_15s"}")
+
+            // Experiment B: second pump, then write#3 from the main thread.
+            probe("experimentB: second pump, then write#3")
             runCatching { shadowOf(Looper.getMainLooper()).idle() }
-                .onFailure { probe("post-wedge main-looper pump failed: $it") }
-            probe("post-wedge main-looper pump done; saveServerUrl#3 begin")
+                .onFailure { probe("experimentB pump failed: $it") }
             val write3 = try {
                 withTimeoutOrNull(15_000) {
                     repository.saveServerUrl("https://wearsic.server.internal")
@@ -213,7 +271,21 @@ class ExampleRobolectricTest {
             } catch (t: Throwable) {
                 "threw ${t::class.java.simpleName}"
             }
-            probe("post-wedge saveServerUrl#3 outcome=${write3 ?: "TIMEOUT_15s"}")
+            probe("saveServerUrl#3(from main) outcome=${write3 ?: "TIMEOUT_15s"}")
+
+            // Experiment C: identical write issued from a background dispatcher.
+            probe("experimentC: write#4 from Dispatchers.IO")
+            val write4 = try {
+                withTimeoutOrNull(15_000) {
+                    withContext(Dispatchers.IO) {
+                        repository.saveServerUrl("https://wearsic.server.internal")
+                    }
+                    "ok"
+                }
+            } catch (t: Throwable) {
+                "threw ${t::class.java.simpleName}"
+            }
+            probe("saveServerUrl#4(from IO) outcome=${write4 ?: "TIMEOUT_15s"}")
         }
 
         withTimeout(30_000) {

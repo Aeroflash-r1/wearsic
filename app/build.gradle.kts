@@ -71,7 +71,23 @@ signingConfigs {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      // CI forensics (2026-10-18 wedge; remove after root cause is fixed):
+      // DebugProbes.dumpCoroutines() only reports suspended coroutines when
+      // the kotlinx-coroutines-debug java agent is attached — without it the
+      // dump is empty. Resolved here so the jar path is captured at
+      // configuration time (configuration cache friendly).
+      all { test ->
+        val probeJar = project.configurations.getByName("testRuntimeClasspath").files
+          .firstOrNull { it.name.startsWith("kotlinx-coroutines-debug-") }
+        if (probeJar != null) {
+          test.jvmArgs("-javaagent:$probeJar")
+        }
+      }
+    }
+  }
   // Opt in to the experimental screenshotTest source set (layoutlib renders).
   experimentalProperties["android.experimental.enableScreenshotTest"] = true
   dependenciesInfo {

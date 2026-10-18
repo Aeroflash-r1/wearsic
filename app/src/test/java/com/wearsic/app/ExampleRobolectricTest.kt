@@ -29,9 +29,12 @@ import com.wearsic.app.ui.theme.WearsicTheme
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.debug.DebugProbes
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -76,6 +79,13 @@ class ExampleRobolectricTest {
             runCatching {
                 DebugProbes.install()
                 println("WEDGE-PROBE [init] DebugProbes installed")
+                // Forensics: prove whether the kotlinx-coroutines-debug java
+                // agent is really on this test JVM's command line.
+                println(
+                    "WEDGE-PROBE [init] jvm args: " +
+                        java.lang.management.ManagementFactory.getRuntimeMXBean().inputArguments
+                            .filter { it.contains("javaagent") || it.contains("coroutines") }
+                )
                 System.out.flush()
             }.onFailure {
                 println("WEDGE-PROBE [init] DebugProbes install failed: $it")
@@ -106,8 +116,8 @@ class ExampleRobolectricTest {
                 probe("[watchdog] 20s inside saveServerUrl")
                 probeCoroutineDump("watchdog @20s")
                 probeLooperState("watchdog @20s")
-                runCatching { runBlocking { probeDispatchability(timeoutMillis = 3_000) } }
-                    .onFailure { probe("[watchdog] dispatch probes failed: $it") }
+                fireAndForgetDispatchProbe("watchdog@20s-main", Dispatchers.Main)
+                fireAndForgetDispatchProbe("watchdog@20s-io", Dispatchers.IO)
                 System.out.flush()
             } catch (_: InterruptedException) {
                 // Write completed in time — nothing to dump.
@@ -148,20 +158,21 @@ class ExampleRobolectricTest {
         }
     }
 
-    /** Forensics: can Main and IO dispatches actually complete right now? */
-    private suspend fun probeDispatchability(timeoutMillis: Long = 5_000) {
-        val main = try {
-            withTimeoutOrNull(timeoutMillis) { withContext(Dispatchers.Main) { "ok" } }
-        } catch (t: Throwable) {
-            "threw ${t::class.java.simpleName}"
+    /**
+     * Forensics: enqueue a marker on [dispatcher] WITHOUT waiting for it.
+     * A waiting version (withContext + withTimeoutOrNull) must not be used
+     * here: on Robolectric the main Looper is paused unless the test idles
+     * it, and a coroutine dispatched to a paused Looper never completes —
+     * a timeout cannot rescue it because the parent waits for the child's
+     * queued task to run, so the caller would hang forever (confirmed by
+     * the first v3 run, which stalled before the write). Fire-and-forget
+     * markers print only once the dispatcher actually runs them, which is
+     * exactly the signal we want (e.g. after a looper pump).
+     */
+    private fun fireAndForgetDispatchProbe(label: String, dispatcher: CoroutineDispatcher) {
+        CoroutineScope(dispatcher).launch {
+            probe("$label RAN")
         }
-        probe("dispatch probe Main=${main ?: "STUCK_${timeoutMillis}ms"}")
-        val io = try {
-            withTimeoutOrNull(timeoutMillis) { withContext(Dispatchers.IO) { "ok" } }
-        } catch (t: Throwable) {
-            "threw ${t::class.java.simpleName}"
-        }
-        probe("dispatch probe IO=${io ?: "STUCK_${timeoutMillis}ms"}")
     }
 
     @Test
@@ -217,7 +228,11 @@ class ExampleRobolectricTest {
         // the exact stuck stage: coroutine dump (via the debug java agent),
         // looper state, pump-vs-cancel separation, and a write from IO.
         probe("saveServerUrl begin interceptor=${coroutineContext[ContinuationInterceptor]}")
-        probeDispatchability()
+        // Fire-and-forget sanity markers. The main one stays queued while the
+        // Looper is paused and must appear right after the first looper pump
+        // in the wedge experiments; the IO one prints within milliseconds.
+        fireAndForgetDispatchProbe("prewrite-main", Dispatchers.Main)
+        fireAndForgetDispatchProbe("prewrite-io", Dispatchers.IO)
         val watchdog = startWedgeWatchdog()
         val saveOutcome: String? = try {
             withTimeoutOrNull(30_000) {
@@ -249,6 +264,7 @@ class ExampleRobolectricTest {
             runCatching { shadowOf(Looper.getMainLooper()).idle() }
                 .onFailure { probe("experimentA pump failed: $it") }
             probeLooperState("after pumpA")
+            fireAndForgetDispatchProbe("postPumpA-main", Dispatchers.Main)
             val write2 = try {
                 withTimeoutOrNull(15_000) {
                     repository.saveServerUrl("https://wearsic.server.internal")

@@ -58,7 +58,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$serializationVersion")
 
     // --- Extraction ---
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.4")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
 
     // --- Persistence ---
     implementation("org.xerial:sqlite-jdbc:3.46.1.0")
@@ -101,4 +101,17 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
+    // CI live-smoke cookie: forwarded straight into the forked test JVM so a
+    // reused Gradle daemon (whose cached environment may predate the secret)
+    // can never hide it. The plain WEARSIC_YOUTUBE_COOKIE env var keeps
+    // working for local runs.
+    providers.gradleProperty("wearsic.youtube.cookie").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { environment("WEARSIC_YOUTUBE_COOKIE", it) }
+    // Keep test stdout/stderr visible in CI logs: the live smoke prints its
+    // cookie state there, and Gradle's default has proven too eager at
+    // hiding that output when tests fail.
+    testLogging {
+        showStandardStreams = true
+    }
 }

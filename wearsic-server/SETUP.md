@@ -8,7 +8,7 @@ source by CI — there is no prebuilt jar in the repo.
 
 Dependency versions follow the Termux deployment that the original
 compiled server used (Ktor 2.3.12, kotlinx-coroutines 1.7.1,
-sqlite-jdbc 3.46.1.0); NewPipeExtractor (v0.26.4) is the one deliberately
+sqlite-jdbc 3.46.1.0); NewPipeExtractor (v0.26.5) is the one deliberately
 movable pin — bumped by the Extractor Hotfix workflow (see below). The
 output shape (`bin/` + `lib/`) is what `run-termux.sh` expects.
 

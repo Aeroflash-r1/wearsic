@@ -150,7 +150,34 @@ jobs:
           # Optional: with this secret set (same string as `wearsic cookies`)
           # the smoke runs cookie-backed past CI datacenter-IP bot-walls.
           WEARSIC_YOUTUBE_COOKIE: ${{ secrets.YT_COOKIE }}
-        run: WEARSIC_LIVE_SMOKE=1 ./gradlew :wearsic-server:test --tests "com.wearsic.server.LiveExtractorSmokeTest" --stacktrace
+        run: |
+          # Report whether the secret actually reached this step — presence,
+          # size and shape only, never the value. A missing/blank/multi-line
+          # secret would otherwise surface only as a bare bot-wall failure.
+          if [ -z "${WEARSIC_YOUTUBE_COOKIE+x}" ]; then
+            echo "::warning::YT_COOKIE secret: NOT SET for this run — add it under Settings → Secrets and variables → Actions."
+          elif [ -z "${WEARSIC_YOUTUBE_COOKIE//[[:space:]]/}" ]; then
+            echo "::warning::YT_COOKIE secret: set but blank/whitespace-only — re-add it as the raw Cookie header value."
+          else
+            SIZE=${#WEARSIC_YOUTUBE_COOKIE}
+            NL=$(printf '%s' "$WEARSIC_YOUTUBE_COOKIE" | tr -cd '\n' | wc -c | tr -d ' ')
+            SEMI=$(printf '%s' "$WEARSIC_YOUTUBE_COOKIE" | tr -cd ';' | wc -c | tr -d ' ')
+            HAS_SID=no
+            case "$WEARSIC_YOUTUBE_COOKIE" in *SID=*) HAS_SID=yes;; esac
+            echo "YT_COOKIE secret: received, $SIZE chars, newlines=$NL, semicolons=$SEMI, contains_SID=$HAS_SID"
+            if [ "$NL" != "0" ]; then
+              echo "::warning::YT_COOKIE contains newlines — expected the single-line DevTools 'cookie:' value, not a multi-line cookies.txt export."
+            fi
+            # Second delivery channel for the test JVM: a file next to the
+            # module's build output (ephemeral runner, gitignored path) —
+            # immune to a reused Gradle daemon's cached environment.
+            mkdir -p wearsic-server/build
+            printf '%s' "$WEARSIC_YOUTUBE_COOKIE" > wearsic-server/build/yt-cookie.txt
+          fi
+          # The -P property rides every Gradle invocation (a reused daemon's
+          # cached environment can miss the step env); the env var stays as
+          # the local-run path.
+          WEARSIC_LIVE_SMOKE=1 ./gradlew :wearsic-server:test --tests "com.wearsic.server.LiveExtractorSmokeTest" -Pwearsic.youtube.cookie="$WEARSIC_YOUTUBE_COOKIE" --stacktrace
 
       - name: Record an overridden smoke failure
         if: steps.precheck.outputs.skip != 'true' && steps.smoke.outcome == 'failure' && inputs.emergency_override

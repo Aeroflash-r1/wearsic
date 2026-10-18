@@ -2,14 +2,17 @@ package com.wearsic.server
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException
 import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor
 
 /**
@@ -61,20 +64,32 @@ class LiveExtractorSmokeTest {
         val extractor = ServiceList.YouTube.getStreamExtractor(YoutubeGateway.CANARY_URL)
         if (extractor is YoutubeStreamExtractor) YoutubeStreamExtractor.setFetchIosClient(true)
         try {
-            extractor.fetchPage()
+            try {
+                extractor.fetchPage()
+            } catch (e: SignInConfirmNotBotException) {
+                // The question the hotfix gate hinges on, embedded where Gradle
+                // always prints it: lengths only — never the cookie value.
+                fail(
+                    "YouTube bot-walled the NewPipe fetch — ${cookieState()}. " +
+                        "effective-len=0 means the cookie never reached this test JVM; " +
+                        "a non-zero effective-len means it was attached and YouTube " +
+                        "challenged this IP anyway.",
+                    e,
+                )
+            }
             val best = extractor.audioStreams.orEmpty()
                 .filter { it.isUrl && it.url != null }
                 .minByOrNull { kotlin.math.abs(it.averageBitrate - 128) }
             assertNotNull(
                 best,
                 "NewPipeExtractor found no URL-only audio stream — YouTube changed " +
-                    "something the pinned extractor cannot handle",
+                    "something the pinned extractor cannot handle (${cookieState()})",
             )
             val bytes = pullBytes(best!!.url!!, 256 * 1024)
             assertTrue(
                 bytes >= minBytes,
                 "NewPipeExtractor resolved a URL but only $bytes bytes streamed " +
-                    "(min $minBytes) — the CDN refused the resolved link",
+                    "(min $minBytes) — the CDN refused the resolved link (${cookieState()})",
             )
         } finally {
             if (extractor is YoutubeStreamExtractor) YoutubeStreamExtractor.setFetchIosClient(false)
@@ -93,27 +108,46 @@ class LiveExtractorSmokeTest {
         assertNotNull(
             target,
             "production resolver returned no stream target — lean player path " +
-                "AND NewPipe extraction both failed",
+                "AND NewPipe extraction both failed (${cookieState()})",
         )
         val bytes = pullBytes(target!!.url, 256 * 1024)
         assertTrue(
             bytes >= minBytes,
             "production resolver returned a URL but only $bytes bytes streamed " +
-                "(min $minBytes) — the CDN refused the resolved link",
+                "(min $minBytes) — the CDN refused the resolved link (${cookieState()})",
         )
     }
 
     companion object {
         /**
-         * Mirror a server boot: the WEARSIC_YOUTUBE_COOKIE env var (when set)
-         * becomes the session cookie [NewPipeDownloader] attaches to requests —
-         * the same mechanism `wearsic cookies` uses on a running server.
+         * Two delivery channels: the env var (local runs, and step env when a
+         * fresh daemon passes it through) and the file the hotfix workflow
+         * writes next to the module's build output (immune to any environment
+         * caching of a reused Gradle daemon). Env wins when non-blank.
          */
         @JvmStatic
         @BeforeAll
         fun armSessionCookie() {
-            YoutubeSession.cookie = System.getenv("WEARSIC_YOUTUBE_COOKIE")
-            println("live smoke: cookie-backed=${YoutubeSession.hasCookie()}")
+            val env = System.getenv("WEARSIC_YOUTUBE_COOKIE")?.takeIf { it.isNotBlank() }
+            YoutubeSession.cookie = env ?: File("build/yt-cookie.txt").readIfPresent()
+            println("live smoke: ${cookieState()}")
+            System.err.println("live smoke: ${cookieState()}")
+        }
+
+        private fun File.readIfPresent(): String? =
+            takeIf { it.isFile }?.readText()?.takeIf { it.isNotBlank() }
+
+        /**
+         * Cookie state as a log-safe string — lengths only, never the value.
+         * Embedded in every failure message so a bot-wall can never hide
+         * which channel delivered (or failed to deliver) the cookie.
+         */
+        fun cookieState(): String {
+            val envLen = System.getenv("WEARSIC_YOUTUBE_COOKIE")?.length
+            val fileLen = File("build/yt-cookie.txt").readIfPresent()?.length
+            return "cookie-backed=${YoutubeSession.hasCookie()} " +
+                "(env-len=${envLen ?: "none"}, file-len=${fileLen ?: "none"}, " +
+                "effective-len=${YoutubeSession.cookie?.length ?: 0})"
         }
     }
 }

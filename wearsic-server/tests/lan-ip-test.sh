@@ -75,7 +75,7 @@ check() { # name expected actual
 
 # Reset the fake world between cases; util/ is shared and untouched.
 reset() {
-  rm -rf "$WORK/bin" "$WORK/sysbin" "$WORK/procnet"
+  rm -rf "$WORK/bin" "$WORK/sysbin" "$WORK/procnet" "$WORK/env"
   mkdir -p "$WORK/bin" "$WORK/sysbin" "$WORK/procnet"
 }
 stub() { # $1 = full path; body on stdin
@@ -85,7 +85,14 @@ stub() { # $1 = full path; body on stdin
 run_fn() { # $1 = function name
   PATH="$WORK/bin:$WORK/util" \
   WEARSIC_SYS_BIN="$WORK/sysbin" WEARSIC_PROC_NET="$WORK/procnet" \
+  ENV_FILE="$WORK/env" \
   "$BASH_BIN" -c 'source "$1"; shift; "$@"' bash "$WORK/fn.sh" "$1" 2>/dev/null
+}
+run_fn_lan_ip_env() { # $1 = WEARSIC_LAN_IP value
+  PATH="$WORK/bin:$WORK/util" \
+  WEARSIC_SYS_BIN="$WORK/sysbin" WEARSIC_PROC_NET="$WORK/procnet" \
+  ENV_FILE="$WORK/env" WEARSIC_LAN_IP="$1" \
+  "$BASH_BIN" -c 'source "$1"; shift; "$@"' bash "$WORK/fn.sh" lan_ip 2>/dev/null
 }
 expect() { # $1 = function, $2 = expected, $3 = label
   check "$3" "$2" "$(run_fn "$1")"
@@ -222,6 +229,48 @@ EOF
 check "server_url builds from the detected IP" "http://10.1.2.3:8080" "$(run_fn server_url)"
 reset
 check "server_url empty when no IP (no <phone-IP> placeholder)" "" "$(run_fn server_url)"
+
+# 18. MODERN ANDROID (the reported bug): /proc/net/route is unreadable while
+#     /proc/net/fib_trie still works. fib_trie used to be gated on the
+#     default interface, so this exact combination found nothing and
+#     `wearsic ip` blamed Wi-Fi.
+reset
+printf 'Main:\n  +-- 0.0.0.0/0 3 0 5\n     |-- 192.168.7.42\n        /32 host LOCAL\n' > "$WORK/procnet/fib_trie"
+expect lan_ip "192.168.7.42" "fib_trie works with NO /proc/net/route (modern Android)"
+
+# 19. WEARSIC_LAN_IP wins over every probe.
+reset
+stub "$WORK/bin/ip" <<'EOF'
+#!/bin/sh
+printf '2: wlan0    inet 10.0.0.9/24 scope global wlan0\n'
+EOF
+check "WEARSIC_LAN_IP overrides probes" "192.168.50.5" "$(run_fn_lan_ip_env 192.168.50.5)"
+
+# 20. An invalid override must NOT block the real probes.
+reset
+stub "$WORK/bin/ip" <<'EOF'
+#!/bin/sh
+printf '2: wlan0    inet 10.0.0.9/24 scope global wlan0\n'
+EOF
+check "invalid WEARSIC_LAN_IP falls through to probes" "10.0.0.9" "$(run_fn_lan_ip_env not-an-ip)"
+
+# 21. The .env value (what `wearsic ip <addr>` saves) is honoured.
+reset
+printf 'WEARSIC_LAN_IP=10.7.7.7\n' > "$WORK/env"
+check ".env WEARSIC_LAN_IP is honoured" "10.7.7.7" "$(run_fn lan_ip)"
+
+# 22. wlan0 absent AND no default route: the all-interfaces probe must still
+#     find the real Wi-Fi address (Android also names it wlan1/swlan0).
+reset
+stub "$WORK/bin/ip" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *wlan0*) exit 0 ;;
+  *"addr show"*) printf '1: lo    inet 127.0.0.1/8 scope host lo\n3: wlan1    inet 192.168.11.11/24 scope global wlan1\n' ;;
+  *) exit 0 ;;
+esac
+EOF
+expect lan_ip "192.168.11.11" "ip all-interfaces fallback (wlan1, no default route)"
 
 # 17. Syntax check of the shipped CLI.
 if bash -n "$CLI" 2>/dev/null; then pass "wearsic CLI parses"; else fail "wearsic CLI has a syntax error"; fi

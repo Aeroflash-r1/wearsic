@@ -62,6 +62,13 @@ if color_on; then
   C_BD_OK=$'\033[2m\033[38;5;120m'
   C_BD_WARN=$'\033[2m\033[38;5;179m'
   C_BD_ERR=$'\033[2m\033[38;5;203m'
+  # Chip backgrounds (48;5;N) power the status pills that read like app
+  # badges: filled, rounded by their own padding, one per state.
+  C_CHIP_OK_BG=22;   C_CHIP_OK_FG=120
+  C_CHIP_WARN_BG=58; C_CHIP_WARN_FG=179
+  C_CHIP_ERR_BG=52;  C_CHIP_ERR_FG=203
+  C_CHIP_INFO_BG=23; C_CHIP_INFO_FG=117
+  C_CHIP_OFF_BG=236; C_CHIP_OFF_FG=245
   C_TLT=$'\033[1m\033[38;5;157m'
   C_TLT_CYA=$'\033[1m\033[38;5;117m'
   C_TLT_OK=$'\033[1m\033[38;5;120m'
@@ -71,6 +78,9 @@ else
   C_RESET=""; C_BOLD=""; C_DIM=""; C_BRAND=""; C_ACC=""; C_CYA=""; C_LAV=""
   C_OK=""; C_WARN=""; C_ERR=""; C_BD=""; C_BD_CYA=""; C_BD_OK=""; C_BD_WARN=""
   C_BD_ERR=""; C_TLT=""; C_TLT_CYA=""; C_TLT_OK=""; C_TLT_WARN=""; C_TLT_ERR=""
+  C_CHIP_OK_BG=0; C_CHIP_OK_FG=0; C_CHIP_WARN_BG=0; C_CHIP_WARN_FG=0
+  C_CHIP_ERR_BG=0; C_CHIP_ERR_FG=0; C_CHIP_INFO_BG=0; C_CHIP_INFO_FG=0
+  C_CHIP_OFF_BG=0; C_CHIP_OFF_FG=0
 fi
 
 # Animations need a terminal, independent of colour.
@@ -121,7 +131,7 @@ grad_word() {
   printf '%s%s' "$out" "$C_RESET"
 }
 
-# Middle-elide: "downloading wears…v1.9.3.zip" — keeps both ends readable.
+# Middle-elide: "downloading wears…v1.9.4.zip" — keeps both ends readable.
 elide_mid() { # string maxwidth
   local s="$1" w="$2" keep h t
   if [ "$w" -lt 6 ] || [ ${#s} -le "$w" ]; then printf '%s' "$s"; return 0; fi
@@ -200,23 +210,90 @@ warn() { msg_line "${C_WARN}!${C_RESET} " "$*" "" 0; }
 err()  { msg_line "${C_ERR}✗${C_RESET} " "$*" "" 1; }
 die()  { err "$*"; exit 1; }
 
-# One identity line per command, e.g. "  ♪ wearsic · status".
-brand() {
-  printf '\n  %s♪%s %s' "$C_ACC" "$C_RESET" "$(grad_word 'wearsic')"
-  if [ -n "${1:-}" ]; then printf ' %s· %s%s' "$C_DIM" "$1" "$C_RESET"; fi
-  printf '\n\n'
+# Chip/pill — a filled badge like a phone app's status chip. $1 = state
+# (ok|warn|err|cyan|off), $2 = label (defaults to the state name). Plain
+# "[label]" when colour is off, so piped output stays readable.
+pill() { # state [label]
+  local bg="$C_CHIP_OFF_BG" fg="$C_CHIP_OFF_FG"
+  case "${1:-off}" in
+    ok)   bg="$C_CHIP_OK_BG";   fg="$C_CHIP_OK_FG" ;;
+    warn) bg="$C_CHIP_WARN_BG"; fg="$C_CHIP_WARN_FG" ;;
+    err)  bg="$C_CHIP_ERR_BG";  fg="$C_CHIP_ERR_FG" ;;
+    cyan) bg="$C_CHIP_INFO_BG"; fg="$C_CHIP_INFO_FG" ;;
+  esac
+  if color_on; then
+    printf '%s[48;5;%sm%s[38;5;%sm %s %s' \
+      "$ESC" "$bg" "$ESC" "$fg" "${2:-$1}" "$C_RESET"
+  else
+    printf '[%s]' "${2:-$1}"
+  fi
 }
 
-# Section header: a coloured side-bar glyph + bold name. $2 = green|cyan|
+# A hairline that fades from the brand green into dim: the rule under the
+# app bar and inside panels. $1 = width, $2/$3 = shade range.
+rule_line() { # width [from-shade] [to-shade]
+  local w="${1:-40}" i=0 a="${2:-114}" b="${3:-240}" sh
+  case "$w" in ''|*[!0-9]*) w=40 ;; esac
+  if ! color_on; then
+    while [ "$i" -lt "$w" ]; do printf '─'; i=$((i + 1)); done
+    return 0
+  fi
+  while [ "$i" -lt "$w" ]; do
+    if [ "$w" -le 1 ]; then sh="$a"; else sh=$(( a + (b - a) * i / (w - 1) )); fi
+    printf '%s[38;5;%sm─' "$ESC" "$sh"
+    i=$((i + 1))
+  done
+  printf '%s' "$C_RESET"
+}
+
+# One app-bar per command: "♪ wearsic · status" on the left, an optional
+# state pill pushed to the right edge, and a fading hairline underneath at
+# exactly the width of the panels below (so the whole screen shares one
+# gutter). $1 = screen, $2 = state (ok|warn|err|off), $3 = pill label.
+brand() {
+  local tw lp rp gap left right
+  tw="$(box_tw)"
+  SECTION_FIRST=1
+  left="$(printf '%s♪%s %s' "$C_ACC" "$C_RESET" "$(grad_word 'wearsic')")"
+  if [ -n "${1:-}" ]; then
+    left="$left$(printf ' %s·%s %s%s%s' "$C_DIM" "$C_RESET" "$C_BOLD" "$1" "$C_RESET")"
+  fi
+  right=""
+  [ -n "${2:-}" ] && right="$(pill "$2" "${3:-$2}")"
+  lp="$(vis "$left")"; rp="$(vis "$right")"
+  printf '\n'
+  if [ -n "$right" ] && [ $(( tw - ${#lp} - ${#rp} )) -ge 2 ]; then
+    gap=$(( tw - ${#lp} - ${#rp} ))
+    printf '  %s' "$left"
+    while [ "$gap" -gt 0 ]; do printf ' '; gap=$((gap - 1)); done
+    printf '%s\n' "$right"
+  else
+    printf '  %s\n' "$left"
+    [ -n "$right" ] && printf '  %s\n' "$right"
+  fi
+  printf '  %s\n\n' "$(rule_line "$tw")"
+}
+
+# Group header for command lists and checkups: hue bar + bold name + a dim
+# rule that runs to the same right edge as the panels. $2 = green|cyan|
 # lavender|amber — each group of commands gets its own hue.
 section() {
-  local hue="$C_ACC"
+  local hue="$C_ACC" tw n i
   case "${2:-}" in
     cyan) hue="$C_CYA" ;;
     lavender) hue="$C_LAV" ;;
     amber) hue="$C_WARN" ;;
   esac
-  printf '\n  %s▍%s %s%s%s\n' "$hue" "$C_RESET" "$C_BOLD" "$1" "$C_RESET"
+  # The app bar already leaves a blank line below its rule, so the first
+  # group starts flush; later groups get one blank separator.
+  if [ "${SECTION_FIRST:-1}" = "1" ]; then SECTION_FIRST=0; else printf '\n'; fi
+  tw="$(box_tw)"
+  n=$(( tw - 5 - ${#1} ))
+  [ "$n" -lt 2 ] && n=2
+  printf '  %s▍%s %s%s%s ' "$hue" "$C_RESET" "$C_BOLD" "$1" "$C_RESET"
+  printf '%s' "$C_DIM"
+  i=0; while [ "$i" -lt "$n" ]; do printf '─'; i=$((i + 1)); done
+  printf '%s\n' "$C_RESET"
 }
 
 # Command list row (home / help). Wide terminals get the long description in
@@ -228,18 +305,25 @@ item() { # cmd short-desc [long-desc]
   if [ "$COLS" -ge 78 ]; then
     desc="$wd"; clen=16; room=$(( COLS - 23 ))
     if [ ${#desc} -le "$room" ]; then
-      printf '    %s%-16s%s %s%s%s\n' "$C_ACC" "$cmd" "$C_RESET" "$C_DIM" "$desc" "$C_RESET"
+      printf '  %s›%s %s%-16s%s %s%s%s\n' "$C_DIM" "$C_RESET" "$C_ACC" "$cmd" "$C_RESET" "$C_DIM" "$desc" "$C_RESET"
+      return 0
+    fi
+    # The long description did not fit — show the short one in the same
+    # column instead of dropping an entire wrapped paragraph into the list.
+    desc="$nd"
+    if [ ${#desc} -le "$room" ]; then
+      printf '  %s›%s %s%-16s%s %s%s%s\n' "$C_DIM" "$C_RESET" "$C_ACC" "$cmd" "$C_RESET" "$C_DIM" "$desc" "$C_RESET"
       return 0
     fi
   else
     desc="$nd"; clen="${ICOL:-9}"; [ ${#cmd} -gt "$clen" ] && clen=${#cmd}
     room=$(( COLS - 7 - clen ))
     if [ ${#desc} -le "$room" ]; then
-      printf '    %s%-*s%s  %s%s%s\n' "$C_ACC" "$clen" "$cmd" "$C_RESET" "$C_DIM" "$desc" "$C_RESET"
+      printf '  %s›%s %s%-*s%s  %s%s%s\n' "$C_DIM" "$C_RESET" "$C_ACC" "$clen" "$cmd" "$C_RESET" "$C_DIM" "$desc" "$C_RESET"
       return 0
     fi
   fi
-  printf '    %s%s%s\n' "$C_ACC" "$cmd" "$C_RESET"
+  printf '  %s›%s %s%s%s\n' "$C_DIM" "$C_RESET" "$C_ACC" "$cmd" "$C_RESET"
   wrap_text "$desc" $(( COLS - 8 )) '      ' "$C_DIM"
 }
 
@@ -387,8 +471,61 @@ replace_file() { # $1 = source file, $2 = destination file
 # wide desktops still get a tidy column). Long content wraps (word-aware;
 # paths and URLs hard-split) INSIDE the border. The optional second argument
 # (ok|warn|err|cyan) tints border + title for verdict panels.
+# Panel geometry, shared by the app bar, the group rules and every box so
+# the whole screen lines up on ONE right edge: terminal width minus 4 (two
+# spaces of gutter each side), capped at 76 so desktops get a tidy column.
+box_tw() {
+  local tw=$(( COLS - 4 ))
+  [ "$tw" -gt 76 ] && tw=76
+  [ "$tw" -lt 24 ] && tw=24
+  printf '%s' "$tw"
+}
+box_pw() { printf '%s' $(( $(box_tw) - 4 )); }
+
 BOX_TITLE=""; BOX_BODY=""; BOX_N=0; BOX_HUE=""
 box_begin() { BOX_TITLE="$1"; BOX_HUE="${2:-acc}"; BOX_BODY=""; BOX_N=0; }
+# Hairline inside a panel, drawn at render time when the width is known.
+box_hr() { box_line "__WEARSIC_HR__"; }
+
+# One cell of a two-column stat grid: dim label, bright value, padded to an
+# exact visible width so the right border never goes ragged. Overlong values
+# are elided in the middle (a path keeps both ends; a count never wraps).
+cell() { # label value width
+  local lab="$1" val="$2" w="${3:-20}" lw=10 vp pad plain out
+  [ ${#lab} -gt "$lw" ] && lw=${#lab}
+  case "$w" in ''|*[!0-9]*) w=20 ;; esac
+  vp=$(( w - lw - 1 ))
+  if [ "$vp" -lt 4 ]; then
+    printf '%s' "$(elide_mid "$2" "$w")"
+    return 0
+  fi
+  plain="$(vis "$val")"
+  if [ ${#plain} -gt "$vp" ]; then
+    val="$(elide_mid "$plain" "$vp")"; plain="$val"
+  fi
+  out="$(printf '%s%-*s%s %s' "$C_DIM" "$lw" "$lab" "$C_RESET" "$val")"
+  pad=$(( w - lw - 1 - ${#plain} ))
+  [ "$pad" -lt 0 ] && pad=0
+  printf '%s%*s' "$out" "$pad" ''
+}
+
+# Two stats on one row — the dashboard row of `status` and `health`. Falls
+# back to stacked rows on a narrow phone, where two columns would squeeze
+# every value into an ellipsis.
+box_kv2() { # label1 value1 label2 value2 [label-width]
+  local pw lw="${5:-10}" inner w1 w2
+  pw="$(box_pw)"
+  # Two columns need real room: below ~62 columns the values would all be
+  # middle-elided ("412 ok …iled"), which reads worse than stacked rows.
+  if [ "$pw" -lt 62 ] || [ -z "${3:-}" ]; then
+    box_kv "$1" "$2" "$lw"
+    [ -n "${3:-}" ] && box_kv "$3" "$4" "$lw"
+    return 0
+  fi
+  inner=$(( pw - 5 ))
+  w1=$(( inner / 2 )); w2=$(( inner - w1 ))
+  box_line "   $(cell "$1" "$2" "$w1")  $(cell "$3" "$4" "$w2")"
+}
 box_line() {
   if [ "$BOX_N" = "0" ]; then BOX_BODY="$1"; else BOX_BODY="$BOX_BODY
 $1"; fi
@@ -421,6 +558,10 @@ box_end() {
   i=0; while [ "$i" -lt "$n" ]; do printf '%s─%s' "$bd" "$C_RESET"; i=$((i + 1)); done
   printf '%s╮%s\n' "$bd" "$C_RESET"
   while IFS= read -r line; do
+    if [ "$line" = "__WEARSIC_HR__" ]; then
+      # 3-space margin each side, dim: a section break, not a second border.
+      line="   $(rule_line $(( pw - 6 )) 240 238)   "
+    fi
     p="$(vis "$line")"
     if [ ${#p} -le "$pw" ]; then
       printf '  %s│%s %s' "$bd" "$C_RESET" "$line"
@@ -567,13 +708,13 @@ proc_uptime() { # $1 = pid
 # Doctor row: state ok|warn|err|off, name, detail. The detail column starts
 # at column 23; long detail text wraps with continuation lines aligned under
 # it and a single overlong token (a path) is head-elided, never split.
-doctor_row() {
-  local sym name="$2" text="$3" plain w pfx first=1 seg
-  case "$1" in
+doctor_row() { # name state detail
+  local name="$1" text="$3" sym plain w pfx first=1 seg
+  case "$2" in
     ok)   sym="${C_OK}✓${C_RESET}" ;;
     warn) sym="${C_WARN}!${C_RESET}" ;;
     err)  sym="${C_ERR}✗${C_RESET}" ;;
-    *)    sym="${C_DIM}—${C_RESET}" ;;
+    *)    sym="${C_DIM}·${C_RESET}" ;;
   esac
   printf '    %s %s%-16s%s ' "$sym" "$C_DIM" "$name" "$C_RESET"
   w=$(( COLS - 23 ))
@@ -696,17 +837,39 @@ lan_ip() {
   iface="$(default_iface)"
   sys="${WEARSIC_SYS_BIN:-/system/bin}"
 
+  # 0. Explicit override. Modern Android hides most interface information
+  #    from apps (see the fib_trie note below), so the user must always be
+  #    able to say the address instead of being told Wi-Fi is off:
+  #      WEARSIC_LAN_IP=192.168.1.50 wearsic url
+  #    or persist it in .env (wearsic ip <addr> does that for you).
+  #    An invalid value falls through to the probes below.
+  ip="${WEARSIC_LAN_IP:-}"
+  if [ -z "$ip" ] && [ -n "${ENV_FILE:-}" ] && [ -f "${ENV_FILE:-}" ]; then
+    ip="$(sed -n 's/^WEARSIC_LAN_IP=//p' "$ENV_FILE" 2>/dev/null | head -1 | tr -d '\r')"
+  fi
+  if [ -n "$ip" ] && ! printf '%s' "$ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+    ip=""
+  fi
+
   # 1. Termux:API — exact Wi-Fi address, no parsing games.
-  if command -v termux-wifi-connectioninfo >/dev/null 2>&1; then
+  if [ -z "$ip" ] && command -v termux-wifi-connectioninfo >/dev/null 2>&1; then
     ip="$(termux-wifi-connectioninfo 2>/dev/null \
       | sed -n 's/.*"ip"[[:space:]]*:[[:space:]]*"\([0-9.]\{7,\}\)".*/\1/p' | head -1)"
   fi
 
-  # 2. iproute2.
+  # 2. iproute2: wlan0 first, then the default-route NIC, then ANY
+  #    non-loopback interface (Android also uses wlan1/swlan0/ap0) and
+  #    finally the kernel's own source-address lookup.
   if [ -z "$ip" ] && command -v ip >/dev/null 2>&1; then
     ip="$(ip -4 -o addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
     if [ -z "$ip" ] && [ -n "$iface" ]; then
       ip="$(ip -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
+    if [ -z "$ip" ]; then
+      ip="$(ip -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
+    fi
+    if [ -z "$ip" ]; then
+      ip="$(ip route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]\+\).*/\1/p' | head -1)"
     fi
   fi
 
@@ -716,19 +879,32 @@ lan_ip() {
     if [ -z "$ip" ] && [ -n "$iface" ]; then
       ip="$(ifconfig "$iface" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
     fi
+    if [ -z "$ip" ]; then
+      ip="$(ifconfig -a 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
+    fi
   fi
 
-  # 4. Android's own tools, by absolute path.
+  # 4. Android's own tools, by absolute path. Termux's linker environment
+  #    can hide Android's libraries from a /system/bin binary ("CANNOT LINK
+  #    EXECUTABLE"), which silently produced an empty probe — retry the
+  #    identical command with the system library path when the first run
+  #    yields nothing. Harmless where the direct run already works.
   if [ -z "$ip" ] && [ -x "$sys/ip" ]; then
     ip="$("$sys/ip" -4 -o addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
     if [ -z "$ip" ] && [ -n "$iface" ]; then
       ip="$("$sys/ip" -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
+    if [ -z "$ip" ]; then
+      ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ip" -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
     fi
   fi
   if [ -z "$ip" ] && [ -x "$sys/ifconfig" ]; then
     ip="$("$sys/ifconfig" wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
     if [ -z "$ip" ] && [ -n "$iface" ]; then
       ip="$("$sys/ifconfig" "$iface" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
+    if [ -z "$ip" ]; then
+      ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ifconfig" -a 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
     fi
   fi
 
@@ -744,8 +920,11 @@ lan_ip() {
     fi
   fi
 
-  # 6. Pure /proc.
-  if [ -z "$ip" ] && [ -n "$iface" ]; then
+  # 6. Pure /proc. NOT gated on the default interface: on modern Android
+  #    /proc/net/route is often unreadable while /proc/net/fib_trie still is,
+  #    and the old gate turned that exact combination into a permanent "no
+  #    IP" (the reported "wearsic says Wi-Fi is off" bug).
+  if [ -z "$ip" ]; then
     ip="$(awk '/32 host/ { print f } { f = $2 }' "${WEARSIC_PROC_NET:-/proc/net}/fib_trie" 2>/dev/null \
       | grep -E '^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
   fi
@@ -784,21 +963,27 @@ show_pairing() {
   local key url; key="$(api_key)"; url="$(server_url)"
   box_begin "connect your watch" cyan
   box_line ""
+  # Onboarding card: numbered steps, the value on its own line, a hairline
+  # before the fine print. Reads like a setup screen, not a log dump.
+  box_line "   ${C_ACC}1${C_RESET}  ${C_DIM}address${C_RESET}"
   if [ -n "$url" ]; then
-    box_line "   ${C_CYA}${url}${C_RESET}"
+    box_line "      ${C_CYA}${url}${C_RESET}"
   else
-    box_line "   ${C_WARN}couldn't detect this phone's IP${C_RESET}"
-    box_line "   ${C_DIM}is Wi-Fi on? then rerun:${C_RESET} ${C_ACC}wearsic url${C_RESET}"
-    box_line "   ${C_DIM}watch elsewhere? public URL:${C_RESET} ${C_ACC}wearsic funnel${C_RESET}"
+    box_line "      ${C_WARN}couldn't detect this phone's IP${C_RESET}"
+    box_line "      ${C_DIM}Wi-Fi may still be on — Android hides the interface.${C_RESET}"
+    box_line "      ${C_DIM}read it in Settings → Wi-Fi, then save it:${C_RESET}"
+    box_line "      ${C_ACC}wearsic ip 192.168.x.y${C_RESET}"
   fi
   box_line ""
+  box_line "   ${C_ACC}2${C_RESET}  ${C_DIM}key${C_RESET}"
   if [ -n "$key" ]; then
-    box_kv "key" "${C_ACC}${key}${C_RESET}" 4
+    box_line "      ${C_ACC}${key}${C_RESET}"
   else
-    box_kv "key" "${C_WARN}not set — anyone on your network can use this server${C_RESET}" 4
+    box_line "      ${C_WARN}not set — anyone on your network can use this server${C_RESET}"
   fi
   box_line ""
-  box_line "   ${C_DIM}Wearsic app > Settings > enter both values.${C_RESET}"
+  box_hr
+  box_line "   ${C_DIM}Wearsic app › Settings — enter both values.${C_RESET}"
   box_line "   ${C_DIM}or send them over adb:${C_RESET} ${C_ACC}wearsic pair${C_RESET}"
   box_end
 }
@@ -885,7 +1070,7 @@ cmd_status() {
   brand "status"
   local P; P="$(port)"
   if health_ok; then
-    local body ver ex pid up ok_n fail_n rate meta url
+    local body ver ex pid up ok_n fail_n rate meta url key_state
     http_get "http://127.0.0.1:$P/health"
     body="$HTTP_BODY"
     ver="$(jstr "$body" version)"
@@ -898,39 +1083,36 @@ cmd_status() {
     url="$(server_url)"
     box_begin "status" ok
     box_line ""
-    box_line "   $(dot ok) ${C_OK}running and healthy${C_RESET}"
-    [ -n "$meta" ] && box_line "     ${C_DIM}${meta}${C_RESET}"
+    box_line "   $(pill ok healthy)${meta:+  ${C_DIM}${meta}${C_RESET}}"
     box_line ""
     if [ -n "$url" ]; then
       box_line "   ${C_CYA}${url}${C_RESET}"
     else
       box_line "   ${C_WARN}address not detected — wearsic url${C_RESET}"
     fi
+    box_hr
+    if [ -n "$(api_key)" ]; then key_state="set"; else key_state="${C_WARN}not set${C_RESET}"; fi
+    box_kv2 "version" "v${ver:-unknown}" "port" "$P"
+    box_kv2 "engine" "${ok_n:-0} ok · ${fail_n:-0} failed" "watch key" "$key_state"
     box_line ""
-    box_kv "version" "v${ver:-unknown}"
-    [ -n "$ok_n" ] && box_kv "engine" "${ok_n} ok · ${fail_n:-0} failed (${rate:-0}%)"
-    if [ -n "$(api_key)" ]; then
-      box_kv "watch key" "set"
-    else
-      box_kv "watch key" "${C_WARN}not set — the server is open on your network${C_RESET}"
-    fi
+    box_line "   ${C_ACC}wearsic url${C_RESET}  ${C_DIM}connect the watch${C_RESET}"
     box_end
     return 0
   elif supervisor_running; then
     box_begin "status" warn
     box_line ""
-    box_line "   $(dot warn) ${C_WARN}not healthy${C_RESET}"
+    box_line "   $(pill warn not healthy)"
     box_line "   ${C_DIM}the supervisor is up but the server is not answering${C_RESET}"
-    box_line ""
-    box_kv "check" "wearsic logs"
+    box_hr
+    box_line "   ${C_ACC}wearsic logs${C_RESET}  ${C_DIM}see what the engine is doing${C_RESET}"
     box_end
     return 4
   else
     box_begin "status" err
     box_line ""
-    box_line "   $(dot err) ${C_ERR}stopped${C_RESET}"
-    box_line ""
-    box_kv "start it" "wearsic start"
+    box_line "   $(pill err stopped)"
+    box_hr
+    box_line "   ${C_ACC}wearsic start${C_RESET}  ${C_DIM}bring it back up${C_RESET}"
     box_end
     return 3
   fi
@@ -957,15 +1139,11 @@ cmd_health() {
   brand "health"
   http_get "http://127.0.0.1:$P/health"
   [ "$HTTP_CODE" = "200" ] || die "No response — is the server running? (wearsic start)"
-  local body st ver st_state ex ok_n fail_n rate cons last_err extra upd stg
+  local body st ver st_kind ex ok_n fail_n rate cons last_err extra upd stg tc
   body="$HTTP_BODY"
   st="$(jstr "$body" status)"
   ver="$(jstr "$body" version)"
-  if [ "$st" = "ok" ]; then
-    st_state="$(dot ok) ${C_OK}ok${C_RESET}"
-  else
-    st_state="$(dot warn) ${C_WARN}${st:-unknown}${C_RESET}"
-  fi
+  st_kind="ok"; [ "$st" = "ok" ] || st_kind="warn"
   ex="$(jobj "$body" extraction)"
   ok_n="$(jnum "$ex" successCount)"; fail_n="$(jnum "$ex" failureCount)"
   rate="$(jnum "$ex" failureRatePercent)"; cons="$(jnum "$ex" consecutiveFailures)"
@@ -974,36 +1152,83 @@ cmd_health() {
   if [ -n "$cons" ] && [ "$cons" -gt 0 ] 2>/dev/null; then extra=" · $cons in a row"; fi
   upd="$(jobj "$body" update)"
   stg="$(jstr "$upd" stagedVersion)"
+  tc="$(jbool "$body" transcoderAvailable)"; [ "$tc" = "true" ] || tc="false"
+  local tc_state="available"
+  [ "$tc" = "true" ] || tc_state="${C_WARN}missing${C_RESET}"
   box_begin "health"
   box_line ""
-  box_line "   ${st_state}   ${C_DIM}127.0.0.1:${P} · ${HTTP_MS:-?}ms${C_RESET}"
-  box_line ""
-  box_kv "version" "v${ver:-unknown} · $(jstr "$body" serverName)"
-  if [ "$(jbool "$body" transcoderAvailable)" = "true" ]; then
-    box_kv "transcoder" "available"
-  else
-    box_kv "transcoder" "${C_WARN}unavailable — pkg install ffmpeg${C_RESET}"
-  fi
-  box_kv "extraction" "${ok_n:-0} ok · ${fail_n:-0} failed (${rate:-0}%)$extra"
-  [ -n "$last_err" ] && box_kv "last error" "$last_err"
-  box_kv "update" "$(jstr "$upd" status)"
+  box_line "   $(pill "$st_kind" "${st:-unknown}")  ${C_DIM}127.0.0.1:${P} · ${HTTP_MS:-?}ms${C_RESET}"
+  box_hr
+  box_kv2 "version" "v${ver:-unknown}" "transcoder" "$tc_state"
+  box_kv2 "extraction" "${ok_n:-0} ok · ${fail_n:-0} failed (${rate:-0}%)$extra" \
+    "crashes" "$(jnum "$body" crashCount)"
+  box_kv2 "cdn" "$(jnum "$body" upstreamRefusals) refused" \
+    "update" "$(jstr "$upd" status)"
   [ -n "$stg" ] && box_kv "staged" "v$stg — applies on next restart"
-  box_kv "crashes" "$(jnum "$body" crashCount)"
-  box_kv "cdn" "$(jnum "$body" upstreamRefusals) refused"
+  if [ "$tc" != "true" ]; then
+    box_line ""
+    box_line "   ${C_WARN}audio conversion unavailable${C_RESET} ${C_DIM}install it: pkg install -y ffmpeg${C_RESET}"
+  fi
+  if [ -n "$last_err" ]; then
+    box_hr
+    box_line "   ${C_ERR}last error${C_RESET}  ${C_DIM}${last_err}${C_RESET}"
+  fi
   box_end
 }
 
 cmd_url() { installed; brand "url"; show_pairing; }
 
+# `wearsic ip`            show this phone's LAN address
+# `wearsic ip 192.168.x.y`  remember it (writes WEARSIC_LAN_IP to .env) — the
+#                           escape hatch for Android builds where every
+#                           interface probe is hidden from apps.
 cmd_ip() {
   brand "ip"
-  local ip; ip="$(lan_ip)"
-  if [ -n "$ip" ]; then
-    kv "WiFi IP" "${C_CYA}${ip}${C_RESET}" 10
-    printf '\n'
+  installed
+  if [ -n "${1:-}" ]; then
+    if ! printf '%s' "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+      die "not an IPv4 address: $1"
+    fi
+    write_env_value WEARSIC_LAN_IP "$1"
+    ok "LAN address saved: ${C_CYA}$1${C_RESET}"
+    note "wearsic url and wearsic doctor will use it from now on."
     return 0
   fi
-  die "no local IP found — is Wi-Fi on? (Termux: pkg install iproute2, or check Android Settings → Wi-Fi)"
+  local ip; ip="$(lan_ip)"
+  if [ -n "$ip" ]; then
+    box_begin "network" cyan
+    box_line ""
+    box_line "   ${C_DIM}LAN address${C_RESET}"
+    box_line "   ${C_CYA}${ip}${C_RESET}"
+    box_kv "source" "detected" 8
+    box_line ""
+    box_line "   ${C_DIM}the watch must be on the same Wi-Fi${C_RESET}"
+    box_end
+    return 0
+  fi
+  local saved; saved="$(env_value WEARSIC_LAN_IP)"
+  if [ -n "$saved" ]; then
+    box_begin "network" cyan
+    box_line ""
+    box_line "   ${C_DIM}LAN address${C_RESET}"
+    box_line "   ${C_CYA}${saved}${C_RESET}"
+    box_kv "source" "saved in .env" 8
+    box_line ""
+    box_line "   ${C_DIM}change it:${C_RESET} ${C_ACC}wearsic ip 192.168.x.y${C_RESET}"
+    box_end
+    return 0
+  fi
+  err "couldn't auto-detect this phone's LAN address"
+  say "  This does NOT mean Wi-Fi is off: Android 10+ hides the network"
+  say "  interfaces from apps, and Termux alone may not have a probe left."
+  say ""
+  say "  Fix it once — read the address in Android Settings → Wi-Fi →"
+  say "  your network, then save it here:"
+  say ""
+  say "    ${C_ACC}wearsic ip 192.168.x.y${C_RESET}"
+  say ""
+  say "  Or go public instead (works off-network): ${C_ACC}wearsic funnel${C_RESET}"
+  exit 1
 }
 
 cmd_api_key() {
@@ -1017,9 +1242,14 @@ cmd_api_key() {
   else
     local k; k="$(api_key)"
     [ -n "$k" ] || die "No API key set — the server is OPEN on your network. Set one: wearsic api-key <your-key>"
-    kv "api key" "${C_ACC}$k${C_RESET}" 10
-    dim "enter it on the watch: Settings → API Key"
-    dim "change it: wearsic api-key <new-key>"
+    box_begin "watch credentials" cyan
+    box_line ""
+    box_line "   ${C_ACC}${k}${C_RESET}"
+    box_kv "field" "API Key" 8
+    box_hr
+    box_line "   ${C_DIM}enter it on the watch › Settings › API Key${C_RESET}"
+    box_line "   ${C_DIM}change:${C_RESET} ${C_ACC}wearsic api-key <new-key>${C_RESET}"
+    box_end
   fi
 }
 
@@ -1727,8 +1957,8 @@ cmd_pair() {
     else
       url="$(server_url)"
       if [ -z "$url" ]; then
-        err "couldn't detect this phone's Wi-Fi IP"
-        say "  1. is Wi-Fi on?   (check: wearsic ip)"
+        err "couldn't detect this phone's Wi-Fi IP (Wi-Fi may still be on)"
+        say "  1. save it once:                       wearsic ip 192.168.x.y"
         say "  2. pair through the internet instead:  wearsic pair --funnel"
         say "  3. or pass the address yourself:        wearsic pair http://<host>:<port>"
         exit 1
@@ -1859,11 +2089,20 @@ cmd_version() {
   http_get "http://127.0.0.1:$(port)/health" 3
   ver="$(jstr "$HTTP_BODY" version)"
   if [ -n "$ver" ]; then
-    kv "engine" "v$ver ${C_DIM}· running${C_RESET}" 10
+    box_begin "engine" ok
+    box_line ""
+    box_line "   $(pill ok "v$ver")  ${C_DIM}running${C_RESET}"
+    box_hr
+    box_line "   ${C_ACC}wearsic update${C_RESET}  ${C_DIM}check for updates${C_RESET}"
+    box_end
   else
-    kv "engine" "${C_WARN}not running — wearsic start${C_RESET}" 10
+    box_begin "engine" err
+    box_line ""
+    box_line "   $(pill err 'not running')"
+    box_hr
+    box_line "   ${C_ACC}wearsic start${C_RESET}  ${C_DIM}bring the engine up${C_RESET}"
+    box_end
   fi
-  printf '\n'
 }
 
 # /ready: can the server serve music RIGHT NOW?
@@ -1885,10 +2124,10 @@ cmd_ready() {
   ex="$(jbool "$body" extractor)"; tc="$(jbool "$body" transcoder)"
   ver="$(jstr "$body" engineVersion)"
   if [ "$rd" = "true" ]; then
-    box_begin "✓ ready" ok
+    box_begin "readiness" ok
     box_line ""
-    box_line "   $(dot ok) ${C_OK}the watch can play music${C_RESET}"
-    box_line "     ${C_DIM}127.0.0.1:${P} · ${HTTP_MS:-?}ms · engine v${ver:-unknown}${C_RESET}"
+    box_line "   $(pill ok ready)  ${C_DIM}the watch can play music${C_RESET}"
+    box_line "   ${C_DIM}127.0.0.1:${P} · ${HTTP_MS:-?}ms · engine v${ver:-unknown}${C_RESET}"
     box_line ""
     box_check "database" "$db"
     box_check "music engine" "$ex"
@@ -1897,9 +2136,9 @@ cmd_ready() {
     box_end
     return 0
   fi
-  box_begin "✗ not ready" err
+  box_begin "readiness" err
   box_line ""
-  box_line "   $(dot err) ${C_ERR}playback will fail${C_RESET}"
+  box_line "   $(pill err 'not ready')  ${C_ERR}playback will fail${C_RESET}"
   box_line ""
   [ "$db" != "true" ] && box_line "   ${C_WARN}database${C_RESET}  check free storage and permissions"
   [ "$ex" != "true" ] && box_line "   ${C_WARN}music engine${C_RESET}  run wearsic update, then check the logs"
@@ -2081,7 +2320,7 @@ cmd_doctor() {
   elif [ "$funnel_on" = "1" ]; then
     doctor_row "wifi" warn "no local IP — fine, the public URL still works"; warns=$((warns+1))
   else
-    doctor_row "wifi" err "no local IP — Wi-Fi off? (or set up a public URL: wearsic funnel)"; fails=$((fails+1))
+    doctor_row "wifi" err "no local IP detected (Wi-Fi may still be on) — save it: wearsic ip 192.168.x.y, or go public: wearsic funnel"; fails=$((fails+1))
   fi
 
   # Tailscale / Funnel: only ever reported ACTIVE when confirmed, and the
@@ -2115,23 +2354,29 @@ cmd_doctor() {
 
   printf '\n'
   if [ "$fails" -eq 0 ]; then
-    box_begin "✓ ready" ok
+    box_begin "checkup" ok
     box_line ""
     if [ "$warns" -gt 0 ]; then
-      box_line "   ${C_WARN}!${C_RESET} $warns warning(s) — nothing blocking playback."
+      box_line "   $(pill ok ready)"
+      box_line "   ${C_WARN}$warns warning(s)${C_RESET} ${C_DIM}— nothing blocking playback${C_RESET}"
     else
-      box_line "   everything looks good."
+      box_line "   $(pill ok ready)"
+      box_line "   ${C_DIM}everything checks out${C_RESET}"
     fi
-    box_line ""
-    box_line "   ${C_ACC}wearsic url${C_RESET}  ${C_DIM}connect the watch${C_RESET}"
+    box_hr
+    box_line "   ${C_ACC}wearsic url${C_RESET}   ${C_DIM}connect the watch${C_RESET}"
     box_line "   ${C_ACC}wearsic logs${C_RESET}  ${C_DIM}playback issues${C_RESET}"
     box_end
     return 0
   fi
-  box_begin "✗ not ready" err
+  local warns_txt=""
+  [ "$warns" -gt 0 ] && warns_txt=" · ${C_WARN}$warns warning(s)${C_RESET}"
+  box_begin "checkup" err
   box_line ""
-  box_line "   $fails problem(s), $warns warning(s)."
-  box_line "   Fix the problem rows above, then run wearsic doctor again."
+  box_line "   $(pill err 'not ready')"
+  box_line "   ${C_ERR}$fails problem(s)${C_RESET}${warns_txt}"
+  box_hr
+  box_line "   ${C_DIM}fix the red rows above, then run${C_RESET} ${C_ACC}wearsic doctor${C_RESET}"
   box_end
   return 1
 }
@@ -2148,27 +2393,31 @@ usage() {
       st="not running"
     fi
   fi
-  local l r lp rp gap
-  l="$(printf '%s♪%s %s %s· music for your watch%s' \
-        "$C_ACC" "$C_RESET" "$(grad_word 'wearsic')" "$C_DIM" "$C_RESET")"
+  local l r lp rp gap tw tag
+  tw="$(box_tw)"
+  l="$(printf '%s♪%s %s' "$C_ACC" "$C_RESET" "$(grad_word 'wearsic')")"
   if [ "$st" = "running" ]; then
-    r="$(printf 'v%s %s·%s %s●%s %srunning%s' \
-          "${ver:-?}" "$C_DIM" "$C_RESET" "$C_OK" "$C_RESET" "$C_OK" "$C_RESET")"
+    r="$(pill ok running)${ver:+ $(printf '%s v%s %s' "$C_DIM" "$ver" "$C_RESET")}"
   elif [ "$st" = "not running" ]; then
-    r="$(printf '%s●%s %snot running%s' "$C_DIM" "$C_RESET" "$C_DIM" "$C_RESET")"
+    r="$(pill off 'not running')"
   else
-    r="$(printf '%s●%s %snot installed%s' "$C_DIM" "$C_RESET" "$C_DIM" "$C_RESET")"
+    r="$(pill off 'not installed')"
   fi
+  tag="music for your watch"
   lp="$(vis "$l")"; rp="$(vis "$r")"
   printf '\n'
-  if [ $(( COLS - 4 - ${#lp} - ${#rp} )) -ge 3 ]; then
-    gap=$(( COLS - 4 - ${#lp} - ${#rp} ))
+  if [ $(( tw - ${#lp} - ${#rp} )) -ge 3 ]; then
+    gap=$(( tw - ${#lp} - ${#rp} ))
     printf '  %s' "$l"
     while [ "$gap" -gt 0 ]; do printf ' '; gap=$((gap - 1)); done
     printf '%s\n' "$r"
   else
-    printf '  %s\n  %s\n' "$l" "$r"
+    printf '  %s\n' "$l"
+    printf '  %s\n' "$r"
   fi
+  printf '  %s\n' "$(rule_line "$tw")"
+  printf '  %s%s%s\n\n' "$C_DIM" "$tag" "$C_RESET"
+  SECTION_FIRST=1
 
   section "Server" green
   item "start" "start the server" "start the server (self-healing supervisor)"
@@ -2181,7 +2430,7 @@ usage() {
   ICOL=16
   section "Watch pairing" cyan
   item "url" "server URL + key" "server URL + key to enter on the watch"
-  item "ip" "this phone's WiFi IP" "this phone's WiFi IP"
+  item "ip" "this phone's WiFi IP" "this phone's WiFi IP — or save one: wearsic ip 192.168.x.y"
   item "api-key [new]" "show or set the API key" "show or set the API key"
   item "sideload [tag]" "install the watch app" "install the release app on the watch (adb)"
   item "pair [URL]" "send to the watch (adb)" "send address + key to the watch (adb, no typing)"
@@ -2222,7 +2471,7 @@ case "${1:-}" in
       health)  shift 2; cmd_health "$@" ;;
       ready)   shift 2; cmd_ready "$@" ;;
       url)     cmd_url ;;
-      ip)      cmd_ip ;;
+      ip)      shift 2; cmd_ip "$@" ;;
       version) cmd_version ;;
       update)  shift 2; cmd_update "$@" ;;
       sideload) shift 2; cmd_sideload "$@" ;;
@@ -2248,7 +2497,7 @@ case "${1:-}" in
   health)    shift; cmd_health "$@" ;;
   ready)     shift; cmd_ready "$@" ;;
   url)       cmd_url ;;
-  ip)        cmd_ip ;;
+  ip)        shift; cmd_ip "$@" ;;
   version)   cmd_version ;;
   update)    shift; cmd_update "$@" ;;
   sideload)  shift; cmd_sideload "$@" ;;

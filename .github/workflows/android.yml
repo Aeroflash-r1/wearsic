@@ -132,6 +132,14 @@ jobs:
       - name: Run CLI shell tests (download progress race)
         run: bash wearsic-server/tests/download-bar-test.sh
 
+      # The UI kit draws terminal-width panels: a wrap path once padded rows
+      # with colour codes counted as visible width (ragged right borders)
+      # before, and word wrap ate content indents. Offline: renders every
+      # screen at five widths with colour forced on, strips the codes back
+      # off, then measures every line and panel border.
+      - name: Run CLI shell tests (screen layout at phone widths)
+        run: bash wearsic-server/tests/ui-layout-test.sh
+
       # Real pixels at Galaxy Watch7 dimensions. `ScreenGalleryTest` renders
       # every reachable screen through Robolectric and writes PNGs into
       # app/src/test/screenshots/. Roborazzi only WRITES pixels in record

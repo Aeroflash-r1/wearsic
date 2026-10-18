@@ -32,8 +32,9 @@ RUN="$DEST/run-termux.sh"
 LOG="$DEST/wearsic-server.log"
 ENV_FILE="$DEST/.env"
 
-# Blueprint for every command: soft-green brand, coloured symbols, two-space
-# indent, no per-line tag noise. Colour follows the usual conventions:
+# Blueprint for every command: gradient wordmark, rounded full-width panels,
+# a soft multi-tone palette, two-space indent. Colour follows the usual
+# conventions:
 #
 #   WEARSIC_COLOR=auto|always|never    auto = colour only on a real terminal
 #   NO_COLOR=1                         force plain output
@@ -50,34 +51,210 @@ color_on() {
 }
 if color_on; then
   C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
+  # Soft 256-colour tones that read well on dark Termux themes:
+  #   green = brand/commands · cyan = addresses · lavender = engine
+  #   mint ok · amber warn · rose error (states also tint panel borders)
   C_BRAND=$'\033[38;5;114m'; C_ACC=$'\033[38;5;157m'
-  C_OK=$'\033[1;32m'; C_WARN=$'\033[1;33m'; C_ERR=$'\033[1;31m'
+  C_CYA=$'\033[38;5;117m';   C_LAV=$'\033[38;5;146m'
+  C_OK=$'\033[38;5;120m';    C_WARN=$'\033[38;5;179m'; C_ERR=$'\033[38;5;203m'
+  C_BD=$'\033[2m\033[38;5;114m'
+  C_BD_CYA=$'\033[2m\033[38;5;117m'
+  C_BD_OK=$'\033[2m\033[38;5;120m'
+  C_BD_WARN=$'\033[2m\033[38;5;179m'
+  C_BD_ERR=$'\033[2m\033[38;5;203m'
+  C_TLT=$'\033[1m\033[38;5;157m'
+  C_TLT_CYA=$'\033[1m\033[38;5;117m'
+  C_TLT_OK=$'\033[1m\033[38;5;120m'
+  C_TLT_WARN=$'\033[1m\033[38;5;179m'
+  C_TLT_ERR=$'\033[1m\033[38;5;203m'
 else
-  C_RESET=""; C_BOLD=""; C_DIM=""; C_BRAND=""; C_ACC=""; C_OK=""; C_WARN=""; C_ERR=""
+  C_RESET=""; C_BOLD=""; C_DIM=""; C_BRAND=""; C_ACC=""; C_CYA=""; C_LAV=""
+  C_OK=""; C_WARN=""; C_ERR=""; C_BD=""; C_BD_CYA=""; C_BD_OK=""; C_BD_WARN=""
+  C_BD_ERR=""; C_TLT=""; C_TLT_CYA=""; C_TLT_OK=""; C_TLT_WARN=""; C_TLT_ERR=""
 fi
 
 # Animations need a terminal, independent of colour.
 TTY_OUT=0; [ -t 1 ] && TTY_OUT=1
 
-say()  { printf '  %s\n' "$*"; }
-note() { say "$*"; }
-dim()  { printf '  %s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
-ok()   { printf '  %s✓%s %s\n' "$C_OK" "$C_RESET" "$*"; }
-warn() { printf '  %s!%s %s\n' "$C_WARN" "$C_RESET" "$*"; }
-err()  { printf '  %s✗%s %s\n' "$C_ERR" "$C_RESET" "$*" >&2; }
+# Real terminal width. Bash only sets COLUMNS in interactive shells, so a
+# `wearsic` run from a boot script could see it UNSET and assume 80 on a
+# 45-column phone. Fall back to the terminal itself, then to 80.
+term_cols() {
+  local c="${COLUMNS:-}"
+  case "$c" in
+    ''|*[!0-9]*) if command -v tput >/dev/null 2>&1; then c="$(tput cols 2>/dev/null || true)"; fi ;;
+  esac
+  case "$c" in
+    ''|*[!0-9]*) if command -v stty >/dev/null 2>&1; then c="$(stty size 2>/dev/null | awk '{print $2}')"; fi ;;
+  esac
+  case "$c" in ''|*[!0-9]*) c=80 ;; esac
+  [ "$c" -lt 34 ] && c=34
+  printf '%s' "$c"
+}
+COLS="$(term_cols)"
+# Wrap long messages only when a human is looking: on a terminal, or when a
+# width was handed to us. Piped/scripted output stays one line per message.
+case "${COLUMNS:-}" in ''|*[!0-9]*) WRAP_OK="$TTY_OUT" ;; *) WRAP_OK=1 ;; esac
+export COLUMNS="$COLS"
+
+ESC="$(printf '\033')"
+
+# Visible width of a string: colour codes stripped, then the CHARACTER count
+# (bash counts multibyte characters, so ✓ ● … each take one column).
+vis() { printf '%s' "$1" | sed "s/${ESC}\\[[0-9;]*m//g"; }
+
+# Gradient wordmark, white → soft green (ASCII input: byte-safe anywhere).
+grad_word() {
+  local t="$1" l=${#1} i=0 ch sh out=""
+  if ! color_on; then printf '%s' "$t"; return 0; fi
+  while [ "$i" -lt "$l" ]; do
+    ch="${t:$i:1}"
+    if   [ "$l" -le 1 ]; then sh=114
+    else sh=$(( 255 - (255 - 114) * i / (l - 1) )); fi
+    if   [ "$sh" -gt 205 ]; then sh=255
+    elif [ "$sh" -gt 170 ]; then sh=158
+    elif [ "$sh" -gt 142 ]; then sh=120
+    else sh=114; fi
+    out="${out}${ESC}[38;5;${sh}m${ch}"
+    i=$((i + 1))
+  done
+  printf '%s%s' "$out" "$C_RESET"
+}
+
+# Middle-elide: "downloading wears…v1.9.3.zip" — keeps both ends readable.
+elide_mid() { # string maxwidth
+  local s="$1" w="$2" keep h t
+  if [ "$w" -lt 6 ] || [ ${#s} -le "$w" ]; then printf '%s' "$s"; return 0; fi
+  keep=$(( w - 1 )); h=$(( keep * 2 / 3 )); t=$(( keep - h ))
+  printf '%s…%s' "${s:0:h}" "${s:$(( ${#s} - t ))}"
+}
+
+# Head-elide paths: "…/wearsic-server".
+elide_head() { # string maxwidth
+  local s="$1" w="$2"
+  if [ "$w" -lt 3 ] || [ ${#s} -le "$w" ]; then printf '%s' "$s"; return 0; fi
+  printf '…%s' "${s:$(( ${#s} - (w - 1) ))}"
+}
+
+# Word-wrap PLAIN text to $2 columns; words longer than a whole line (paths,
+# URLs) are hard-split. Every chunk is printed with $3 indent + $4 colour.
+wrap_text() { # text width indent colour
+  local text="$1" w="$2" ind="${3:-}" pre="${4:-}" line="" word rest
+  [ "$w" -lt 4 ] && w=4
+  for word in $text; do
+    if [ ${#word} -gt "$w" ]; then
+      if [ -n "$line" ]; then printf '%s%s%s%s\n' "$ind" "$pre" "$line" "$C_RESET"; line=""; fi
+      rest="$word"
+      while [ ${#rest} -gt "$w" ]; do
+        printf '%s%s%s%s\n' "$ind" "$pre" "${rest:0:w}" "$C_RESET"
+        rest="${rest:w}"
+      done
+      line="$rest"
+      continue
+    fi
+    if [ -z "$line" ]; then line="$word"
+    elif [ $(( ${#line} + 1 + ${#word} )) -le "$w" ]; then line="$line $word"
+    else printf '%s%s%s%s\n' "$ind" "$pre" "$line" "$C_RESET"; line="$word"; fi
+  done
+  [ -n "$line" ] && printf '%s%s%s%s\n' "$ind" "$pre" "$line" "$C_RESET"
+  return 0
+}
+
+# printf to stdout, or to stderr when the first argument is 1 (err/die).
+msg_out() {
+  local dest="$1"; shift
+  if [ "$dest" = "1" ]; then printf "$@" >&2; else printf "$@"; fi
+}
+
+# One indented message line. On a terminal (or with a width handed in) long
+# text wraps under itself instead of hitting the terminal edge raw.
+msg_line() { # symbol text base-colour to-stderr
+  local sym="$1" text="$2" lc="${3:-}" toerr="${4:-}" sp plain w first=1 line
+  if [ "${WRAP_OK:-0}" != "1" ]; then
+    msg_out "$toerr" '  %s%s%s%s\n' "$sym" "$lc" "$text" "$C_RESET"
+    return 0
+  fi
+  sp="$(vis "$sym")"; plain="$(vis "$text")"
+  w=$(( COLS - 4 - ${#sp} ))
+  [ "$w" -lt 10 ] && w=10
+  if [ ${#plain} -le "$w" ]; then
+    msg_out "$toerr" '  %s%s%s%s\n' "$sym" "$lc" "$text" "$C_RESET"
+    return 0
+  fi
+  while IFS= read -r line; do
+    if [ "$first" = "1" ]; then
+      msg_out "$toerr" '  %s%s%s%s\n' "$sym" "$lc" "$line" "$C_RESET"
+      first=0
+    else
+      msg_out "$toerr" '  %*s%s%s%s\n' $(( ${#sp} )) '' "$lc" "$line" "$C_RESET"
+    fi
+  done < <(wrap_text "$plain" "$w" "" "")
+  return 0
+}
+
+say()  { msg_line "" "$*" "" 0; }
+note() { msg_line "" "$*" "" 0; }
+dim()  { msg_line "" "$*" "$C_DIM" 0; }
+ok()   { msg_line "${C_OK}✓${C_RESET} " "$*" "" 0; }
+warn() { msg_line "${C_WARN}!${C_RESET} " "$*" "" 0; }
+err()  { msg_line "${C_ERR}✗${C_RESET} " "$*" "" 1; }
 die()  { err "$*"; exit 1; }
 
 # One identity line per command, e.g. "  ♪ wearsic · status".
 brand() {
-  printf '\n  %s♪ wearsic%s' "$C_BRAND" "$C_RESET"
+  printf '\n  %s♪%s %s' "$C_ACC" "$C_RESET" "$(grad_word 'wearsic')"
   if [ -n "${1:-}" ]; then printf ' %s· %s%s' "$C_DIM" "$1" "$C_RESET"; fi
   printf '\n\n'
 }
 
-section() { printf '\n  %s%s%s\n' "$C_BOLD" "$1" "$C_RESET"; }
+# Section header: a coloured side-bar glyph + bold name. $2 = green|cyan|
+# lavender|amber — each group of commands gets its own hue.
+section() {
+  local hue="$C_ACC"
+  case "${2:-}" in
+    cyan) hue="$C_CYA" ;;
+    lavender) hue="$C_LAV" ;;
+    amber) hue="$C_WARN" ;;
+  esac
+  printf '\n  %s▍%s %s%s%s\n' "$hue" "$C_RESET" "$C_BOLD" "$1" "$C_RESET"
+}
 
-# Aligned key/value row for the status-style commands.
-kv() { printf '    %s%-17s%s %s\n' "$C_DIM" "$1" "$C_RESET" "$2"; }
+# Command list row (home / help). Wide terminals get the long description in
+# a second column; narrow ones get the short one inline, or — when even that
+# does not fit — the description drops to its own wrapped line. Never wraps
+# mid-word (except a single word longer than the line).
+item() { # cmd short-desc [long-desc]
+  local cmd="$1" nd="$2" wd="${3:-$2}" desc clen room
+  if [ "$COLS" -ge 78 ]; then
+    desc="$wd"; clen=16; room=$(( COLS - 23 ))
+    if [ ${#desc} -le "$room" ]; then
+      printf '    %s%-16s%s %s%s%s\n' "$C_ACC" "$cmd" "$C_RESET" "$C_DIM" "$desc" "$C_RESET"
+      return 0
+    fi
+  else
+    desc="$nd"; clen="${ICOL:-9}"; [ ${#cmd} -gt "$clen" ] && clen=${#cmd}
+    room=$(( COLS - 7 - clen ))
+    if [ ${#desc} -le "$room" ]; then
+      printf '    %s%-*s%s  %s%s%s\n' "$C_ACC" "$clen" "$cmd" "$C_RESET" "$C_DIM" "$desc" "$C_RESET"
+      return 0
+    fi
+  fi
+  printf '    %s%s%s\n' "$C_ACC" "$cmd" "$C_RESET"
+  wrap_text "$desc" $(( COLS - 8 )) '      ' "$C_DIM"
+}
+
+# Aligned key/value row for status-style output. $3 = label column (default
+# 12); values that do not fit wrap under their column instead of sticking out.
+kv() {
+  local lw="${3:-12}" plain vp
+  plain="$(vis "$2")"
+  if [ "${WRAP_OK:-0}" != "1" ] || [ $(( 4 + lw + 2 + ${#plain} )) -le "$COLS" ]; then
+    printf '    %s%-*s%s  %s\n' "$C_DIM" "$lw" "$1" "$C_RESET" "$2"
+    return 0
+  fi
+  vp=$(( 4 + lw + 2 ))
+  wrap_text "$plain" $(( COLS - vp - 1 )) "$(printf '%*s' "$vp" '')" ""
+}
 
 # Coloured state dot: dot ok | warn | err | off
 dot() {
@@ -114,18 +291,41 @@ human_bytes() { # $1 = bytes -> 12.4M
   else printf '%sB' "$b"; fi
 }
 
-draw_bar() { # $1 label $2 pct $3 have-bytes $4 total-bytes
-  local label="$1" pct="$2" have="$3" total="$4" width=18 i bar=""
-  local filled=$(( pct * width / 100 ))
-  i=0; while [ "$i" -lt "$filled" ]; do bar="${bar}█"; i=$((i + 1)); done
-  while [ "$i" -lt "$width" ]; do bar="${bar}░"; i=$((i + 1)); done
-  printf '\r  %s%s%s %s%s%s %3d%%  %s%s / %s%s' \
-    "$C_ACC" "$label" "$C_RESET" "$C_BRAND" "$bar" "$C_RESET" "$pct" \
-    "$C_DIM" "$(human_bytes "$have")" "$(human_bytes "$total")" "$C_RESET"
+# Live progress bar. The fill runs through a green gradient; the label is NOT
+# printed here (download_bar prints it once above) so the redrawn line fits
+# any width. $1 = label (kept for call compatibility), $2 = pct, $3/$4 bytes.
+draw_bar() {
+  local pct="$2" have="$3" total="$4" i=0 bw sh fill bar="" track="" use_col=0 sizes=""
+  local cols="${COLUMNS:-80}"
+  case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
+  bw=$(( cols - 26 ))
+  [ "$bw" -gt 24 ] && bw=24
+  [ "$bw" -lt 10 ] && bw=10
+  fill=$(( pct * bw / 100 ))
+  command -v color_on >/dev/null 2>&1 && color_on && use_col=1
+  while [ "$i" -lt "$bw" ]; do
+    if [ "$i" -lt "$fill" ]; then
+      if [ "$use_col" = "1" ]; then
+        if [ "$bw" -gt 1 ]; then sh=$(( 114 + i * 43 / (bw - 1) )); else sh=157; fi
+        bar="${bar}${ESC}[38;5;${sh}m█"
+      else
+        bar="${bar}█"
+      fi
+    else
+      track="${track}░"
+    fi
+    i=$((i + 1))
+  done
+  sizes="$(human_bytes "$have") / $(human_bytes "$total")"
+  printf '\r  %s%s%s%s  %s%3d%%%s  %s%-15s%s' \
+    "$bar" "$C_RESET" "$C_DIM" "$track" "$C_ACC" "$pct" "$C_RESET" \
+    "$C_DIM" "$sizes" "$C_RESET"
 }
 
-# Download with a live █ progress bar (MB + %). Spinner fallback when the
-# server hides Content-Length. Returns curl's exit status.
+# Download with a live progress bar. The label is printed once, dim, above
+# the redrawn bar; the bar itself is sized to the terminal, so narrow phones
+# never see a wrapped mess. Spinner fallback when the server hides
+# Content-Length (or output is piped). Returns curl's exit status.
 download_bar() { # $1 = url, $2 = out file, $3 = label
   local url="$1" out="$2" label="${3:-download}"
   local total=""
@@ -140,6 +340,7 @@ download_bar() { # $1 = url, $2 = out file, $3 = label
     fi
     return 0
   fi
+  printf '  %s%s%s\n' "$C_DIM" "$label" "$C_RESET"
   curl -fL --retry 3 --retry-delay 2 -o "$out" "$url" >/dev/null 2>&1 &
   local pid=$! have=0 pct=0
   while kill -0 "$pid" 2>/dev/null; do
@@ -160,7 +361,7 @@ download_bar() { # $1 = url, $2 = out file, $3 = label
   done
   wait "$pid" || { printf '\n'; return 1; }
   draw_bar "$label" 100 "$total" "$total"
-  printf '\n'
+  printf '\n  %s✓%s %sdownloaded (%s)%s\n' "$C_OK" "$C_RESET" "$C_DIM" "$(human_bytes "$total")" "$C_RESET"
   return 0
 }
 
@@ -181,72 +382,78 @@ replace_file() { # $1 = source file, $2 = destination file
   return 1
 }
 
-# Rounded box for pairing cards and verdicts. Buffered: content decides
-# the width, so long funnel URLs can never stick out past the border.
-# Titles must be plain text (no color codes — width is measured from them).
-BOX_TITLE=""; BOX_BODY=""; BOX_N=0
-box_begin() { BOX_TITLE="$1"; BOX_BODY=""; BOX_N=0; }
+# Rounded panel. The width is decided by the TERMINAL, not the content, so
+# all panels line up with each other: full width minus 4 (capped at 76 so
+# wide desktops still get a tidy column). Long content wraps (word-aware;
+# paths and URLs hard-split) INSIDE the border. The optional second argument
+# (ok|warn|err|cyan) tints border + title for verdict panels.
+BOX_TITLE=""; BOX_BODY=""; BOX_N=0; BOX_HUE=""
+box_begin() { BOX_TITLE="$1"; BOX_HUE="${2:-acc}"; BOX_BODY=""; BOX_N=0; }
 box_line() {
   if [ "$BOX_N" = "0" ]; then BOX_BODY="$1"; else BOX_BODY="$BOX_BODY
 $1"; fi
   BOX_N=$((BOX_N + 1))
 }
+# Dim label + value row inside a panel. $3 = label column (default 10).
+box_kv() { box_line "   ${C_DIM}$(printf '%-*s' "${3:-10}" "$1")${C_RESET}  $2"; }
+# Panel capability row: "✓ label" or "✗ label" ($2 = true|false).
+box_check() {
+  if [ "${2:-false}" = "true" ]; then
+    box_line "   ${C_OK}✓${C_RESET} $1"
+  else
+    box_line "   ${C_ERR}✗${C_RESET} ${C_WARN}$1${C_RESET}"
+  fi
+}
 box_end() {
-  local w line plain spaces i esc
-  esc="$(printf '\033')"   # literal ESC — BSD/busybox sed lack \x1b escapes
-  # Never wider than the terminal: a 60-char funnel URL on a narrow
-  # split-screen must wrap inside the box, not blow its borders out.
-  local cols="${COLUMNS:-80}"
-  case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
-  [ "$cols" -lt 30 ] && cols=30
-  local maxw=$(( cols - 6 ))
-  w=${#BOX_TITLE}
-  local wrapped=""
+  local tw pw bd tlt i n p line ind
+  tw=$(( COLS - 4 )); [ "$tw" -gt 76 ] && tw=76
+  pw=$(( tw - 4 ))
+  case "$BOX_HUE" in
+    ok)   bd="$C_BD_OK";   tlt="$C_TLT_OK" ;;
+    warn) bd="$C_BD_WARN"; tlt="$C_TLT_WARN" ;;
+    err)  bd="$C_BD_ERR";  tlt="$C_TLT_ERR" ;;
+    cyan) bd="$C_BD_CYA";  tlt="$C_TLT_CYA" ;;
+    *)    bd="$C_BD";      tlt="$C_TLT" ;;
+  esac
+  p="$(vis "$BOX_TITLE")"
+  n=$(( tw - ${#p} - 5 )); [ "$n" -lt 2 ] && n=2
+  printf '  %s╭─%s %s%s%s ' "$bd" "$C_RESET" "$tlt" "$BOX_TITLE" "$C_RESET"
+  i=0; while [ "$i" -lt "$n" ]; do printf '%s─%s' "$bd" "$C_RESET"; i=$((i + 1)); done
+  printf '%s╮%s\n' "$bd" "$C_RESET"
   while IFS= read -r line; do
-    plain="$(printf '%s' "$line" | sed "s/${esc}\\[[0-9;]*m//g")"
-    if [ "${#plain}" -le "$maxw" ]; then
-      wrapped="$wrapped
-$line"
+    p="$(vis "$line")"
+    if [ ${#p} -le "$pw" ]; then
+      printf '  %s│%s %s' "$bd" "$C_RESET" "$line"
+      i=$(( pw - ${#p} ))
+      while [ "$i" -gt 0 ]; do printf ' '; i=$((i - 1)); done
+      printf ' %s│%s\n' "$bd" "$C_RESET"
     else
-      # Hard-wrap long lines (URLs) at the box edge, keeping color codes
-      # out of the width math by wrapping the PLAIN text. Color on
-      # wrapped URL lines is dropped — readability over decoration.
-      local rest="$plain" chunk
-      while [ -n "$rest" ]; do
-        chunk="$(printf '%s' "$rest" | cut -c1-"$maxw")"
-        rest="$(printf '%s' "$rest" | cut -c$((maxw + 1))-)"
-        wrapped="$wrapped
-$chunk"
-      done
+      # Keep the content's own left margin: word wrapping splits on spaces,
+      # so the leading indent is re-applied to every segment here.
+      ind="$(printf '%s' "$p" | sed -n 's/^\( *\).*$/\1/p')"
+      while IFS= read -r seg; do
+        p="$(vis "$seg")"
+        printf '  %s│%s %s' "$bd" "$C_RESET" "$seg"
+        i=$(( pw - ${#p} ))
+        while [ "$i" -gt 0 ]; do printf ' '; i=$((i - 1)); done
+        printf ' %s│%s\n' "$bd" "$C_RESET"
+      done < <(wrap_text "${p#"$ind"}" $(( pw - ${#ind} )) "$ind" "")
     fi
   done <<EOF
 $BOX_BODY
 EOF
-  BOX_BODY="$(printf '%s' "$wrapped" | tail -n +2)"
-  w=${#BOX_TITLE}
-  while IFS= read -r line; do
-    plain="$(printf '%s' "$line" | sed "s/${esc}\\[[0-9;]*m//g")"
-    [ "${#plain}" -gt "$w" ] && w=${#plain}
-  done <<EOF
-$BOX_BODY
-EOF
-  [ "$w" -lt 20 ] && w=20
-  printf '%s╭─ %s ' "$C_BRAND" "$BOX_TITLE"
-  i=$(( ${#BOX_TITLE} + 4 )); while [ "$i" -lt "$((w + 4))" ]; do printf '─'; i=$((i + 1)); done
+  printf '  %s╰' "$bd"
+  i=$(( tw - 2 )); while [ "$i" -gt 0 ]; do printf '─'; i=$((i - 1)); done
+  printf '╯%s\n' "$C_RESET"
+  BOX_TITLE=""; BOX_BODY=""; BOX_N=0; BOX_HUE=""
+}
+
+# Dim horizontal rule, terminal width (sets long guidance apart).
+hr() {
+  local i=$(( COLS - 4 ))
+  printf '\n  %s' "$C_DIM"
+  while [ "$i" -gt 0 ]; do printf '─'; i=$((i - 1)); done
   printf '%s\n' "$C_RESET"
-  while IFS= read -r line; do
-    plain="$(printf '%s' "$line" | sed "s/${esc}\\[[0-9;]*m//g")"
-    spaces=$(( w - ${#plain} ))
-    printf '%s│%s %s' "$C_BRAND" "$C_RESET" "$line"
-    i=0; while [ "$i" -lt "$spaces" ]; do printf ' '; i=$((i + 1)); done
-    printf ' %s│%s\n' "$C_BRAND" "$C_RESET"
-  done <<EOF
-$BOX_BODY
-EOF
-  printf '%s╰' "$C_BRAND"
-  i=0; while [ "$i" -lt "$((w + 3))" ]; do printf '─'; i=$((i + 1)); done
-  printf '%s\n' "$C_RESET"
-  BOX_TITLE=""; BOX_BODY=""; BOX_N=0
 }
 
 # ── small data helpers for the status-style commands ────────────────────────
@@ -357,25 +564,37 @@ proc_uptime() { # $1 = pid
   human_duration "$secs"
 }
 
-# Doctor row: state ok|warn|err|off, name, detail.
+# Doctor row: state ok|warn|err|off, name, detail. The detail column starts
+# at column 23; long detail text wraps with continuation lines aligned under
+# it and a single overlong token (a path) is head-elided, never split.
 doctor_row() {
-  local sym
-  case "$2" in
-    ok)   sym="$C_OK✓$C_RESET" ;;
-    warn) sym="$C_WARN!$C_RESET" ;;
-    err)  sym="$C_ERR✗$C_RESET" ;;
-    *)    sym="$C_DIM—$C_RESET" ;;
+  local sym name="$2" text="$3" plain w pfx first=1 seg
+  case "$1" in
+    ok)   sym="${C_OK}✓${C_RESET}" ;;
+    warn) sym="${C_WARN}!${C_RESET}" ;;
+    err)  sym="${C_ERR}✗${C_RESET}" ;;
+    *)    sym="${C_DIM}—${C_RESET}" ;;
   esac
-  printf '    %s %s%-18s%s %s\n' "$sym" "$C_DIM" "$1" "$C_RESET" "$3"
-}
-
-# Capability line for `wearsic ready`: checkline <label> <true|false>
-checkline() {
-  if [ "${2:-false}" = "true" ]; then
-    printf '  %s✓%s %s\n' "$C_OK" "$C_RESET" "$1"
-  else
-    printf '  %s✗%s %s%s%s\n' "$C_ERR" "$C_RESET" "$C_WARN" "$1" "$C_RESET"
+  printf '    %s %s%-16s%s ' "$sym" "$C_DIM" "$name" "$C_RESET"
+  w=$(( COLS - 23 ))
+  [ "$w" -lt 10 ] && w=10
+  pfx="$(printf '%23s' '')"
+  plain="$(vis "$text")"
+  if [ "${WRAP_OK:-0}" != "1" ] || [ ${#plain} -le "$w" ]; then
+    printf '%s\n' "$text"
+    return 0
   fi
+  case "$plain" in
+    *" "*)
+      while IFS= read -r seg; do
+        if [ "$first" = "1" ]; then printf '%s\n' "$seg"; first=0
+        else printf '%s%s\n' "$pfx" "$seg"; fi
+      done < <(wrap_text "$plain" "$w" "" "")
+      ;;
+    *)
+      printf '%s\n' "$(elide_head "$plain" "$w")"
+      ;;
+  esac
 }
 
 installed() { [ -f "$RUN" ] || die "Not installed (no $DEST). Run the one-line installer first."; }
@@ -563,23 +782,24 @@ server_url() {
 
 show_pairing() {
   local key url; key="$(api_key)"; url="$(server_url)"
-  box_begin "connect your watch"
+  box_begin "connect your watch" cyan
   box_line ""
   if [ -n "$url" ]; then
-    box_line "   ${C_ACC}server${C_RESET}   $url"
+    box_line "   ${C_CYA}${url}${C_RESET}"
   else
-    box_line "   ${C_ACC}server${C_RESET}   ${C_WARN}couldn't detect this phone's IP${C_RESET}"
-    box_line "   ${C_DIM}is Wi-Fi on? then rerun: wearsic url${C_RESET}"
-    box_line "   ${C_DIM}watch elsewhere? get a public URL: wearsic funnel${C_RESET}"
+    box_line "   ${C_WARN}couldn't detect this phone's IP${C_RESET}"
+    box_line "   ${C_DIM}is Wi-Fi on? then rerun:${C_RESET} ${C_ACC}wearsic url${C_RESET}"
+    box_line "   ${C_DIM}watch elsewhere? public URL:${C_RESET} ${C_ACC}wearsic funnel${C_RESET}"
   fi
+  box_line ""
   if [ -n "$key" ]; then
-    box_line "   ${C_ACC}key${C_RESET}      $key"
+    box_kv "key" "${C_ACC}${key}${C_RESET}" 4
   else
-    box_line "   ${C_ACC}key${C_RESET}      ${C_WARN}not set - anyone on your network can use this server${C_RESET}"
+    box_kv "key" "${C_WARN}not set — anyone on your network can use this server${C_RESET}" 4
   fi
   box_line ""
   box_line "   ${C_DIM}Wearsic app > Settings > enter both values.${C_RESET}"
-  box_line "   ${C_DIM}or send them over adb: wearsic pair${C_RESET}"
+  box_line "   ${C_DIM}or send them over adb:${C_RESET} ${C_ACC}wearsic pair${C_RESET}"
   box_end
 }
 
@@ -665,7 +885,7 @@ cmd_status() {
   brand "status"
   local P; P="$(port)"
   if health_ok; then
-    local body ver ex pid up ok_n fail_n rate
+    local body ver ex pid up ok_n fail_n rate meta url
     http_get "http://127.0.0.1:$P/health"
     body="$HTTP_BODY"
     ver="$(jstr "$body" version)"
@@ -673,26 +893,45 @@ cmd_status() {
     ok_n="$(jnum "$ex" successCount)"; fail_n="$(jnum "$ex" failureCount)"; rate="$(jnum "$ex" failureRatePercent)"
     pid="$(server_pids | head -1)"
     up=""; [ -n "$pid" ] && up="$(proc_uptime "$pid")"
-    printf '  %s %s%s%s%s\n' "$(dot ok)" "$C_OK" "running and healthy" "$C_RESET" "${up:+ · up $up}"
-    local url; url="$(server_url)"
-    kv "address" "${url:-${C_DIM}not detected — see: wearsic url${C_RESET}}"
-    kv "version" "v${ver:-unknown}"
-    [ -n "$pid" ] && kv "process" "pid $pid"
-    [ -n "$ok_n" ] && kv "engine" "${ok_n} ok · ${fail_n:-0} failed (${rate:-0}%)"
-    if [ -n "$(api_key)" ]; then
-      kv "watch key" "set"
+    meta=""; [ -n "$up" ] && meta="up $up"
+    [ -n "$pid" ] && meta="${meta:+$meta · }pid $pid"
+    url="$(server_url)"
+    box_begin "status" ok
+    box_line ""
+    box_line "   $(dot ok) ${C_OK}running and healthy${C_RESET}"
+    [ -n "$meta" ] && box_line "     ${C_DIM}${meta}${C_RESET}"
+    box_line ""
+    if [ -n "$url" ]; then
+      box_line "   ${C_CYA}${url}${C_RESET}"
     else
-      kv "watch key" "${C_WARN}not set — the server is open on your network${C_RESET}"
+      box_line "   ${C_WARN}address not detected — wearsic url${C_RESET}"
     fi
-    printf '\n'
+    box_line ""
+    box_kv "version" "v${ver:-unknown}"
+    [ -n "$ok_n" ] && box_kv "engine" "${ok_n} ok · ${fail_n:-0} failed (${rate:-0}%)"
+    if [ -n "$(api_key)" ]; then
+      box_kv "watch key" "set"
+    else
+      box_kv "watch key" "${C_WARN}not set — the server is open on your network${C_RESET}"
+    fi
+    box_end
     return 0
   elif supervisor_running; then
-    printf '  %s %snot healthy%s\n' "$(dot warn)" "$C_WARN" "$C_RESET"
-    dim "the supervisor is up but the server is not answering — check: wearsic logs"
+    box_begin "status" warn
+    box_line ""
+    box_line "   $(dot warn) ${C_WARN}not healthy${C_RESET}"
+    box_line "   ${C_DIM}the supervisor is up but the server is not answering${C_RESET}"
+    box_line ""
+    box_kv "check" "wearsic logs"
+    box_end
     return 4
   else
-    printf '  %s %sstopped%s\n' "$(dot err)" "$C_ERR" "$C_RESET"
-    dim "start it: wearsic start"
+    box_begin "status" err
+    box_line ""
+    box_line "   $(dot err) ${C_ERR}stopped${C_RESET}"
+    box_line ""
+    box_kv "start it" "wearsic start"
+    box_end
     return 3
   fi
 }
@@ -718,7 +957,7 @@ cmd_health() {
   brand "health"
   http_get "http://127.0.0.1:$P/health"
   [ "$HTTP_CODE" = "200" ] || die "No response — is the server running? (wearsic start)"
-  local body st ver st_state
+  local body st ver st_state ex ok_n fail_n rate cons last_err extra upd stg
   body="$HTTP_BODY"
   st="$(jstr "$body" status)"
   ver="$(jstr "$body" version)"
@@ -727,37 +966,41 @@ cmd_health() {
   else
     st_state="$(dot warn) ${C_WARN}${st:-unknown}${C_RESET}"
   fi
-  printf '  %s   %shttp://127.0.0.1:%s · %sms%s\n' "$st_state" "$C_DIM" "$P" "${HTTP_MS:-?}" "$C_RESET"
-  kv "version" "v${ver:-unknown} · $(jstr "$body" serverName)"
-  if [ "$(jbool "$body" transcoderAvailable)" = "true" ]; then
-    kv "transcoder" "available"
-  else
-    kv "transcoder" "${C_WARN}unavailable — pkg install ffmpeg${C_RESET}"
-  fi
-  local ex ok_n fail_n rate cons last_err extra
   ex="$(jobj "$body" extraction)"
   ok_n="$(jnum "$ex" successCount)"; fail_n="$(jnum "$ex" failureCount)"
   rate="$(jnum "$ex" failureRatePercent)"; cons="$(jnum "$ex" consecutiveFailures)"
   last_err="$(jstr "$ex" lastError)"
   extra=""
   if [ -n "$cons" ] && [ "$cons" -gt 0 ] 2>/dev/null; then extra=" · $cons in a row"; fi
-  kv "extraction" "${ok_n:-0} ok · ${fail_n:-0} failed (${rate:-0}%)$extra"
-  [ -n "$last_err" ] && kv "last error" "$last_err"
-  local upd; upd="$(jobj "$body" update)"
-  kv "update" "$(jstr "$upd" status)"
-  local stg; stg="$(jstr "$upd" stagedVersion)"
-  [ -n "$stg" ] && kv "staged" "v$stg — applies on next restart"
-  kv "crashes" "$(jnum "$body" crashCount)"
-  kv "cdn refusals" "$(jnum "$body" upstreamRefusals)"
-  printf '\n'
+  upd="$(jobj "$body" update)"
+  stg="$(jstr "$upd" stagedVersion)"
+  box_begin "health"
+  box_line ""
+  box_line "   ${st_state}   ${C_DIM}127.0.0.1:${P} · ${HTTP_MS:-?}ms${C_RESET}"
+  box_line ""
+  box_kv "version" "v${ver:-unknown} · $(jstr "$body" serverName)"
+  if [ "$(jbool "$body" transcoderAvailable)" = "true" ]; then
+    box_kv "transcoder" "available"
+  else
+    box_kv "transcoder" "${C_WARN}unavailable — pkg install ffmpeg${C_RESET}"
+  fi
+  box_kv "extraction" "${ok_n:-0} ok · ${fail_n:-0} failed (${rate:-0}%)$extra"
+  [ -n "$last_err" ] && box_kv "last error" "$last_err"
+  box_kv "update" "$(jstr "$upd" status)"
+  [ -n "$stg" ] && box_kv "staged" "v$stg — applies on next restart"
+  box_kv "crashes" "$(jnum "$body" crashCount)"
+  box_kv "cdn" "$(jnum "$body" upstreamRefusals) refused"
+  box_end
 }
 
-cmd_url() { installed; show_pairing; }
+cmd_url() { installed; brand "url"; show_pairing; }
 
 cmd_ip() {
+  brand "ip"
   local ip; ip="$(lan_ip)"
   if [ -n "$ip" ]; then
-    say "WiFi IP: ${C_ACC}$ip${C_RESET}"
+    kv "WiFi IP" "${C_CYA}${ip}${C_RESET}" 10
+    printf '\n'
     return 0
   fi
   die "no local IP found — is Wi-Fi on? (Termux: pkg install iproute2, or check Android Settings → Wi-Fi)"
@@ -774,7 +1017,7 @@ cmd_api_key() {
   else
     local k; k="$(api_key)"
     [ -n "$k" ] || die "No API key set — the server is OPEN on your network. Set one: wearsic api-key <your-key>"
-    kv "api key" "${C_ACC}$k${C_RESET}"
+    kv "api key" "${C_ACC}$k${C_RESET}" 10
     dim "enter it on the watch: Settings → API Key"
     dim "change it: wearsic api-key <new-key>"
   fi
@@ -999,7 +1242,7 @@ cmd_funnel() {
 
   if [ "$rc" -ne 0 ] && [ "$rc" -ne 130 ]; then
     say ""
-    say "─────────────────────────────────────────────"
+    hr
     say "Funnel did not start (tailscale exit $rc)."
     say "Most likely causes:"
     if grep -qi 'certificate\|https\|tls\|cert' "$out"; then
@@ -1082,7 +1325,7 @@ resolve_pre_zip_url() {
 
 cmd_update() {
   installed
-  local repo work zip sha expected actual stage src
+  local repo work zip sha expected actual stage src ztag=""
 
   # `wearsic update [--pre]`. GitHub's releases/latest endpoint EXCLUDES
   # pre-releases, so a beta build (e.g. v1.6.1) is invisible to a plain
@@ -1111,7 +1354,7 @@ cmd_update() {
   # EXIT (not RETURN) so the temp dir is cleaned even when die() exits.
   trap 'rm -rf "${UPDATE_WORK:-}"' EXIT
 
-  say "Checking for the latest Wearsic server release…"
+  say "${C_DIM}checking the latest release…${C_RESET}"
   local zip_url sha_url json tag
   zip_url="${WEARSIC_ZIP_URL:-}"
   sha_url="${WEARSIC_SHA_URL:-}"
@@ -1136,10 +1379,13 @@ cmd_update() {
     [ -n "$zip_url" ] || die "could not find a release for ${repo} — check your internet connection"
   fi
   [ -n "$sha_url" ] || sha_url="${zip_url}.sha256"
+  ztag="$(printf '%s' "$zip_url" | sed -nE 's/.*wearsic-server-termux-([^/]+)\.zip$/\1/p' | head -1)"
+  [ -n "$ztag" ] && say "newest release: ${C_ACC}${ztag}${C_RESET}"
 
   zip="$work/update.zip"
   sha="$work/update.zip.sha256"
-  download_bar "$zip_url" "$zip" "downloading $(basename "$zip_url")" \
+  local zname; zname="$(basename "$zip_url")"
+  download_bar "$zip_url" "$zip" "downloading $(elide_mid "$zname" $(( COLS - 14 )))" \
     || die "download failed — nothing was changed"
   [ -s "$zip" ] || die "downloaded file is empty — nothing was changed"
 
@@ -1254,6 +1500,14 @@ cmd_update() {
   if health_ok && [ "$(file_hash "$DEST/bin/wearsic-server")" = "$new_hash" ]; then
     rm -rf "$DEST/bin.prev" "$DEST/lib.prev"
     ok "update complete — server healthy on port $(port)"
+    printf '\n'
+    box_begin "✓ updated" ok
+    box_line ""
+    [ -n "$ztag" ] && box_line "   ${C_DIM}release ${ztag}${C_RESET}"
+    box_line "   ${C_DIM}the watch keeps playing — the engine switches${C_RESET}"
+    box_line "   ${C_DIM}on its next request.${C_RESET}"
+    box_line ""
+    box_end
     [ "$was_running" = "1" ] || { cmd_stop >/dev/null 2>&1; say "Server stopped again (it was not running before the update)."; }
     return 0
   fi
@@ -1605,9 +1859,9 @@ cmd_version() {
   http_get "http://127.0.0.1:$(port)/health" 3
   ver="$(jstr "$HTTP_BODY" version)"
   if [ -n "$ver" ]; then
-    kv "engine" "v$ver ${C_DIM}(running)${C_RESET}"
+    kv "engine" "v$ver ${C_DIM}· running${C_RESET}" 10
   else
-    kv "engine" "${C_WARN}not running — wearsic start${C_RESET}"
+    kv "engine" "${C_WARN}not running — wearsic start${C_RESET}" 10
   fi
   printf '\n'
 }
@@ -1630,27 +1884,26 @@ cmd_ready() {
   rd="$(jbool "$body" ready)"; db="$(jbool "$body" database)"
   ex="$(jbool "$body" extractor)"; tc="$(jbool "$body" transcoder)"
   ver="$(jstr "$body" engineVersion)"
-  local rd_state rd_color rd_text
-  if [ "$rd" = "true" ]; then rd_state=ok; rd_color="$C_OK"; rd_text="ready"
-  else rd_state=warn; rd_color="$C_WARN"; rd_text="not ready"; fi
-  printf '  %s %s%s%s   %shttp://127.0.0.1:%s · %sms%s\n' \
-    "$(dot "$rd_state")" "$rd_color" "$rd_text" "$C_RESET" "$C_DIM" "$P" "${HTTP_MS:-?}" "$C_RESET"
-  checkline "database" "$db"
-  checkline "music engine" "$ex"
-  checkline "audio conversion" "$tc"
-  printf '\n'
   if [ "$rd" = "true" ]; then
-    box_begin "ready - the watch can play music"
+    box_begin "✓ ready" ok
     box_line ""
-    box_line "   engine v${ver:-unknown}"
+    box_line "   $(dot ok) ${C_OK}the watch can play music${C_RESET}"
+    box_line "     ${C_DIM}127.0.0.1:${P} · ${HTTP_MS:-?}ms · engine v${ver:-unknown}${C_RESET}"
+    box_line ""
+    box_check "database" "$db"
+    box_check "music engine" "$ex"
+    box_check "audio conversion" "$tc"
+    box_line ""
     box_end
     return 0
   fi
-  box_begin "NOT READY - playback will fail"
+  box_begin "✗ not ready" err
   box_line ""
-  [ "$db" != "true" ] && box_line "   database: check free storage and permissions"
-  [ "$ex" != "true" ] && box_line "   music engine: run wearsic update, then check the logs"
-  [ "$tc" != "true" ] && box_line "   audio conversion: pkg install ffmpeg"
+  box_line "   $(dot err) ${C_ERR}playback will fail${C_RESET}"
+  box_line ""
+  [ "$db" != "true" ] && box_line "   ${C_WARN}database${C_RESET}  check free storage and permissions"
+  [ "$ex" != "true" ] && box_line "   ${C_WARN}music engine${C_RESET}  run wearsic update, then check the logs"
+  [ "$tc" != "true" ] && box_line "   ${C_WARN}audio conversion${C_RESET}  pkg install ffmpeg"
   box_end
   return 1
 }
@@ -1662,7 +1915,7 @@ cmd_doctor() {
   local fails=0 warns=0
   brand "doctor"
 
-  section "System"
+  section "System" cyan
   if command -v java >/dev/null 2>&1; then
     doctor_row "java" ok "$(java -version 2>&1 | head -1 | tr -d '"' | cut -c1-52)"
   else
@@ -1693,7 +1946,7 @@ cmd_doctor() {
     doctor_row "termux" off "not Termux"; warns=$((warns+1))
   fi
 
-  section "Server"
+  section "Server" green
   if [ -x "$DEST/bin/wearsic-server" ] && [ -f "$DEST/run-termux.sh" ]; then
     doctor_row "install" ok "$DEST"
   else
@@ -1757,7 +2010,7 @@ cmd_doctor() {
     doctor_row "database" off "not created yet (appears on first start)"; warns=$((warns+1))
   fi
 
-  section "Engine"
+  section "Engine" lavender
   if [ -n "$health" ]; then
     local ver consec canary ex_obj ok_n fail_n rate
     ver="$(jstr "$health" version)"
@@ -1811,7 +2064,7 @@ cmd_doctor() {
     doctor_row "engine" off "server not responding — wearsic start"
   fi
 
-  section "Network"
+  section "Network" amber
   # Detect Tailscale/Funnel BEFORE the wifi verdict: a phone with no local
   # IP is fine when a public URL reaches the watch, and calling that "NOT
   # READY" sent users chasing a non-problem. (Same rule as the tailscale
@@ -1862,20 +2115,20 @@ cmd_doctor() {
 
   printf '\n'
   if [ "$fails" -eq 0 ]; then
-    box_begin "READY"
+    box_begin "✓ ready" ok
     box_line ""
     if [ "$warns" -gt 0 ]; then
-      box_line "   $warns warning(s) - nothing blocking playback."
+      box_line "   ${C_WARN}!${C_RESET} $warns warning(s) — nothing blocking playback."
     else
       box_line "   everything looks good."
     fi
     box_line ""
-    box_line "   wearsic url     connect the watch"
-    box_line "   wearsic logs    when playback misbehaves"
+    box_line "   ${C_ACC}wearsic url${C_RESET}  ${C_DIM}connect the watch${C_RESET}"
+    box_line "   ${C_ACC}wearsic logs${C_RESET}  ${C_DIM}playback issues${C_RESET}"
     box_end
     return 0
   fi
-  box_begin "NOT READY"
+  box_begin "✗ not ready" err
   box_line ""
   box_line "   $fails problem(s), $warns warning(s)."
   box_line "   Fix the problem rows above, then run wearsic doctor again."
@@ -1884,30 +2137,75 @@ cmd_doctor() {
 }
 
 usage() {
-  printf '\n  %s♪ wearsic%s %s· music for your watch%s\n\n' "$C_BRAND" "$C_RESET" "$C_DIM" "$C_RESET"
-  printf '  %sServer%s\n' "$C_BOLD" "$C_RESET"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "start" "$C_RESET" "start the server (self-healing supervisor)"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "stop" "$C_RESET" "stop the server"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "restart" "$C_RESET" "stop, then start"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "status" "$C_RESET" "is it running? healthy? which version? (exit 0/3/4)"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "logs" "$C_RESET" "follow live logs (Ctrl+C to exit)"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "doctor" "$C_RESET" "full checkup — exit 0 means READY"
-  printf '\n  %sWatch pairing%s\n' "$C_BOLD" "$C_RESET"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "url" "$C_RESET" "server URL + key to enter on the watch"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "ip" "$C_RESET" "this phone's WiFi IP"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "api-key [new]" "$C_RESET" "show or set the API key"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "sideload [tag]" "$C_RESET" "install the release app on the watch (adb)"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "pair [URL]" "$C_RESET" "send address + key to the watch (adb, no typing)"
-  printf '\n  %sEngine%s\n' "$C_BOLD" "$C_RESET"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "update [--pre]" "$C_RESET" "update to the latest release (verified, rollback-safe)"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "version" "$C_RESET" "installed + running engine version"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "health [--json]" "$C_RESET" "server snapshot (--json for scripts)"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "ready [--json]" "$C_RESET" "can the server play music right now?"
-  printf '\n  %sRemote access%s\n' "$C_BOLD" "$C_RESET"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "funnel" "$C_RESET" "public HTTPS URL (Tailscale Funnel)"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "public" "$C_RESET" "public URL recipes (Tailscale / Cloudflare)"
-  printf '    %s%-20s%s %s\n' "$C_BRAND" "cookies [cookie]" "$C_RESET" "set the YouTube cookie (fixes bot-wall errors)"
-  printf '\n  %sThe classic nested form works too: wearsic server start%s\n\n' "$C_DIM" "$C_RESET"
+  # Live status for the header: ONE fast local probe (1s cap) so bare
+  # `wearsic` answers "is it running?" immediately — never a slow wait.
+  local st="not installed" ver="" ICOL=9
+  if [ -f "$RUN" ]; then
+    http_get "http://127.0.0.1:$(port)/health" 1
+    if [ "$HTTP_CODE" = "200" ]; then
+      st="running"; ver="$(jstr "$HTTP_BODY" version)"
+    else
+      st="not running"
+    fi
+  fi
+  local l r lp rp gap
+  l="$(printf '%s♪%s %s %s· music for your watch%s' \
+        "$C_ACC" "$C_RESET" "$(grad_word 'wearsic')" "$C_DIM" "$C_RESET")"
+  if [ "$st" = "running" ]; then
+    r="$(printf 'v%s %s·%s %s●%s %srunning%s' \
+          "${ver:-?}" "$C_DIM" "$C_RESET" "$C_OK" "$C_RESET" "$C_OK" "$C_RESET")"
+  elif [ "$st" = "not running" ]; then
+    r="$(printf '%s●%s %snot running%s' "$C_DIM" "$C_RESET" "$C_DIM" "$C_RESET")"
+  else
+    r="$(printf '%s●%s %snot installed%s' "$C_DIM" "$C_RESET" "$C_DIM" "$C_RESET")"
+  fi
+  lp="$(vis "$l")"; rp="$(vis "$r")"
+  printf '\n'
+  if [ $(( COLS - 4 - ${#lp} - ${#rp} )) -ge 3 ]; then
+    gap=$(( COLS - 4 - ${#lp} - ${#rp} ))
+    printf '  %s' "$l"
+    while [ "$gap" -gt 0 ]; do printf ' '; gap=$((gap - 1)); done
+    printf '%s\n' "$r"
+  else
+    printf '  %s\n  %s\n' "$l" "$r"
+  fi
+
+  section "Server" green
+  item "start" "start the server" "start the server (self-healing supervisor)"
+  item "stop" "stop the server" "stop the server"
+  item "restart" "stop, then start" "stop, then start"
+  item "status" "running? healthy? version?" "is it running? healthy? which version? (exit 0/3/4)"
+  item "logs" "follow live logs" "follow live logs (Ctrl+C to exit)"
+  item "doctor" "full checkup (exit 0 = ready)" "full checkup — exit 0 means READY"
+
+  ICOL=16
+  section "Watch pairing" cyan
+  item "url" "server URL + key" "server URL + key to enter on the watch"
+  item "ip" "this phone's WiFi IP" "this phone's WiFi IP"
+  item "api-key [new]" "show or set the API key" "show or set the API key"
+  item "sideload [tag]" "install the watch app" "install the release app on the watch (adb)"
+  item "pair [URL]" "send to the watch (adb)" "send address + key to the watch (adb, no typing)"
+
+  ICOL=16
+  section "Engine" lavender
+  item "update [--pre]" "verified, rollback-safe" "update to the latest release (verified, rollback-safe)"
+  item "version" "engine version" "installed + running engine version"
+  item "health [--json]" "server snapshot" "server snapshot (--json for scripts)"
+  item "ready [--json]" "can it play right now?" "can the server play music right now?"
+
+  ICOL=16
+  section "Remote access" amber
+  item "funnel" "Tailscale Funnel URL" "public HTTPS URL (Tailscale Funnel)"
+  item "public" "other public recipes" "public URL recipes (Tailscale / Cloudflare)"
+  item "cookies [cookie]" "fix bot-wall errors" "set the YouTube cookie (fixes bot-wall errors)"
+
+  printf '\n'
+  if [ "$COLS" -ge 52 ]; then
+    printf '  %s%s%s\n' "$C_DIM" "the classic form works too: wearsic server start" "$C_RESET"
+  else
+    printf '  %s%s%s\n' "$C_DIM" "classic: wearsic server start" "$C_RESET"
+  fi
+  printf '\n'
 }
 
 # --- dispatch ---------------------------------------------------------

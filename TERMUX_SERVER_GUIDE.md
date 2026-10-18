@@ -559,11 +559,17 @@ You get a readable snapshot (status, version, extraction success, crashes):
 ~~~text
   ♪ wearsic · health
 
-  ● ok   http://127.0.0.1:8080 · 12ms
-    version           v1.9.2 · Wearsic Engine
-    transcoder         available
-    extraction         75 ok · 1 failed (1%)
-    crashes            0
+  ╭─ health ───────────────────────────────╮
+  │                                        │
+  │    ● ok   127.0.0.1:8080 · 4ms         │
+  │                                        │
+  │    version     v1.9.2 · Wearsic Engine │
+  │    transcoder  available               │
+  │    extraction  75 ok · 1 failed (1%)   │
+  │    update      idle                    │
+  │    crashes     0                       │
+  │    cdn         0 refused               │
+  ╰────────────────────────────────────────╯
 ~~~
 
 Scripts that want the raw JSON use `--json`:

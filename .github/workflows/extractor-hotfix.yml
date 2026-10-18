@@ -20,7 +20,8 @@
 # Nothing is pushed when a gate fails. `dry_run` proves the whole pipeline
 # without shipping. `emergency_override` ships despite a failing live smoke
 # (e.g. a CI datacenter-IP bot-wall) — recorded as a warning, use it
-# deliberately.
+# deliberately. Better: set the optional YT_COOKIE repo secret (same cookie
+# string as `wearsic cookies`) and the smoke runs cookie-backed.
 #
 # mode=branch releases the current tip as-is — that is how a fix to OUR OWN
 # extractor (YoutubeGateway's lean path), or any other code fix, ships with
@@ -145,11 +146,20 @@ jobs:
         id: smoke
         if: steps.precheck.outputs.skip != 'true'
         continue-on-error: ${{ inputs.emergency_override }}
+        env:
+          # Optional: with this secret set (same string as `wearsic cookies`)
+          # the smoke runs cookie-backed past CI datacenter-IP bot-walls.
+          WEARSIC_YOUTUBE_COOKIE: ${{ secrets.YT_COOKIE }}
         run: WEARSIC_LIVE_SMOKE=1 ./gradlew :wearsic-server:test --tests "com.wearsic.server.LiveExtractorSmokeTest" --stacktrace
 
       - name: Record an overridden smoke failure
         if: steps.precheck.outputs.skip != 'true' && steps.smoke.outcome == 'failure' && inputs.emergency_override
         run: echo "::warning::Live smoke FAILED but emergency_override is set — shipping anyway. Investigate the smoke log."
+
+      - name: Explain a failing live smoke (bot-wall vs broken pin)
+        if: failure() && steps.smoke.outcome == 'failure' && !inputs.emergency_override
+        run: |
+          echo "::error::Live smoke failed. If the log above shows SignInConfirmNotBotException or an HTTP-403-style YouTube error, this is a CI datacenter-IP bot-wall, not a broken pin: re-run with emergency_override ticked, or set the optional YT_COOKIE repo secret (same string as 'wearsic cookies')."
 
       - name: Commit + tag + push
         id: ship

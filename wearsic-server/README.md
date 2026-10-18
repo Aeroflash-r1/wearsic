@@ -38,7 +38,7 @@ chmod +x wearsic-server-v*.sh
 wearsic start                      # one command from here on
 ```
 
-`wearsic start|stop|restart|status|logs|health|ready|url|ip|api-key|sideload|update|version|doctor|funnel|public|cookies`
+`wearsic start|stop|restart|status|logs|health|ready|url|ip|api-key|sideload|pair|update|version|doctor|funnel|public|cookies`
 manages everything (`wearsic help` lists all commands). Re-running `install`
 upgrades in place and keeps `wearsic.db` + `.env`.
 `./wearsic-server-v*.sh uninstall` removes it.

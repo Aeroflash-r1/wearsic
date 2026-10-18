@@ -113,6 +113,19 @@ Then put the new key into the Wearsic watch app.
 
 Choose **one** method.
 
+**Shortcut — skip the typing:** if you have adb set up (see *Install watch
+app* below), `wearsic pair` sends the address + key straight to the watch:
+
+~~~bash
+wearsic pair            # Option A: this phone's Wi-Fi address
+wearsic pair --funnel   # Option B: the public Funnel address
+~~~
+
+It first checks that the address actually answers (so a stopped server or a
+dead Funnel is caught on the phone, not on the watch), then delivers it over
+adb. Open Wearsic on the watch and it applies automatically — the watch app
+(v1.9.2+) confirms with a toast.
+
 ## Option A — Same Wi-Fi
 
 Get the phone's Wi-Fi IP:
@@ -229,6 +242,7 @@ A YouTube cookie is an authentication credential. Treat it like a password.
 | Phone Wi-Fi IP | wearsic ip |
 | Update Wearsic | wearsic update |
 | Install watch app | wearsic sideload |
+| Send URL + key to watch (adb) | wearsic pair |
 | Diagnose problems | wearsic doctor |
 | Set YouTube cookie | wearsic cookies [str] |
 | Start public Funnel | wearsic funnel |
@@ -379,7 +393,7 @@ Then retry:
 wearsic funnel
 ~~~
 
-## Watch says "Host not found"
+## Watch says "Host not found" or "can't connect"
 
 Check:
 
@@ -388,9 +402,20 @@ wearsic status
 wearsic url
 ~~~
 
+The number one cause is a stopped server: `wearsic status` says it plainly,
+and a Funnel URL routes nowhere while the engine is down.
+
 For Wi-Fi mode, make sure the phone and watch can reach each other.
 
 For Funnel mode, use the HTTPS URL printed by wearsic funnel.
+
+To rule out a typo or a dead address in one step, deliver the values over
+adb instead of typing them on the watch:
+
+~~~bash
+wearsic pair            # LAN address
+wearsic pair --funnel   # public Funnel address
+~~~
 
 ## No Wi-Fi address found
 

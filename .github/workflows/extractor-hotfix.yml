@@ -150,7 +150,22 @@ jobs:
           # Optional: with this secret set (same string as `wearsic cookies`)
           # the smoke runs cookie-backed past CI datacenter-IP bot-walls.
           WEARSIC_YOUTUBE_COOKIE: ${{ secrets.YT_COOKIE }}
-        run: WEARSIC_LIVE_SMOKE=1 ./gradlew :wearsic-server:test --tests "com.wearsic.server.LiveExtractorSmokeTest" --stacktrace
+        run: |
+          # Report whether the secret actually reached this step — presence,
+          # size and shape only, never the value. A missing/blank secret would
+          # otherwise surface only as a bare bot-wall smoke failure.
+          if [ -z "${WEARSIC_YOUTUBE_COOKIE+x}" ]; then
+            echo "::warning::YT_COOKIE secret: NOT SET for this run — add it under Settings → Secrets and variables → Actions."
+          elif [ -z "${WEARSIC_YOUTUBE_COOKIE//[[:space:]]/}" ]; then
+            echo "::warning::YT_COOKIE secret: set but blank/whitespace-only — re-add it as the raw Cookie header value."
+          else
+            SIZE=${#WEARSIC_YOUTUBE_COOKIE}
+            case "$WEARSIC_YOUTUBE_COOKIE" in
+              *=*) echo "YT_COOKIE secret: received, $SIZE chars, looks like a Cookie header";;
+              *)   echo "::warning::YT_COOKIE secret: received, $SIZE chars, but contains no '=' — is it really the Cookie header value?";;
+            esac
+          fi
+          WEARSIC_LIVE_SMOKE=1 ./gradlew :wearsic-server:test --tests "com.wearsic.server.LiveExtractorSmokeTest" --stacktrace
 
       - name: Record an overridden smoke failure
         if: steps.precheck.outputs.skip != 'true' && steps.smoke.outcome == 'failure' && inputs.emergency_override

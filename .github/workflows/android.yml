@@ -99,7 +99,7 @@ jobs:
       # class, before the full suite below: whichever scope reproduces the
       # wedge tells us what cross-test state is involved, and the WEDGE-PROBE
       # markers (streamed from the test) name the exact suspension point.
-      - name: Unit tests (wedge forensics: flaky test in isolation)
+      - name: Unit tests (wedge forensics, flaky test in isolation)
         timeout-minutes: 15
         continue-on-error: true
         run: |

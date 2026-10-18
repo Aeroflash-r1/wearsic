@@ -274,6 +274,33 @@ Then cut a release:
 git tag v1.9.2 && git push origin v1.9.2
 ```
 
+### One-button extractor hotfix (when YouTube breaks)
+
+When YouTube changes break extraction, the fix is almost always a newer
+NewPipeExtractor — and shipping it is one button press:
+
+**Actions → Extractor Hotfix → Run workflow**
+
+The workflow resolves the newest NewPipeExtractor release (or takes an
+exact ref: a version, a commit, or `master-SNAPSHOT` when upstream merged a
+fix but hasn't released it), rewrites the pin + versions, then gates
+everything on the offline bump-script test, the full server unit suite, and
+a **live dual-path smoke** against real YouTube (extracts "Me at the zoo"
+through both NewPipeExtractor and the production resolver; real bytes pulled
+from each) — nothing is pushed when a gate fails. Only then does it commit,
+tag `vX.Y.Z`, push, and dispatch Android CI on the tag: CI publishes the
+release (zip + `.sha256`) and every installed server auto-installs it within
+minutes — no phone interaction.
+
+| Dispatch input | When to use it |
+|---|---|
+| `dry_run` | prove the whole pipeline + see the diff, ship nothing |
+| `emergency_override` | ship even if the live smoke fails (CI datacenter IPs can hit YouTube bot-walls) |
+| `mode=branch` | the fix is our own resolver code — release the current tip as-is |
+
+> **First-time setup:** GitHub only shows the Run-workflow button for files
+> that exist on `main` — this workflow must be cherry-picked/merged there
+> before the button appears.
 
 ## 📄 License
 

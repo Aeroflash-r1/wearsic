@@ -285,6 +285,10 @@ Check the installed/running version:
 wearsic version
 ~~~
 
+You rarely need to update for a YouTube fix: when extraction breaks, the
+server detects it and installs the fixed release by itself (see §7,
+"YouTube changed something").
+
 ---
 
 # 7. 🩺 Troubleshooting — start here
@@ -477,6 +481,14 @@ Then check:
 ~~~bash
 wearsic health
 ~~~
+
+## YouTube changed something — nothing plays
+
+Not yours to fix. The server notices by itself (`canaryHealthy` turns
+false), then downloads, verifies and installs a fixed engine release as
+soon as one exists — usually within 10 minutes, no command needed. If no
+fix has shipped yet, it keeps retrying every 10 minutes and plays again by
+itself the moment one does.
 
 ---
 

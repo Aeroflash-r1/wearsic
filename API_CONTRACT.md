@@ -64,7 +64,9 @@ reports the **live** ffmpeg status for Opus/WebM→AAC transcoding — the
 server re-probes a missing binary while running (30 s throttle,
 single-flight), so installing ffmpeg later flips it true without a restart;
 `extraction`/`canaryHealthy`/`update` expose the self-healing engine
-state (see `wearsic-server/README.md`).
+state: a broken extraction is detected via the canary and healed by
+auto-installing a checksum-verified newer release when one exists (see
+`wearsic-server/README.md`).
 
 ### 1-b. Readiness
 

@@ -137,6 +137,35 @@ Auto-update is designed to be safe to run unattended on a phone:
 - **Audit trail**: applies and rollbacks are appended to
   `wearsic-state/update-history.log`.
 
+### Cutting an extractor hotfix (maintainers)
+
+The recurring emergency — YouTube breaks extraction and upstream
+NewPipeExtractor ships (or merges) a fix — is one button press:
+**Actions → Extractor Hotfix → Run workflow**
+(`.github/workflows/extractor-hotfix.yml`; the file must exist on `main`
+for GitHub to show the button). One press:
+
+1. resolves the target ref — the newest upstream release, or an exact one
+   typed in (`v0.26.5`, a commit, `master-SNAPSHOT` when the fix is merged
+   upstream but unreleased),
+2. bumps the pin + version through `scripts/bump-version.py` — an
+   all-or-nothing rewrite of the pin, `ServerVersion`, the app
+   `versionCode`/`versionName` and this repo's living doc samples
+   (`wearsic-server/SETUP.md` included), keyed to exact patterns,
+3. runs the gates — `scripts/tests/bump-version-test.sh` (offline test of
+   the bump), the full server unit suite, and `LiveExtractorSmokeTest`
+   (`WEARSIC_LIVE_SMOKE=1`): a live dual-path smoke that extracts "Me at
+   the zoo" through both NewPipeExtractor and the production resolver and
+   pulls real bytes from each CDN URL. Nothing is pushed when a gate
+   fails,
+4. commits, tags `vX.Y.Z`, pushes and dispatches Android CI on the tag,
+   which publishes the release every installed server auto-installs.
+
+`dry_run` proves the whole pipeline without shipping anything;
+`emergency_override` ships despite a failing live smoke (CI datacenter IPs
+can hit YouTube bot-walls) — recorded as a warning; `mode=branch` releases
+the current tip as-is for fixes to our own resolver code.
+
 Also authenticated when `WEARSIC_API_KEY` is set:
 
 - `GET /api/search/albums?q=` — album/playlist search (maximum 10 results;

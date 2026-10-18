@@ -7,9 +7,10 @@ Release ZIPs (`wearsic-server-termux-<version>.zip`) are built from this
 source by CI — there is no prebuilt jar in the repo.
 
 Dependency versions follow the Termux deployment that the original
-compiled server used (Ktor 2.3.12, NewPipeExtractor v0.26.4,
-kotlinx-coroutines 1.7.1, sqlite-jdbc 3.46.1.0), and the output shape
-(`bin/` + `lib/`) is what `run-termux.sh` expects.
+compiled server used (Ktor 2.3.12, kotlinx-coroutines 1.7.1,
+sqlite-jdbc 3.46.1.0); NewPipeExtractor (v0.26.4) is the one deliberately
+movable pin — bumped by the Extractor Hotfix workflow (see below). The
+output shape (`bin/` + `lib/`) is what `run-termux.sh` expects.
 
 ## Build
 
@@ -82,6 +83,37 @@ persist the YouTube cookie) is additive.
 - **Everything else** (routes, response shapes, `TrackDto` fields, the
   `videoId == "*"` deletes-whole-playlist behavior) matches
   `API_CONTRACT.md`, so the Android client needs zero changes.
+
+## Extractor hotfix (when YouTube breaks)
+
+YouTube changing its player is the one failure that recurs; the fix is
+almost always a newer NewPipeExtractor — and that is one button press:
+**Actions → Extractor Hotfix → Run workflow**
+(`.github/workflows/extractor-hotfix.yml`; it must exist on `main` for
+GitHub to show the button).
+
+In order, that press:
+
+1. resolves the target ref — the newest upstream release, or an exact one
+   typed in (`v0.26.5`, a commit, `master-SNAPSHOT` when upstream merged
+   the fix but hasn't released it),
+2. rewrites the pin + versions through `scripts/bump-version.py` — an
+   all-or-nothing, pattern-exact rewrite of the server pin, `ServerVersion`,
+   the app `versionCode`/`versionName`, this file's pin token and the other
+   living doc samples,
+3. runs the gates: `scripts/tests/bump-version-test.sh`, the full server
+   unit suite, and the live dual-path smoke (`LiveExtractorSmokeTest`,
+   `WEARSIC_LIVE_SMOKE=1`) that extracts "Me at the zoo" through both
+   NewPipeExtractor and the production resolver and pulls real bytes from
+   each CDN URL — nothing is pushed when any gate fails,
+4. commits, tags `vX.Y.Z`, pushes and dispatches Android CI on the tag,
+   which publishes the release every installed server auto-installs.
+
+`dry_run` runs every gate and pushes nothing; `emergency_override` ships
+despite a failing live smoke (CI datacenter IPs can hit YouTube bot-walls);
+`mode=branch` releases the current tip as-is for fixes to our own resolver
+code. The offline suite `scripts/tests/bump-version-test.sh` runs on every
+push in CI, so pattern drift fails a normal build — not a release.
 
 ## Verified
 

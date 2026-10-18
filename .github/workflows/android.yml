@@ -92,6 +92,27 @@ jobs:
       - name: Warm Robolectric runtime (bounded)
         run: timeout 600 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.GreetingScreenshotTest' --stacktrace
 
+      # CI forensics for the 2026-10-18 wedge: the full suite hangs ~50% of
+      # runs inside ExampleRobolectricTest.testMusicRepositoryIntegration with
+      # every thread idle, so a jstack dump cannot show what the suspended
+      # coroutine awaits. Run the suspect test alone, then with its whole
+      # class, before the full suite below: whichever scope reproduces the
+      # wedge tells us what cross-test state is involved, and the WEDGE-PROBE
+      # markers (streamed from the test) name the exact suspension point.
+      - name: Unit tests (wedge forensics: flaky test in isolation)
+        timeout-minutes: 15
+        continue-on-error: true
+        run: |
+          set +e
+          status=0
+          echo "::group::flaky test alone (fresh JVM)"
+          timeout 240 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.ExampleRobolectricTest.testMusicRepositoryIntegration' --stacktrace || status=1
+          echo "::endgroup::"
+          echo "::group::flaky test with its whole class"
+          timeout 240 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
+          echo "::endgroup::"
+          exit $status
+
       # Fast-fail instead of the 45-minute job backstop if the suite ever
       # wedges again; per-test start logging (app/build.gradle.kts) names the
       # hanging test in the log, and a 2.5-minute watchdog dumps the stuck JVM

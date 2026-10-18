@@ -163,7 +163,12 @@ tasks.withType<Test>().configureEach {
   // CI diagnostic: log every test as it starts, so if the suite ever wedges,
   // the CI log names the test it died in instead of going silent until the
   // job backstop kills the run (see the 2026-10-18 Robolectric wedge).
-  testLogging { events("started") }
+  testLogging {
+    events("started", "failed")
+    // Stream each test's stdout as well: the WEDGE-PROBE markers in
+    // ExampleRobolectricTest name the exact step a hanging run died in.
+    showStandardStreams = true
+  }
   val arch = System.getProperty("os.arch") ?: ""
   val os = System.getProperty("os.name")?.lowercase() ?: ""
   if (os.contains("linux") && arch == "aarch64") {

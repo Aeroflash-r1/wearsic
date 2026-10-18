@@ -26,8 +26,10 @@ import com.wearsic.app.network.model.ConnectionTestState
 import com.wearsic.app.ui.navigation.WearsicApp
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -44,6 +46,20 @@ import org.robolectric.annotation.Config
 class ExampleRobolectricTest {
 
     @get:Rule val composeTestRule = createComposeRule()
+
+    /**
+     * CI forensics for the 2026-10-18 wedge: the suite used to hang ~50% of
+     * runs inside [testMusicRepositoryIntegration] with every thread idle, so
+     * a jstack dump could not show what the runBlocking coroutine awaited.
+     * These markers are streamed to the CI log (testLogging.showStandardStreams
+     * in app/build.gradle.kts) and name the exact suspension point a wedged
+     * run dies in; the 30s bounds turn the former 10-minute stall into a
+     * fast, self-diagnosing failure.
+     */
+    private fun probe(message: String) {
+        println("WEDGE-PROBE [${Thread.currentThread().name}] $message")
+        System.out.flush()
+    }
 
     @Test
     fun testAppNameResource() {
@@ -85,23 +101,44 @@ class ExampleRobolectricTest {
 
     @Test
     fun testMusicRepositoryIntegration() = runBlocking {
+        probe("start main=${Dispatchers.Main}")
+
         val context = ApplicationProvider.getApplicationContext<Context>()
         val mockClient = WearsicMockApiClient(context)
         val repository = WearsicMusicRepository(context, httpApiClient = mockClient)
+        probe("repository constructed")
 
         // Pre-configure server URL as the real production app would require
-        repository.saveServerUrl("https://wearsic.server.internal")
+        withTimeout(30_000) { repository.saveServerUrl("https://wearsic.server.internal") }
+        probe("saveServerUrl done")
 
-        val connectionState = repository.testServerConnection("https://wearsic.server.internal")
-        assertTrue(connectionState is ConnectionTestState.Success)
+        withTimeout(30_000) {
+            val connectionState = repository.testServerConnection("https://wearsic.server.internal")
+            probe("testServerConnection(valid) returned")
+            assertTrue(connectionState is ConnectionTestState.Success)
+        }
+        probe("testServerConnection(valid) done")
 
-        val invalidState = repository.testServerConnection("invalid-url")
-        assertTrue(invalidState is ConnectionTestState.Error)
+        withTimeout(30_000) {
+            val invalidState = repository.testServerConnection("invalid-url")
+            probe("testServerConnection(invalid) returned")
+            assertTrue(invalidState is ConnectionTestState.Error)
+        }
+        probe("testServerConnection(invalid) done")
 
-        val searchResult = repository.searchMusic("Crowded House")
-        assertTrue(searchResult.isSuccess)
-        val tracks = searchResult.getOrThrow()
-        assertTrue(tracks.isNotEmpty())
+        withTimeout(30_000) {
+            probe("getServerUrl (first dataStore read) begin")
+            repository.getServerUrl()
+            probe("getServerUrl (first dataStore read) done")
+
+            probe("searchMusic begin")
+            val searchResult = repository.searchMusic("Crowded House")
+            probe("searchMusic returned")
+            assertTrue(searchResult.isSuccess)
+            val tracks = searchResult.getOrThrow()
+            assertTrue(tracks.isNotEmpty())
+        }
+        probe("TEST COMPLETE")
     }
 
     @Test

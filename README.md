@@ -75,7 +75,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 ```json
 {
   "status": "ok",
-  "version": "1.9.3",
+  "version": "1.9.4",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -142,6 +142,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 - **Stream reads never hard-cut a song**: the stream data source clears OkHttp's whole-call timeout and uses a 60 s per-read inactivity timeout, so songs longer than the base client's 45 s call budget no longer stop mid-playback.
 - **Sockets survive WiFi roaming**: the stream client retries a dropped connection (a watch hopping access points no longer surfaces as a buffering error) with a 15 s write timeout so a real outage still fails fast.
 - **64 KB proxy chunks**: the server copies CDN bytes to the watch in 64 KB blocks instead of Ktor's 8 KB default. `AudioProxyThroughputTest` measures this end-to-end over the real CIO stack (origin server → real module route → HTTP client). On this machine, 6 MB took **657 ms at 8 KB vs 523 ms at 64 KB (1.26x)**; 256 KB was faster still (382 ms). Honest caveat: those figures are loopback throughput, and real AAC streams at ~128 kbps need ~0.016 MB/s — roughly 500x less than the proxy already pushes at 8 KB. So this reduces CPU and syscalls, but it is **not** what makes playback feel fast; the buffering thresholds above are. 64 KB is kept as the balance point.
+- **Playback warm-up is free over Funnel**: on tap (and for the next queue item) the watch calls `/api/prewarm/{id}` to resolve the track without transferring audio. The previous probe was a `Range: bytes=0-0` request to `/api/stream`; because the proxy runs tiny windows to their natural EOF, that relayed a full song through Tailscale before the client hang-up was noticed — competing with the real playback request and discarding the connection. `/api/prewarm` answers with a few bytes of JSON and leaves the TCP+TLS connection in the pool for the stream, and it is rate-limited separately from playback.
 - **Funnel round trips carry less on the wire**: the server gzips JSON responses (content-type allow-list, ≥512 bytes — audio is never recompressed, so streams stay byte-exact for Range/seek). Search results, album/playlist listings and favorites shrink ~3–5×, which matters on a relayed Tailscale Funnel link where every byte is metered through a DERP.
 - **Repeat screens paint from disk, not from the relay**: the watch keeps a 16 MB HTTP response cache for exactly the read endpoints that repeat — search, suggestions, related and album/playlist listings (5 min freshness), favorites/playlists (5 s). Re-opening a screen over Funnel becomes a disk hit instead of a 50–150 ms round trip. After a favorite/playlist edit the app flips to `Cache-Control: no-cache` for 6 s, longer than the 5 s freshness window, so a user can never be shown their own pre-mutation list. Audio is never cached (no cache headers on `/api/stream`).
 
@@ -247,7 +248,7 @@ verified exactly like a stable one.
 To install a specific build without touching the CLI at all:
 
 ```bash
-WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.9.3/wearsic-server-termux-v1.9.3.zip \
+WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.9.4/wearsic-server-termux-v1.9.4.zip \
   wearsic update
 ```
 
@@ -271,7 +272,7 @@ keytool -genkeypair -v -keystore my-upload-key.jks -alias upload \
 Then cut a release:
 
 ```bash
-git tag v1.9.3 && git push origin v1.9.3
+git tag v1.9.4 && git push origin v1.9.4
 ```
 
 ### One-button extractor hotfix (when YouTube breaks)

@@ -48,7 +48,7 @@ X-Wearsic-Key: <key>
 ```json
 {
   "status": "ok",
-  "version": "1.9.3",
+  "version": "1.9.4",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -82,7 +82,7 @@ auto-installing a checksum-verified newer release when one exists (see
   "database": true,
   "extractor": true,
   "transcoder": true,
-  "engineVersion": "1.9.3"
+  "engineVersion": "1.9.4"
 }
 ```
 
@@ -115,6 +115,24 @@ not "not ready".
   `{server}/api/stream/{videoId}`.
 - Thumbnails are typically `w60-h60`; the client rewrites ytimg/googleusercontent
   URLs to `w544-h544` for crisp artwork.
+
+### 2-b. Prewarm (resolve ahead of playback)
+
+- **GET** `/api/prewarm/{videoId}`
+- **Response** `200 OK`: `{ "ready": true }` — the target is resolved and
+  cached; the playback request that follows starts without waiting for
+  extraction. `404` when the id cannot be matched to a playable source.
+- **No audio bytes are transferred.** The server also warms its own CDN
+  connection for the track (one ranged byte upstream), never the watch's
+  link.
+- The watch calls this on tap and for the next queue item. It replaces the
+  old `GET /api/stream/{id}` probe with `Range: bytes=0-0`: the proxy runs
+  tiny-window requests to their natural EOF, so that probe relayed an entire
+  song over a high-latency link (Tailscale Funnel) and competed with the real
+  playback request.
+- Not cached — each call must actually resolve. Rate-limited separately from
+  streams (90/min per client) so warm-ups can never spend the playback
+  budget.
 
 ### 3. Audio Stream
 
@@ -238,6 +256,8 @@ Statuses: `400` invalid request or malformed body, `401` bad/missing API key,
 ## Rate Limiting
 
 `GET /api/stream/{id}` is limited per client (API key, else source IP) to a
-sustained 30 requests/minute with short bursts above that. Exceeding it yields
-`503` with `{"error":"Too many stream requests; slow down and retry shortly"}`.
+sustained 30 requests/minute with a burst of 12. Exceeding it yields `503`
+with `{"error":"Too many stream requests; slow down and retry shortly"}`.
+`GET /api/prewarm/{id}` has its own bucket (90/min, burst 30) so warm-ups can
+never consume the playback budget.
 Search/suggestions/favorites/playlists are NOT rate-limited.

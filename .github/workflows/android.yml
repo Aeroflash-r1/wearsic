@@ -95,12 +95,13 @@ jobs:
       # CI forensics for the 2026-10-18 wedge: the full suite hangs ~50% of
       # runs inside ExampleRobolectricTest.testMusicRepositoryIntegration with
       # every thread idle, so a jstack dump cannot show what the suspended
-      # coroutine awaits. Run the suspect test alone, then with its whole
-      # class, before the full suite below: whichever scope reproduces the
-      # wedge tells us what cross-test state is involved, and the WEDGE-PROBE
-      # markers (streamed from the test) name the exact suspension point.
+      # coroutine awaits. The wedged test now dumps every live coroutine
+      # (DebugProbes) after 10s/20s of stall. Run the suspect test alone, with
+      # its whole class, and paired with each preceding class before the full
+      # suite below: whichever scope reproduces the wedge tells us what
+      # cross-test state is involved.
       - name: Unit tests (wedge forensics, flaky test in isolation)
-        timeout-minutes: 15
+        timeout-minutes: 20
         continue-on-error: true
         run: |
           set +e
@@ -110,6 +111,12 @@ jobs:
           echo "::endgroup::"
           echo "::group::flaky test with its whole class"
           timeout 240 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
+          echo "::endgroup::"
+          echo "::group::flaky test after AlbumBrowsingTest (fresh JVM)"
+          timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.AlbumBrowsingTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
+          echo "::endgroup::"
+          echo "::group::flaky test after DownloadOwnershipTest (fresh JVM)"
+          timeout 300 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.DownloadOwnershipTest' --tests 'com.wearsic.app.ExampleRobolectricTest' --stacktrace || status=1
           echo "::endgroup::"
           exit $status
 
@@ -129,7 +136,7 @@ jobs:
               echo "::group::Stuck thread dump (unit suite still running after 150s)"
               for p in $( { pgrep -f 'GradleWorkerMain' || true; pgrep -f 'GradleDaemon' || true; } | sort -u ); do
                 echo "== process $p: $(ps -o args= -p "$p" 2>/dev/null || echo unknown) =="
-                timeout 30 "$JAVA_HOME/bin/jstack" -l "$p" 2>&1 | head -400 || true
+                timeout 30 "$JAVA_HOME/bin/jstack" -l "$p" 2>&1 || true
               done
               echo "::endgroup::"
             fi

@@ -126,6 +126,12 @@ dependencies {
   testImplementation(libs.roborazzi)
   testImplementation(libs.roborazzi.compose)
   testImplementation(libs.roborazzi.junit.rule)
+  // CI forensics (2026-10-18 Robolectric wedge; remove once the root cause is
+  // fixed): suspended coroutines are invisible to jstack, so the wedged test
+  // dumps every live coroutine via DebugProbes.dumpCoroutines(). Hardcoded on
+  // purpose — editing libs.versions.toml would change the Robolectric
+  // android-all cache key in .github/workflows/android.yml.
+  testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-debug:1.10.2")
   androidTestImplementation(platform(libs.androidx.compose.bom))
   androidTestImplementation(libs.androidx.compose.ui.test.junit4)
   androidTestImplementation(libs.androidx.junit)

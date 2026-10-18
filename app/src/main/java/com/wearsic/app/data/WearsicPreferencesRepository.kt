@@ -71,7 +71,14 @@ class WearsicPreferencesRepository(private val context: Context) {
         }
         val cleanUrl = Validation.validateServerUrl(url).getOrNull() ?: return
         context.dataStore.edit { preferences ->
+            // CI forensics (2026-10-18 wedge; remove after root cause is fixed):
+            // marks whether the DataStore actor reached the transform it runs
+            // via withContext(callerContext) inside transformAndWrite.
+            println("WEDGE-PROBE [${Thread.currentThread().name}] transform executing saveServerUrl")
+            System.out.flush()
             preferences[KEY_SERVER_URL] = cleanUrl.trimEnd('/')
+            println("WEDGE-PROBE [${Thread.currentThread().name}] transform completed saveServerUrl")
+            System.out.flush()
         }
     }
 

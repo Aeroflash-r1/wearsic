@@ -1,6 +1,7 @@
 package com.wearsic.app
 
 import android.content.Context
+import android.os.Looper
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -26,10 +27,14 @@ import com.wearsic.app.network.model.ConnectionTestState
 import com.wearsic.app.ui.navigation.WearsicApp
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
+import kotlin.coroutines.ContinuationInterceptor
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.debug.DebugProbes
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -39,6 +44,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -59,6 +65,55 @@ class ExampleRobolectricTest {
     private fun probe(message: String) {
         println("WEDGE-PROBE [${Thread.currentThread().name}] $message")
         System.out.flush()
+    }
+
+    companion object {
+        init {
+            // Forensics only (2026-10-18 wedge): track every coroutine this
+            // class creates so the watchdog can dump their suspension points —
+            // suspended coroutines are invisible to jstack.
+            runCatching {
+                DebugProbes.install()
+                println("WEDGE-PROBE [init] DebugProbes installed")
+                System.out.flush()
+            }.onFailure {
+                println("WEDGE-PROBE [init] DebugProbes install failed: $it")
+            }
+        }
+    }
+
+    /**
+     * Forensics only: daemon thread that waits 10s; if the DataStore write
+     * still has not returned, it dumps every live coroutine (with suspension
+     * point) plus full thread stacks, then dumps coroutines again at 20s.
+     * Interrupted — and thus silent — when the write completes in time.
+     */
+    private fun startWedgeWatchdog(): Thread {
+        val thread = Thread {
+            try {
+                Thread.sleep(10_000)
+                probe("[watchdog] 10s inside saveServerUrl: coroutine dump follows")
+                DebugProbes.dumpCoroutines(System.out)
+                probe("[watchdog] coroutine dump done; thread dump follows")
+                for ((t, stack) in Thread.getAllStackTraces()) {
+                    println("WEDGE-PROBE [watchdog] thread=${t.name} state=${t.state}")
+                    stack.forEach { frame -> println("    at $frame") }
+                }
+                System.out.flush()
+                Thread.sleep(10_000)
+                probe("[watchdog] 20s inside saveServerUrl: second coroutine dump")
+                DebugProbes.dumpCoroutines(System.out)
+                System.out.flush()
+            } catch (_: InterruptedException) {
+                // Write completed in time — nothing to dump.
+            } catch (t: Throwable) {
+                probe("[watchdog] dump failed: $t")
+            }
+        }
+        thread.isDaemon = true
+        thread.name = "WEDGE-WATCHDOG"
+        thread.start()
+        return thread
     }
 
     @Test
@@ -108,9 +163,58 @@ class ExampleRobolectricTest {
         val repository = WearsicMusicRepository(context, httpApiClient = mockClient)
         probe("repository constructed")
 
-        // Pre-configure server URL as the real production app would require
-        withTimeout(30_000) { repository.saveServerUrl("https://wearsic.server.internal") }
-        probe("saveServerUrl done")
+        // Pre-configure server URL as the real production app would require.
+        // Forensics: the write stays the very FIRST DataStore operation, but a
+        // wedge no longer aborts the test at the timeout — the caller is
+        // cancelled, then we probe whether the DataStore actor heals — and a
+        // daemon watchdog dumps coroutines/threads while the write is stuck.
+        probe("saveServerUrl begin interceptor=${coroutineContext[ContinuationInterceptor]}")
+        val watchdog = startWedgeWatchdog()
+        val saveOutcome: String? = try {
+            withTimeoutOrNull(30_000) {
+                repository.saveServerUrl("https://wearsic.server.internal")
+                "ok"
+            }
+        } catch (t: Throwable) {
+            probe("saveServerUrl threw ${t::class.java.simpleName}: ${t.message}")
+            "threw"
+        } finally {
+            watchdog.interrupt()
+        }
+        probe("saveServerUrl outcome=${saveOutcome ?: "TIMEOUT_30s"}")
+        val wedgeReproduced = saveOutcome == null
+        if (wedgeReproduced) {
+            probe("post-wedge getServerUrl begin")
+            val readOutcome = try {
+                withTimeoutOrNull(15_000) { repository.getServerUrl(); "ok" }
+            } catch (t: Throwable) {
+                "threw ${t::class.java.simpleName}"
+            }
+            probe("post-wedge getServerUrl outcome=${readOutcome ?: "TIMEOUT_15s"}")
+            probe("post-wedge saveServerUrl#2 begin")
+            val write2 = try {
+                withTimeoutOrNull(15_000) {
+                    repository.saveServerUrl("https://wearsic.server.internal")
+                    "ok"
+                }
+            } catch (t: Throwable) {
+                "threw ${t::class.java.simpleName}"
+            }
+            probe("post-wedge saveServerUrl#2 outcome=${write2 ?: "TIMEOUT_15s"}")
+            probe("post-wedge main-looper pump begin")
+            runCatching { shadowOf(Looper.getMainLooper()).idle() }
+                .onFailure { probe("post-wedge main-looper pump failed: $it") }
+            probe("post-wedge main-looper pump done; saveServerUrl#3 begin")
+            val write3 = try {
+                withTimeoutOrNull(15_000) {
+                    repository.saveServerUrl("https://wearsic.server.internal")
+                    "ok"
+                }
+            } catch (t: Throwable) {
+                "threw ${t::class.java.simpleName}"
+            }
+            probe("post-wedge saveServerUrl#3 outcome=${write3 ?: "TIMEOUT_15s"}")
+        }
 
         withTimeout(30_000) {
             val connectionState = repository.testServerConnection("https://wearsic.server.internal")
@@ -139,6 +243,11 @@ class ExampleRobolectricTest {
             assertTrue(tracks.isNotEmpty())
         }
         probe("TEST COMPLETE")
+        if (wedgeReproduced) {
+            throw AssertionError(
+                "WEDGE-PROBE: saveServerUrl wedged (30s timeout) — see coroutine/thread dumps above"
+            )
+        }
     }
 
     @Test

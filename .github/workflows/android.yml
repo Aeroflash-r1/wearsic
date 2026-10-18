@@ -81,6 +81,13 @@ jobs:
       - name: Run server tests
         run: ./gradlew :wearsic-server:test --stacktrace
 
+      # The Extractor Hotfix workflow rewrites version pins across the repo
+      # through scripts/bump-version.py; a silent pattern drift there would
+      # cut a malformed release, so the script's offline suite runs on every
+      # push — not only at release time.
+      - name: Run bump-script test (offline version pin rewrite)
+        run: bash scripts/tests/bump-version-test.sh
+
       # Shell logic lives in the `wearsic` CLI, which no Kotlin test covers.
       # This one is fast and offline: it fakes `tailscale` and pins the state
       # detection that `wearsic funnel` depends on to tell a dead daemon from

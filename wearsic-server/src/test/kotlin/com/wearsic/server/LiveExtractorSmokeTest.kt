@@ -5,11 +5,13 @@ import io.ktor.client.engine.cio.CIO
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException
 import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor
 
 /**
@@ -61,20 +63,31 @@ class LiveExtractorSmokeTest {
         val extractor = ServiceList.YouTube.getStreamExtractor(YoutubeGateway.CANARY_URL)
         if (extractor is YoutubeStreamExtractor) YoutubeStreamExtractor.setFetchIosClient(true)
         try {
-            extractor.fetchPage()
+            try {
+                extractor.fetchPage()
+            } catch (e: SignInConfirmNotBotException) {
+                // The question the hotfix gate hinges on, embedded where Gradle
+                // always prints it: lengths only — never the cookie value.
+                fail(
+                    "YouTube bot-walled the NewPipe fetch — ${cookieState()}. " +
+                        "cookie-backed=false means the cookie never reached this test JVM; " +
+                        "true means it was attached and YouTube challenged this IP anyway.",
+                    e,
+                )
+            }
             val best = extractor.audioStreams.orEmpty()
                 .filter { it.isUrl && it.url != null }
                 .minByOrNull { kotlin.math.abs(it.averageBitrate - 128) }
             assertNotNull(
                 best,
                 "NewPipeExtractor found no URL-only audio stream — YouTube changed " +
-                    "something the pinned extractor cannot handle",
+                    "something the pinned extractor cannot handle (${cookieState()})",
             )
             val bytes = pullBytes(best!!.url!!, 256 * 1024)
             assertTrue(
                 bytes >= minBytes,
                 "NewPipeExtractor resolved a URL but only $bytes bytes streamed " +
-                    "(min $minBytes) — the CDN refused the resolved link",
+                    "(min $minBytes) — the CDN refused the resolved link (${cookieState()})",
             )
         } finally {
             if (extractor is YoutubeStreamExtractor) YoutubeStreamExtractor.setFetchIosClient(false)
@@ -93,13 +106,13 @@ class LiveExtractorSmokeTest {
         assertNotNull(
             target,
             "production resolver returned no stream target — lean player path " +
-                "AND NewPipe extraction both failed",
+                "AND NewPipe extraction both failed (${cookieState()})",
         )
         val bytes = pullBytes(target!!.url, 256 * 1024)
         assertTrue(
             bytes >= minBytes,
             "production resolver returned a URL but only $bytes bytes streamed " +
-                "(min $minBytes) — the CDN refused the resolved link",
+                "(min $minBytes) — the CDN refused the resolved link (${cookieState()})",
         )
     }
 
@@ -112,16 +125,21 @@ class LiveExtractorSmokeTest {
         @JvmStatic
         @BeforeAll
         fun armSessionCookie() {
+            YoutubeSession.cookie = System.getenv("WEARSIC_YOUTUBE_COOKIE")
+            println("live smoke: ${cookieState()}")
+            System.err.println("live smoke: ${cookieState()}")
+        }
+
+        /**
+         * Cookie state as a log-safe string — lengths only, never the value.
+         * Embedded in every failure message so a bot-wall can never hide
+         * whether the smoke actually ran cookie-backed.
+         */
+        fun cookieState(): String {
             val raw = System.getenv("WEARSIC_YOUTUBE_COOKIE")
-            YoutubeSession.cookie = raw
-            // Printed to both streams: whichever one Gradle surfaces for this
-            // run, the cookie state is never a mystery in CI logs. Lengths
-            // only — never the value.
-            val line = "live smoke: cookie-backed=${YoutubeSession.hasCookie()}" +
+            return "cookie-backed=${YoutubeSession.hasCookie()}" +
                 if (raw == null) " (env not set)" else
                     " (raw-len=${raw.length}, effective-len=${YoutubeSession.cookie?.length ?: 0})"
-            println(line)
-            System.err.println(line)
         }
     }
 }

@@ -353,11 +353,19 @@ private fun NowPlayingPage(
                     .wearsicEntrance(delayMillis = 50, fromScale = 0.98f, riseDp = 6f)
             )
 
+            // One line: artist · elapsed/total. The time segment is dropped
+            // when the server reported no duration — "Artist · 1:04 / --:--"
+            // read as noise — and a blank artist never leaves a dangling "·".
+            val subtitle = when {
+                !hasTrack -> "Pick a song from Library"
+                else -> listOf(
+                    track.artist.trim(),
+                    if (durationMs > 0L) "${formatTime(positionMs)} / ${formatTime(durationMs)}" else ""
+                ).filter { it.isNotBlank() }.joinToString(" · ")
+            }
+
             Text(
-                text = when {
-                    !hasTrack -> "Pick a song from Library"
-                    else -> "${track.artist} · ${formatTime(positionMs)} / ${formatTime(durationMs)}"
-                },
+                text = subtitle,
                 color = Color.White.copy(alpha = 0.70f),
                 fontSize = 11.sp,
                 lineHeight = 14.sp,
@@ -768,9 +776,9 @@ private fun ActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = WearsicDimens.SheetRowMinHeight)
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
             .background(Color.White.copy(alpha = 0.10f))
-            .border(1.dp, WearsicSurfaceBorder, RoundedCornerShape(18.dp))
+            .border(1.dp, WearsicSurfaceBorder, RoundedCornerShape(WearsicDimens.CardRadius))
             .wearsicClickable(enabled = enabled, pressedScale = 0.98f, onClick = onClick)
             .testTag(testTag)
             .padding(horizontal = 16.dp),

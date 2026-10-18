@@ -152,7 +152,7 @@ fun WearsicSongRowArtwork(
     size: Dp = 40.dp,
 ) {
     val context = LocalContext.current
-    val shape = RoundedCornerShape(11.dp)
+    val shape = RoundedCornerShape(WearsicDimens.ArtRadius)
     val ring = Modifier.border(1.dp, WearsicSurfaceBorderSubtle, shape)
     if (!artworkUrl.isNullOrBlank()) {
         // Built once per URL: a fresh ImageRequest on every row recomposition

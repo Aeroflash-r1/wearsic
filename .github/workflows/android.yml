@@ -55,7 +55,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository/org/robolectric
-          key: robolectric-android-all-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          # NOTE: actions/cache never re-saves a key that already exists, so a
+          # frozen key can never learn artifacts added later (this bit us on
+          # 2026-10-18: the cached android-all stayed fine, but anything new
+          # Robolectric needed at runtime missed the cache forever). Bump the
+          # -vN suffix whenever a runtime artifact enters the picture.
+          key: robolectric-android-all-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}-v2
 
       - name: Pre-fetch Robolectric android-all runtime (bounded)
         run: |
@@ -74,7 +79,24 @@ jobs:
           mv "$jar.part" "$jar"
           ls -la "$jar"
 
+      # The android-all pre-fetch above covers exactly one jar. Anything else
+      # Robolectric resolves at test runtime (e.g. a new android-all version
+      # after a dependency bump) is NOT covered, hits Maven Central from
+      # inside the test JVM with no timeout of its own, and wedges silently
+      # until the 45-minute job backstop kills the run (reproduced 2026-10-18,
+      # three times in seven runs). Run one NATIVE-mode screenshot test under
+      # a hard timeout first: missing artifacts download HERE — bounded and
+      # visible in minutes — and the job-end cache save (key bumped to -v2,
+      # because actions/cache never re-saves an existing key) then carries
+      # them into every later run, so the main suite goes back to zero network.
+      - name: Warm Robolectric runtime (bounded)
+        run: timeout 600 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.GreetingScreenshotTest' --stacktrace
+
+      # Fast-fail instead of the 45-minute job backstop if the suite ever
+      # wedges again; per-test start logging (app/build.gradle.kts) names the
+      # hanging test in the log, so a repeat is self-diagnosing.
       - name: Run app unit tests (Robolectric)
+        timeout-minutes: 10
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       # A broken server must not merge silently while only Android tests run.

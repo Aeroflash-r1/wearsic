@@ -60,6 +60,20 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val crossfadeMs: StateFlow<Long> = preferencesRepository.crossfadeMsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CrossfadeLengths.DEFAULT_MS)
 
+    init {
+        // `wearsic pair` may have run while this process was already alive
+        // (a watch app is rarely killed). The app-start import only covers
+        // cold starts; importing on Settings entry covers warm ones, so the
+        // user who opens Settings sees the values they just paired.
+        viewModelScope.launch {
+            runCatching {
+                com.wearsic.app.data.PairingImporter.importIfPresent(
+                    getApplication<Application>().applicationContext
+                )
+            }
+        }
+    }
+
     // ============================================================================
     // Connection Testing
     // ============================================================================

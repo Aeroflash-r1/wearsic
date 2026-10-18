@@ -69,6 +69,11 @@ class WearsicApp : Application(), ImageLoaderFactory {
                 // Wear OS may recreate the process without recreating the
                 // Settings screen, so DataStore is the source of truth here.
                 runBlocking {
+                    // `wearsic pair` (adb) drops a one-shot pairing file in
+                    // the app's external files dir; apply it BEFORE the key
+                    // restore so the client picks up whatever it carried.
+                    com.wearsic.app.data.PairingImporter.importIfPresent(applicationContext)
+
                     val savedApiKey = container.preferencesRepository.getApiKey()
                     container.musicRepository.refreshApiKeyWith(savedApiKey)
                 }

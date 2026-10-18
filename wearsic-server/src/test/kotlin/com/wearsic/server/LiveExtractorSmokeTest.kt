@@ -2,6 +2,7 @@ package com.wearsic.server
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -70,8 +71,9 @@ class LiveExtractorSmokeTest {
                 // always prints it: lengths only — never the cookie value.
                 fail(
                     "YouTube bot-walled the NewPipe fetch — ${cookieState()}. " +
-                        "cookie-backed=false means the cookie never reached this test JVM; " +
-                        "true means it was attached and YouTube challenged this IP anyway.",
+                        "effective-len=0 means the cookie never reached this test JVM; " +
+                        "a non-zero effective-len means it was attached and YouTube " +
+                        "challenged this IP anyway.",
                     e,
                 )
             }
@@ -118,28 +120,34 @@ class LiveExtractorSmokeTest {
 
     companion object {
         /**
-         * Mirror a server boot: the WEARSIC_YOUTUBE_COOKIE env var (when set)
-         * becomes the session cookie [NewPipeDownloader] attaches to requests —
-         * the same mechanism `wearsic cookies` uses on a running server.
+         * Two delivery channels: the env var (local runs, and step env when a
+         * fresh daemon passes it through) and the file the hotfix workflow
+         * writes next to the module's build output (immune to any environment
+         * caching of a reused Gradle daemon). Env wins when non-blank.
          */
         @JvmStatic
         @BeforeAll
         fun armSessionCookie() {
-            YoutubeSession.cookie = System.getenv("WEARSIC_YOUTUBE_COOKIE")
+            val env = System.getenv("WEARSIC_YOUTUBE_COOKIE")?.takeIf { it.isNotBlank() }
+            YoutubeSession.cookie = env ?: File("build/yt-cookie.txt").readIfPresent()
             println("live smoke: ${cookieState()}")
             System.err.println("live smoke: ${cookieState()}")
         }
 
+        private fun File.readIfPresent(): String? =
+            takeIf { it.isFile }?.readText()?.takeIf { it.isNotBlank() }
+
         /**
          * Cookie state as a log-safe string — lengths only, never the value.
          * Embedded in every failure message so a bot-wall can never hide
-         * whether the smoke actually ran cookie-backed.
+         * which channel delivered (or failed to deliver) the cookie.
          */
         fun cookieState(): String {
-            val raw = System.getenv("WEARSIC_YOUTUBE_COOKIE")
-            return "cookie-backed=${YoutubeSession.hasCookie()}" +
-                if (raw == null) " (env not set)" else
-                    " (raw-len=${raw.length}, effective-len=${YoutubeSession.cookie?.length ?: 0})"
+            val envLen = System.getenv("WEARSIC_YOUTUBE_COOKIE")?.length
+            val fileLen = File("build/yt-cookie.txt").readIfPresent()?.length
+            return "cookie-backed=${YoutubeSession.hasCookie()} " +
+                "(env-len=${envLen ?: "none"}, file-len=${fileLen ?: "none"}, " +
+                "effective-len=${YoutubeSession.cookie?.length ?: 0})"
         }
     }
 }

@@ -168,6 +168,11 @@ jobs:
             if [ "$NL" != "0" ]; then
               echo "::warning::YT_COOKIE contains newlines — expected the single-line DevTools 'cookie:' value, not a multi-line cookies.txt export."
             fi
+            # Second delivery channel for the test JVM: a file next to the
+            # module's build output (ephemeral runner, gitignored path) —
+            # immune to a reused Gradle daemon's cached environment.
+            mkdir -p wearsic-server/build
+            printf '%s' "$WEARSIC_YOUTUBE_COOKIE" > wearsic-server/build/yt-cookie.txt
           fi
           # The -P property rides every Gradle invocation (a reused daemon's
           # cached environment can miss the step env); the env var stays as

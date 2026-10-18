@@ -108,4 +108,10 @@ tasks.test {
     providers.gradleProperty("wearsic.youtube.cookie").orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { environment("WEARSIC_YOUTUBE_COOKIE", it) }
+    // Keep test stdout/stderr visible in CI logs: the live smoke prints its
+    // cookie state there, and Gradle's default has proven too eager at
+    // hiding that output when tests fail.
+    testLogging {
+        showStandardStreams = true
+    }
 }

@@ -108,7 +108,16 @@ download_bar() { # $1 = url, $2 = out file, $3 = label
   curl -fL --retry 3 --retry-delay 2 -o "$out" "$url" >/dev/null 2>&1 &
   local pid=$! have=0 pct=0
   while kill -0 "$pid" 2>/dev/null; do
-    have="$(wc -c < "$out" 2>/dev/null || echo 0)"
+    # curl creates $out only when its first bytes arrive: before that, an
+    # unguarded `wc -c < "$out"` makes the SHELL's redirection print
+    # "No such file or directory" (2>/dev/null on the command does not
+    # silence a failed input redirection — it is applied after it).
+    if [ -e "$out" ]; then
+      have="$(wc -c < "$out" 2>/dev/null || echo 0)"
+    else
+      have=0
+    fi
+    case "$have" in ''|*[!0-9]*) have=0 ;; esac
     pct=$(( have * 100 / total ))
     [ "$pct" -gt 100 ] && pct=100
     draw_bar "$label" "$pct" "$have" "$total"
@@ -118,6 +127,21 @@ download_bar() { # $1 = url, $2 = out file, $3 = label
   draw_bar "$label" 100 "$total" "$total"
   printf '\n'
   return 0
+}
+
+# Install a file ATOMICALLY: copy to a sibling temp, then rename into place.
+# (Same helper as the wearsic CLI — keep the two in sync.) A plain `cp` over
+# a script bash is currently executing truncates that inode, and the running
+# shell dies parsing garbage; a rename swaps the inode instead, leaving the
+# running process its old content, intact.
+replace_file() { # $1 = source file, $2 = destination file
+  local src="$1" dst="$2" tmp
+  tmp="$(mktemp "$(dirname "$dst")/.wearsic-new.XXXXXX")" || return 1
+  if cp "$src" "$tmp" && mv -f "$tmp" "$dst"; then
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null
+  return 1
 }
 
 draw_bar() { # $1 label $2 pct $3 have-bytes $4 total-bytes
@@ -217,18 +241,59 @@ generate_api_key() {
 
 # Best-effort LAN IP of this device (wlan0 first, then any route).
 detect_lan_ip() {
-  local ip=""
-  if command -v ip >/dev/null 2>&1; then
-    ip="$(ip -f inet addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+  # Best-effort LAN IPv4 — keep in sync with `lan_ip` in the wearsic CLI.
+  # Termux ships neither iproute2 nor net-tools, and recent Android removed
+  # the old dhcp.*.ipaddress properties, so every probe we know is tried.
+  local ip="" iface sys gp
+  iface="$(awk '$2 == "00000000" && $1 != "lo" { print $1; exit }' "${WEARSIC_PROC_NET:-/proc/net}/route" 2>/dev/null)"
+  sys="${WEARSIC_SYS_BIN:-/system/bin}"
+
+  if command -v termux-wifi-connectioninfo >/dev/null 2>&1; then
+    ip="$(termux-wifi-connectioninfo 2>/dev/null \
+      | sed -n 's/.*"ip"[[:space:]]*:[[:space:]]*"\([0-9.]\{7,\}\)".*/\1/p' | head -1)"
+  fi
+  if [ -z "$ip" ] && command -v ip >/dev/null 2>&1; then
+    ip="$(ip -4 -o addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    if [ -z "$ip" ] && [ -n "$iface" ]; then
+      ip="$(ip -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
   fi
   if [ -z "$ip" ] && command -v ifconfig >/dev/null 2>&1; then
-    ip="$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p' | head -1)"
-    [ -z "$ip" ] && ip="$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    ip="$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    if [ -z "$ip" ] && [ -n "$iface" ]; then
+      ip="$(ifconfig "$iface" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
   fi
-  if [ -z "$ip" ] && command -v hostname >/dev/null 2>&1; then
-    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  if [ -z "$ip" ] && [ -x "$sys/ip" ]; then
+    ip="$("$sys/ip" -4 -o addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    if [ -z "$ip" ] && [ -n "$iface" ]; then
+      ip="$("$sys/ip" -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
   fi
-  printf '%s' "$ip"
+  if [ -z "$ip" ] && [ -x "$sys/ifconfig" ]; then
+    ip="$("$sys/ifconfig" wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    if [ -z "$ip" ] && [ -n "$iface" ]; then
+      ip="$("$sys/ifconfig" "$iface" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
+  fi
+  gp=""
+  if command -v getprop >/dev/null 2>&1; then gp="getprop"
+  elif [ -x "$sys/getprop" ]; then gp="$sys/getprop"; fi
+  if [ -z "$ip" ] && [ -n "$gp" ]; then
+    ip="$("$gp" dhcp.wlan0.ipaddress 2>/dev/null | tr -d '\r\n')"
+    if [ -z "$ip" ]; then
+      ip="$("$gp" 2>/dev/null \
+        | sed -n 's/^\[[^]]*[Ww][Ll][Aa][Nn][^]]*\.ipaddress\]: \[\([0-9.]*\)\]$/\1/p' | head -1)"
+    fi
+  fi
+  if [ -z "$ip" ] && [ -n "$iface" ]; then
+    ip="$(awk '/32 host/ { print f } { f = $2 }' "${WEARSIC_PROC_NET:-/proc/net}/fib_trie" 2>/dev/null \
+      | grep -E '^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
+  fi
+
+  if printf '%s' "$ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+    printf '%s' "$ip"
+  fi
 }
 
 env_value() {  # $1 = key name, $2 = file (default $DEST/.env)
@@ -487,9 +552,16 @@ mv "$DEST/bin.new" "$DEST/bin" && mv "$DEST/lib.new" "$DEST/lib" \
   || die "Swap failed midway — run 'wearsic update' or reinstall to recover."
 [ -f "$DEST/bin/wearsic-server" ] || die "Engine swap did not complete — run 'wearsic update' to recover."
 
-# Launcher + supporting files (code only — never data).
+# Launcher + supporting files (code only — never data). run-termux.sh goes
+# in atomically: re-running the installer over a LIVE server must not
+# truncate the supervisor's script while bash is reading it.
 for f in run-termux.sh .env.example README.md; do
-  [ -f "$SRC/$f" ] && cp "$SRC/$f" "$DEST/$f"
+  [ -f "$SRC/$f" ] || continue
+  if [ "$f" = "run-termux.sh" ]; then
+    replace_file "$SRC/$f" "$DEST/$f"
+  else
+    cp "$SRC/$f" "$DEST/$f"
+  fi
 done
 chmod +x "$DEST/run-termux.sh" "$DEST/bin/wearsic-server" 2>/dev/null || true
 ok "engine installed (previous engine kept for rollback)"
@@ -514,8 +586,12 @@ if [ -f "$SRC/wearsic" ]; then
       *) warn "$CLI_BIN is not on PATH — add it:  export PATH=\"\$PATH:$CLI_BIN\"" ;;
     esac
   fi
-  cp "$SRC/wearsic" "$DEST/wearsic" 2>/dev/null || true
-  cp "$SRC/wearsic" "$CLI_BIN/wearsic" && chmod +x "$CLI_BIN/wearsic" "$DEST/wearsic" 2>/dev/null \
+  # replace_file (not cp): the destination may be the very script an older
+  # `wearsic` process is still executing (e.g. `wearsic update` in another
+  # terminal, or this file after a re-install) — a truncating copy corrupts
+  # the running shell's remaining lines.
+  replace_file "$SRC/wearsic" "$DEST/wearsic" 2>/dev/null || true
+  replace_file "$SRC/wearsic" "$CLI_BIN/wearsic" && chmod +x "$CLI_BIN/wearsic" "$DEST/wearsic" 2>/dev/null \
     && ok "'wearsic' command installed ($CLI_BIN/wearsic)"
 fi
 
@@ -585,16 +661,19 @@ fi
 
 # ── pairing card ────────────────────────────────────────────────────────────
 LAN_IP="$(detect_lan_ip)"
-if [ -n "$LAN_IP" ]; then
-  SERVER_URL="http://${LAN_IP}:$(port)"
-else
-  SERVER_URL="http://<phone-IP>:$(port)"
-fi
+SERVER_URL=""
+[ -n "$LAN_IP" ] && SERVER_URL="http://${LAN_IP}:$(port)"
 
 printf '\n'
 box_begin "♪ Wearsic server is ready — connect your watch"
 box_line ""
-box_line "   ${C_BOLD}Server :${C_RESET} $SERVER_URL"
+if [ -n "$SERVER_URL" ]; then
+  box_line "   ${C_BOLD}Server :${C_RESET} $SERVER_URL"
+else
+  # No placeholder: `http://<phone-IP>:8080` looks typeable — users typed it.
+  box_line "   ${C_BOLD}Server :${C_RESET} ${C_YELLOW}couldn't detect this phone's IP${C_RESET}"
+  box_line "   ${C_DIM}is Wi-Fi on? check Android Settings, then: wearsic url${C_RESET}"
+fi
 box_line "   ${C_BOLD}Key    :${C_RESET} $EFFECTIVE_KEY"
 box_line ""
 box_line "   On the watch, open Wearsic → Settings,"

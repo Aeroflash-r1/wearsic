@@ -130,6 +130,8 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 - **A funnel failure is diagnosed, not dumped.** tailscale's own output still streams live, but it is also captured so the CLI can name the likely cause — HTTPS certificates disabled on the tailnet, a tailnet ACL blocking Funnel, or an unauthenticated node — and offer `cloudflared` as an alternative that needs no account.
 - **`wearsic doctor` explains itself.** "installed, not connected" became "installed, not logged in — for a public URL run: tailscale up", and Funnel reports `blocked: Tailscale not connected` instead of a second confusing failure. Tailscale stays a *warning*, never a failure: the server serves music over LAN without it, so a logged-out phone must not make `doctor` report NOT READY.
 - Covered by `wearsic-server/tests/funnel-state-test.sh` (offline, fakes the `tailscale` binary, runs in CI).
+- **`wearsic pair` removes the watch keyboard from setup.** Typing a 24-character address and an API key on a 1.4" screen was the most error-prone part of pairing; `wearsic pair` (or `--funnel`) probes the address first — a stopped server or dead Funnel is caught on the phone — then delivers a two-line pairing file over adb. The watch app (v1.9.2 and newer) imports it on the next launch, confirms with a toast and deletes the file.
+- Covered by `wearsic-server/tests/pair-test.sh` (offline, fakes adb + curl + tailscale, runs in CI).
 
 ## Performance (watch smoothness)
 - **Cold-start critical section**: the first frame is a trivial backdrop; the real UI composes on the next frame, so the system splash (and its ANR window) is never gated on building ViewModels, repositories and the nav graph.

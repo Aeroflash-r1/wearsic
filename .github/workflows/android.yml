@@ -94,10 +94,30 @@ jobs:
 
       # Fast-fail instead of the 45-minute job backstop if the suite ever
       # wedges again; per-test start logging (app/build.gradle.kts) names the
-      # hanging test in the log, so a repeat is self-diagnosing.
+      # hanging test in the log, and a 2.5-minute watchdog dumps the stuck JVM
+      # stacks (test worker + daemon) into the log before the 10-minute step
+      # timeout ends the run — so a repeat is fully self-diagnosing.
       - name: Run app unit tests (Robolectric)
         timeout-minutes: 10
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+        run: |
+          ./gradlew :app:testDebugUnitTest --stacktrace &
+          GRADLE_PID=$!
+          (
+            sleep 150
+            if kill -0 "$GRADLE_PID" 2>/dev/null; then
+              echo "::group::Stuck thread dump (unit suite still running after 150s)"
+              for p in $( { pgrep -f 'GradleWorkerMain' || true; pgrep -f 'GradleDaemon' || true; } | sort -u ); do
+                echo "== process $p: $(ps -o args= -p "$p" 2>/dev/null || echo unknown) =="
+                timeout 30 "$JAVA_HOME/bin/jstack" -l "$p" 2>&1 | head -400 || true
+              done
+              echo "::endgroup::"
+            fi
+          ) &
+          WATCHDOG_PID=$!
+          RC=0
+          wait "$GRADLE_PID" || RC=$?
+          kill "$WATCHDOG_PID" 2>/dev/null || true
+          exit "$RC"
 
       # A broken server must not merge silently while only Android tests run.
       - name: Run server tests

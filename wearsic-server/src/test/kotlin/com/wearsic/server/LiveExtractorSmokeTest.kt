@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
@@ -30,7 +31,9 @@ import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExt
  * Skipped unless WEARSIC_LIVE_SMOKE=1 (talks to YouTube), mirroring
  * [LiveCdnProbeTest]'s WEARSIC_LIVE_PROBE gate. A CI datacenter IP can hit
  * YouTube bot-walls here even when the pin is fine — the hotfix workflow
- * therefore treats a failure as blocking-with-override, not as truth.
+ * therefore treats a failure as blocking-with-override, not as truth, and
+ * can arm WEARSIC_YOUTUBE_COOKIE (repo secret YT_COOKIE) so the smoke runs
+ * cookie-backed from those IPs.
  */
 class LiveExtractorSmokeTest {
 
@@ -98,5 +101,19 @@ class LiveExtractorSmokeTest {
             "production resolver returned a URL but only $bytes bytes streamed " +
                 "(min $minBytes) — the CDN refused the resolved link",
         )
+    }
+
+    companion object {
+        /**
+         * Mirror a server boot: the WEARSIC_YOUTUBE_COOKIE env var (when set)
+         * becomes the session cookie [NewPipeDownloader] attaches to requests —
+         * the same mechanism `wearsic cookies` uses on a running server.
+         */
+        @JvmStatic
+        @BeforeAll
+        fun armSessionCookie() {
+            YoutubeSession.cookie = System.getenv("WEARSIC_YOUTUBE_COOKIE")
+            println("live smoke: cookie-backed=${YoutubeSession.hasCookie()}")
+        }
     }
 }

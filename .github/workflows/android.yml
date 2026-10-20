@@ -181,6 +181,14 @@ jobs:
           ./gradlew :wearsic-server:installDist
           bash wearsic-server/tests/cloudflare-e2e-test.sh
 
+      # The Worker itself is JavaScript, so it gets a real JS engine rather
+      # than a grep. Pins the two properties that decide whether audio works
+      # through the front door: Range must be forwarded, and the body must
+      # stream. A dropped header or a buffered body fails here, not on the
+      # watch.
+      - name: Run Worker proxy tests (Range + streaming + headers)
+        run: node wearsic-server/tests/worker-proxy-test.mjs
+
       # Real pixels at Galaxy Watch7 dimensions. `ScreenGalleryTest` renders
       # every reachable screen through Robolectric and writes PNGs into
       # app/src/test/screenshots/. Roborazzi only WRITES pixels in record

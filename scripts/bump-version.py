@@ -10,7 +10,8 @@ Edits (all-or-nothing — ANY pattern mismatch aborts before a single write):
   · app/build.gradle.kts                  versionCode N -> N+1, versionName -> new
   · README.md, API_CONTRACT.md, TERMUX_SERVER_GUIDE.md
         the LIVING version samples only — the /health example, the zip-URL,
-        sideload and engine-banner examples, the release-tag command.
+        sideload and health-panel version-row examples, the release-tag
+        command.
         Historical notes ("since 1.9.1", "added in v1.9.1") are deliberately
         left alone; every pattern must match its expected occurrence count.
   · wearsic-server/build.gradle.kts       NewPipeExtractor pin (--newpipe-ref)
@@ -147,7 +148,10 @@ def main() -> None:
     p.edit("contract", rf'"engineVersion": "{re.escape(old)}"', f'"engineVersion": "{new}"')
 
     p.edit("guide", rf"wearsic sideload v{re.escape(old)}\b", f"wearsic sideload v{new}")
-    p.edit("guide", rf"v{re.escape(old)} · Wearsic Engine", f"v{new} · Wearsic Engine")
+    # The guide's `wearsic status` panel prints `version     vX.Y.Z` and
+    # nothing else (the CLI never emits a "Wearsic Engine" banner — see
+    # box_kv2 "version" in wearsic-server/wearsic), so pin that row.
+    p.edit("guide", rf"(version\s+)v{re.escape(old)}", rf"\g<1>v{new}")
 
     print(f"version: {old} -> {new}")
     for line in p.changes:

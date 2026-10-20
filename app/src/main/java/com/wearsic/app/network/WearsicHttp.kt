@@ -2,6 +2,9 @@ package com.wearsic.app.network
 
 import android.content.Context
 import java.io.File
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketException
 import java.util.concurrent.TimeUnit
 import okhttp3.Cache
 import okhttp3.Interceptor
@@ -86,6 +89,80 @@ object WearsicHttp {
         chain.proceed(request)
     }
 
+    /** Statuses the server itself asks us to retry (see HttpError.isRetryable). */
+    private val RETRYABLE_STATUS = setOf(429, 503)
+
+    /** Extra attempts after the first one. Two keeps a blip from costing 3x. */
+    private const val MAX_RETRIES = 2
+
+    /**
+     * A refused/reset connection gets ONE extra try, not two: the common cause
+     * is "the server is not running", where every extra attempt is pure delay
+     * (300ms) before the same error. A relay hiccup is still covered.
+     */
+    private const val MAX_CONNECTION_RETRIES = 1
+
+    /** 300ms, then 600ms — short enough to be invisible on a tap. */
+    private const val RETRY_BASE_DELAY_MS = 300L
+
+    /**
+     * Retries IDEMPOTENT requests only.
+     *
+     * The error model has always classified timeouts, refused connections and
+     * HTTP 429/503 as `isRetryable`, but nothing ever acted on it: a single
+     * dropped handshake over Tailscale Funnel reached the user as an error
+     * screen, and a 503 ("extraction busy") failed the tap even though the
+     * very next request would have succeeded. Doing it here — one place, below
+     * auth and cache — means every GET benefits: search, lists, health, the
+     * API-cache refill, and ExoPlayer's own ranged stream requests.
+     *
+     * POST/PUT/DELETE are never replayed: the server may have applied them
+     * before the reply was lost, and a duplicate playlist/track is a worse
+     * outcome than a readable error.
+     */
+    private val retryInterceptor = Interceptor { chain ->
+        val request = chain.request()
+        if (request.method != "GET" && request.method != "HEAD") {
+            return@Interceptor chain.proceed(request)
+        }
+        var attempt = 0
+        while (true) {
+            try {
+                val response = chain.proceed(request)
+                if (response.code in RETRYABLE_STATUS && attempt < MAX_RETRIES) {
+                    response.close()
+                    attempt++
+                    retryPause(chain, attempt)
+                    continue
+                }
+                return@Interceptor response
+            } catch (e: IOException) {
+                // A read timeout is not retried: callTimeout (45s) already
+                // bounds the whole call, so a second 30s wait could not
+                // finish anyway and would only delay the error.
+                if (attempt >= MAX_CONNECTION_RETRIES || !isConnectionBlip(e) || chain.call().isCanceled()) throw e
+                attempt++
+                retryPause(chain, attempt)
+            }
+        }
+        // Unreachable: every iteration either returns a response or throws.
+        @Suppress("UNREACHABLE_CODE")
+        throw IOException("Retry loop exhausted")
+    }
+
+    private fun isConnectionBlip(e: IOException): Boolean =
+        e is ConnectException || e is SocketException
+
+    private fun retryPause(chain: Interceptor.Chain, attempt: Int) {
+        if (chain.call().isCanceled()) throw IOException("Canceled")
+        try {
+            Thread.sleep(RETRY_BASE_DELAY_MS * attempt)
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IOException("Interrupted while retrying", interrupted)
+        }
+    }
+
     // The builder is kept mutable so [installCache] can attach the cache from
     // WearsicApp.onCreate; [client] is created lazily on first use, which is
     // always after that call in a real process (the warm-up below runs after).
@@ -98,6 +175,7 @@ object WearsicHttp {
         .callTimeout(45, TimeUnit.SECONDS)
         .addInterceptor(authInterceptor)
         .addInterceptor(mutationFreshnessInterceptor)
+        .addInterceptor(retryInterceptor)
 
     @Volatile
     private var cacheInstalled = false

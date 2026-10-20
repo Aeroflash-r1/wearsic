@@ -29,8 +29,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 /**
  * Main ViewModel that coordinates all app functionality.
@@ -150,7 +148,7 @@ class WearsicPlayerViewModel(
 
                         val nextTrack = state.playlist.getOrNull(state.currentTrackIndex + 1)
                         if (nextTrack != null) {
-                            warmUpStream(nextTrack)
+                            warmUpTrack(nextTrack)
                         }
                     }
                 } catch (e: Exception) {
@@ -282,7 +280,7 @@ class WearsicPlayerViewModel(
                 (getApplication<WearsicApp>()).container.downloadRepository.getDownloadedTrack(track.id)
             }
             val trackToPlay = applyFavoriteFlags(localTrack ?: track)
-            warmUpStream(trackToPlay)
+            warmUpTrack(trackToPlay)
 
             val completed = completedTracks.value
             val completedIndex = completed.indexOfFirst { it.id == trackToPlay.id }
@@ -329,7 +327,7 @@ class WearsicPlayerViewModel(
             }
             val resolved = tracks.map { t -> applyFavoriteFlags(localById[t.id] ?: t) }
             if (resolved.isNotEmpty()) {
-                warmUpStream(resolved[startIndex.coerceIn(0, resolved.lastIndex)])
+                warmUpTrack(resolved[startIndex.coerceIn(0, resolved.lastIndex)])
             }
             playbackViewModel.playTracks(resolved, startIndex.coerceIn(0, resolved.lastIndex))
         }
@@ -565,22 +563,27 @@ class WearsicPlayerViewModel(
         }
     }
 
-    private val warmUpClient = com.wearsic.app.network.WearsicHttp.client.newBuilder()
-        .connectTimeout(3, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
-        .callTimeout(8, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(false)
-        .build()
-
     private var lastWarmUpTrackId: String? = null
 
-    private fun warmUpStream(nextTrack: Track) {
+    /**
+     * Resolve a track ahead of playback (server-side cache + CDN warm) WITHOUT
+     * transferring audio.
+     *
+     * The old implementation requested `/api/stream/{id}` with
+     * `Range: bytes=0-0`. The proxy runs tiny-window requests to the natural
+     * EOF (clamping was live-tested and left the socket silent), so that probe
+     * relayed the ENTIRE song until the client hang-up was noticed. On a LAN
+     * that is free; over Tailscale Funnel it competed with the real playback
+     * request and threw away the connection (an abandoned body is never reused,
+     * so playback paid a fresh TLS handshake) — exactly the slow funnel start
+     * this replaces. `/api/prewarm` answers with a few bytes of JSON instead.
+     */
+    private fun warmUpTrack(nextTrack: Track) {
         if (!nextTrack.mediaUri.startsWith("http")) return
         // The playback state flow re-emits every ~2s while playing; without
-        // this guard every emission re-fired a Range request to /api/stream —
-        // 30 req/min of pure noise that burned the server's stream rate limit
-        // (the real request for the NEXT track then got throttled) and made
-        // the watch's radio work for nothing. Warm each target at most once.
+        // this guard every emission re-fired a warm-up request — noise that
+        // burned the server's rate limiter and made the watch's radio work for
+        // nothing. Warm each target at most once.
         if (nextTrack.id == lastWarmUpTrackId) return
         if (!isNetworkAvailable()) {
             lastWarmUpTrackId = nextTrack.id
@@ -588,16 +591,8 @@ class WearsicPlayerViewModel(
         }
         lastWarmUpTrackId = nextTrack.id
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val request = Request.Builder()
-                    .url(nextTrack.mediaUri)
-                    .header("Range", "bytes=0-0")
-                    .build()
-                warmUpClient.newCall(request).execute().use { response ->
-                    response.body?.close()
-                }
-            } catch (_: Exception) {
-                // Warm-up is best-effort
+            runCatching {
+                (getApplication<WearsicApp>()).container.musicRepository.prewarmTrack(nextTrack.id)
             }
         }
     }

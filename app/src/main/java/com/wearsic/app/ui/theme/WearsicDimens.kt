@@ -43,6 +43,18 @@ object WearsicDimens {
     /** Minimum comfortable touch box for a tappable control on Wear OS. */
     val TouchTarget: Dp = 44.dp
 
+    // ---- Corner radii ----
+    /**
+     * The ONE radius for cards, pills and action rows. The player's action
+     * rows (18dp), the library hero card (24dp) and every list pill (20dp)
+     * were three different corners on the same two screens, which read as
+     * three components instead of one design language.
+     */
+    val CardRadius: Dp = 20.dp
+
+    /** Radius for square artwork thumbnails (hero chip, list rows). */
+    val ArtRadius: Dp = 12.dp
+
     // ---- Content sizes ----
     /** Song-row / list thumbnail (also the Coil request size baseline). */
     val RowThumbnail: Dp = 40.dp

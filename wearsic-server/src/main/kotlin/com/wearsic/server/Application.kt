@@ -479,6 +479,15 @@ fun Application.module(
                 permitsPerMinute = 30.0,
                 burstCapacity = 12,
             )
+            // Warm-ups have their OWN bucket: they are cheap for the watch
+            // (a tiny JSON body) but still trigger an extraction, and they
+            // must never consume the playback request's stream permits — a
+            // shared bucket was exactly what throttled real playback when the
+            // old `bytes=0-0` probe existed.
+            val prewarmLimiter = RateLimiter(
+                permitsPerMinute = 90.0,
+                burstCapacity = 30,
+            )
 
             get("/stream/{videoId}") {
                 val requestedId = call.parameters["videoId"]!!
@@ -511,6 +520,32 @@ fun Application.module(
                 }
                 searchOrchestrator.withForegroundPlayback {
                     audioProxy.handle(call, realVideoId)
+                }
+            }
+
+            // Resolve a track ahead of playback WITHOUT streaming audio. The
+            // watch calls this on tap and for the next queue item (replacing
+            // the old `Range: bytes=0-0` stream probe, which relayed a whole
+            // song over Tailscale Funnel before noticing the client left).
+            get("/prewarm/{videoId}") {
+                val requestedId = call.parameters["videoId"]!!
+                val clientKey = call.request.headers["X-Wearsic-Key"]
+                    ?: call.request.origin.remoteHost
+                    ?: "unknown"
+                if (!prewarmLimiter.tryAcquire(clientKey)) {
+                    call.respond(
+                        HttpStatusCode.ServiceUnavailable,
+                        ErrorResponse("Too many warm-up requests; slow down and retry shortly")
+                    )
+                    return@get
+                }
+                if (searchOrchestrator.prewarm(requestedId)) {
+                    call.respond(PrewarmResponse(ready = true))
+                } else {
+                    call.respond(
+                        HttpStatusCode.NotFound,
+                        ErrorResponse("Could not match '$requestedId' to a playable source")
+                    )
                 }
             }
 

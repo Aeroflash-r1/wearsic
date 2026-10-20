@@ -70,6 +70,7 @@ import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
+import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicLavenderContainer
@@ -163,7 +164,9 @@ fun LibraryScreen(
                             Text(
                                 text = "${recentTracks.size} songs",
                                 color = WearsicTextSecondary,
-                                fontSize = 9.sp
+                                // Matches its own section label (10sp) so the
+                                // row reads as one baseline, not two sizes.
+                                fontSize = 10.sp
                             )
                         }
                     )
@@ -264,7 +267,7 @@ private fun NowPlayingMiniCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val heroShape = RoundedCornerShape(24.dp)
+    val heroShape = RoundedCornerShape(WearsicDimens.CardRadius)
     val context = LocalContext.current
     Box(
         modifier = modifier
@@ -302,12 +305,13 @@ private fun NowPlayingMiniCard(
                 modifier = Modifier.weight(1f)
             ) {
                 // Real album art (or the music-note chip when there is none).
+                val artShape = RoundedCornerShape(WearsicDimens.ArtRadius)
                 val artModifier = Modifier
                     .size(42.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(artShape)
                     .then(
-                        if (isPlaying) Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
-                        else Modifier.border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(12.dp))
+                        if (isPlaying) Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), artShape)
+                        else Modifier.border(1.dp, WearsicSurfaceBorderSubtle, artShape)
                     )
                 if (!artworkUrl.isNullOrBlank()) {
                     val artRequest = remember(artworkUrl) {
@@ -345,7 +349,10 @@ private fun NowPlayingMiniCard(
                         Text(
                             text = if (isPlaying) "NOW PLAYING" else "READY TO PLAY",
                             color = WearsicVibrantLavender,
-                            fontSize = 8.sp,
+                            // 9sp, not 8: this kicker was the smallest text on
+                            // the whole home screen and disappears on a 44mm
+                            // face at arm's length.
+                            fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.2.sp,
                             maxLines = 1

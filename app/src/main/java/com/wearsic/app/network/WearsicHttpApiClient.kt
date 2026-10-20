@@ -5,6 +5,7 @@ import com.wearsic.app.model.HttpError
 import com.wearsic.app.model.InvalidUrlError
 import com.wearsic.app.model.NetworkError
 import com.wearsic.app.model.ServerError
+import com.wearsic.app.model.ServerUrlNotConfiguredError
 import com.wearsic.app.model.TimeoutError
 import com.wearsic.app.model.UnknownError
 import com.wearsic.app.model.WearsicError
@@ -182,6 +183,56 @@ class WearsicHttpApiClient(
             Result.failure(TimeoutError())
         } catch (e: Exception) {
             Result.failure(UnknownError(e.message ?: "Search failed", e))
+        }
+    }
+
+    /**
+     * Resolve a track ahead of playback without pulling any audio.
+     *
+     * The previous warm-up requested `/api/stream/{id}` with
+     * `Range: bytes=0-0`. The server does not clamp tiny windows, so that
+     * request transferred the entire song through the response until the
+     * client hang-up was noticed — free on a LAN, but over Tailscale Funnel
+     * it relayed a whole track that raced the real playback request and threw
+     * away the connection (nothing was drained, so it could not be reused).
+     * This endpoint returns a few bytes of JSON and is fully drained, so the
+     * TCP+TLS connection it used stays in the pool for the stream request.
+     */
+    override suspend fun prewarmTrack(baseUrl: String, videoId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        val trackIdValidation = Validation.validateTrackId(videoId)
+        if (trackIdValidation.isFailure) {
+            val error = trackIdValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: com.wearsic.app.model.InvalidTrackIdError(videoId))
+        }
+        val prewarmUrl =
+            "$sanitizedUrl/api/prewarm/${URLEncoder.encode(trackIdValidation.getOrThrow(), "UTF-8")}"
+
+        try {
+            val request = Request.Builder()
+                .url(prewarmUrl)
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                // Drain the tiny body even on 404: a fully-read response keeps
+                // the connection alive for the stream request that follows.
+                val body = response.body?.string().orEmpty()
+                if (response.code == 404) return@withContext Result.success(false)
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError(prewarmUrl, response.code, "Server returned HTTP ${response.code}")
+                    )
+                }
+                Result.success(body.contains("\"ready\":true"))
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not warm track", e))
         }
     }
 
@@ -614,6 +665,10 @@ class WearsicHttpApiClient(
      * report the real reason instead of a generic invalid-URL error.
      */
     private fun validateBaseUrl(baseUrl: String): Result<String> {
+        // A blank URL is not a malformed URL: it means this watch has not been
+        // paired with a server yet. Reporting "Invalid URL: " on the first tap
+        // looked like a bug instead of telling the user what to do.
+        if (baseUrl.isBlank()) return Result.failure(ServerUrlNotConfiguredError)
         val result = Validation.validateServerUrl(baseUrl)
         return if (result.exceptionOrNull() is InvalidUrlError) {
             Result.failure(InvalidUrlError("Invalid URL scheme: $baseUrl"))

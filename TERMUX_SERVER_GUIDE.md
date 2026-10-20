@@ -255,7 +255,7 @@ the watch:
 
 ~~~bash
 wearsic sideload                         # latest release → the connected watch
-wearsic sideload v1.9.3                  # a specific release
+wearsic sideload v1.9.4                  # a specific release
 wearsic sideload --apk app-release.apk   # a local build
 ~~~
 
@@ -558,19 +558,23 @@ You get a readable snapshot (status, version, extraction success, crashes):
 
 ~~~text
   ♪ wearsic · health
+  ──────────────────────────────────────────
 
   ╭─ health ───────────────────────────────╮
   │                                        │
-  │    ● ok   127.0.0.1:8080 · 4ms         │
-  │                                        │
-  │    version     v1.9.3 · Wearsic Engine │
+  │     ok   127.0.0.1:8080 · 4ms          │
+  │    ────────────────────────────────    │
+  │    version     v1.9.4                  │
   │    transcoder  available               │
   │    extraction  75 ok · 1 failed (1%)   │
-  │    update      idle                    │
   │    crashes     0                       │
   │    cdn         0 refused               │
+  │    update      idle                    │
   ╰────────────────────────────────────────╯
 ~~~
+
+The status chip is filled on a colour terminal and reads `[ok]` when piped,
+so the same screen stays readable in logs.
 
 Scripts that want the raw JSON use `--json`:
 

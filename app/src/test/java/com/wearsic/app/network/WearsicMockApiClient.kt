@@ -52,6 +52,10 @@ class WearsicMockApiClient(private val context: Context) : WearsicApiClient {
         return searchTracks(baseUrl, query, 10)
     }
 
+    override suspend fun prewarmTrack(baseUrl: String, videoId: String): Result<Boolean> {
+        return Result.success(false)
+    }
+
     override suspend fun searchTracks(baseUrl: String, query: String, limit: Int): Result<SearchResponseDto> {
         delay(500) // Realistic search response delay
         val packageName = context.packageName

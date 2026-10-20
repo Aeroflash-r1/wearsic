@@ -123,6 +123,14 @@ data class HealthResponse(
     val upstreamRefusals: Int = 0,
 )
 
+/**
+ * /api/prewarm result. `ready = true` means the stream target is resolved and
+ * cached, so the playback request that follows can start without waiting for
+ * extraction. No audio bytes cross the wire.
+ */
+@Serializable
+data class PrewarmResponse(val ready: Boolean)
+
 @Serializable
 data class ErrorResponse(val error: String)
 

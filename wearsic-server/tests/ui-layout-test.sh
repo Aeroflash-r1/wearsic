@@ -195,6 +195,54 @@ for grp in "Server" "Watch pairing" "Engine" "Remote access"; do
   fi
 done
 
+echo "components:"
+# ═══ 8. doctor rows = glyph + NAME (not the old "— ok" state-in-name bug) ═
+do="$(run 46 doctor)"
+if printf '%s\n' "$do" | strip | grep -qE '^    .[[:space:]]+(java|ffmpeg|storage|termux|install|health)'; then
+  pass "doctor rows render glyph + check name"
+else
+  fail "doctor rows render glyph + check name"
+fi
+if printf '%s\n' "$do" | strip | grep -qE '— (ok|warn|err|off)'; then
+  fail "doctor rows do not print the state in the name column"
+else
+  pass "doctor rows do not print the state in the name column"
+fi
+
+# ═══ 9. app-bar hairline is exactly as wide as the panel below it ══════════
+st="$(run 80 status)"
+# ${#var} counts CHARACTERS in a UTF-8 locale; awk length counts BYTES
+# (every border glyph is 3 bytes), which would compare nonsense.
+ruleline="$(printf '%s\n' "$st" | strip | sed -n '3p')"
+panelline="$(printf '%s\n' "$st" | strip | grep -m1 '╭')"
+rulew=${#ruleline}
+panelw=${#panelline}
+if [ -n "$rulew" ] && [ "$rulew" = "$panelw" ]; then
+  pass "header rule aligns with the panel edge ($rulew cols)"
+else
+  fail "header rule aligns with the panel edge (rule=$rulew panel=$panelw)"
+fi
+
+# ═══ 10. status is a titled panel and states its verdict ══════════════════
+if printf '%s\n' "$st" | strip | grep -q '╭─ status'; then
+  pass "status draws the status panel"
+else
+  fail "status draws the status panel"
+fi
+if printf '%s\n' "$st" | strip | grep -qE '(healthy|not healthy|stopped)'; then
+  pass "status states its verdict"
+else
+  fail "status states its verdict"
+fi
+
+# ═══ 11. state chips degrade to [label] without colour ════════════════════
+pp="$(WEARSIC_DIR="$DEST" NO_COLOR=1 COLUMNS=46 bash "$CLI" help 2>&1)"
+if printf '%s\n' "$pp" | grep -qE '\[(not )?(running|installed)\]'; then
+  pass "state chips fall back to [label] when colour is off"
+else
+  fail "state chips fall back to [label] when colour is off"
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "ui-layout-test: PASSED ($passes checks)"

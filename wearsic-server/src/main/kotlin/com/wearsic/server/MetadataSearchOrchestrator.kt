@@ -137,7 +137,15 @@ class MetadataSearchOrchestrator(
      */
     @Synchronized
     private fun prefetch(tracks: List<YtmTrack>) {
-        if (prefetchJob?.isActive == true) return
+        if (tracks.isEmpty()) return
+        // Replace any in-flight warm instead of returning early. The old
+        // early-return silently dropped the warm for the NEWEST results — a
+        // search issued while a previous prefetch was still running (normal
+        // while typing) left the visible rows cold. Cancelling here is safe:
+        // streamTarget's single-flight is reference-counted, so a foreground
+        // playback request that joined the same resolution is not cancelled
+        // with this caller.
+        prefetchJob?.cancel()
         prefetchJob = backgroundScope.launch {
             for (track in tracks) {
                 if (!isActive || foregroundPlaybackDemand) break
@@ -160,6 +168,38 @@ class MetadataSearchOrchestrator(
         } finally {
             foregroundPlaybackDemand = false
         }
+    }
+
+    /**
+     * Resolve [requestedId] to a playable target and warm the server-side CDN
+     * path WITHOUT streaming audio back to the caller.
+     *
+     * Why this exists: the watch used to "warm" a track by requesting
+     * `/api/stream/{id}` with `Range: bytes=0-0`. The proxy deliberately runs
+     * tiny-window requests to the natural EOF (clamping left the socket
+     * silent in live testing), so that probe pumped the WHOLE song through the
+     * response until the client disconnect was noticed. On a LAN that is
+     * harmless; over Tailscale Funnel it relays an entire track through the
+     * tailnet, competing with the real playback request and forcing a second
+     * TLS connection. This resolves the same target (single-flighted with the
+     * playback request) and answers with a tiny JSON body instead.
+     *
+     * Returns true when a playable target is cached and ready.
+     */
+    suspend fun prewarm(requestedId: String): Boolean {
+        val realId = resolveStreamVideoId(requestedId) ?: return false
+        val target = try {
+            youtube.streamTarget(realId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return false
+        } ?: return false
+        // Heat the CDN edge on the SERVER side (one ranged byte, bounded).
+        // This is what makes the next track's tap start instantly; it costs
+        // the watch nothing.
+        warmUpstream?.invoke(realId, target.url)
+        return true
     }
 
     /**

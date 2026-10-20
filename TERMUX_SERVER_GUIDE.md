@@ -176,6 +176,52 @@ Put the printed HTTPS URL into:
 
 Then enter your Wearsic API key.
 
+## Option B2 — Public HTTPS with a PERMANENT Cloudflare URL
+
+Tailscale Funnel is a stable URL, but the watch is not on your tailnet, so
+every request is relayed through Tailscale's DERP infrastructure. A Cloudflare
+Quick Tunnel is usually faster, and free — but its hostname is **random** and
+changes on every restart, so the watch can never remember it.
+
+`wearsic cloudflare` combines the two: a Cloudflare **Worker** sits in front
+of the Quick Tunnel and gives it a permanent address.
+
+~~~bash
+# One-time: a free Cloudflare account, an API token and your account id.
+#   token  -> Cloudflare dashboard -> Workers & Pages -> API Tokens ->
+#             Create Token -> "Edit Cloudflare Workers" + "Account Settings: Read"
+#   id     -> the same page shows the Account ID
+wearsic api-key your-own-key          # a public URL always needs the API key
+export CLOUDFLARE_API_TOKEN=...
+export CLOUDFLARE_ACCOUNT_ID=...
+
+wearsic cloudflare
+~~~
+
+It prints:
+
+~~~text
+  PERMANENT URL   https://wearsic.your-subdomain.workers.dev
+  current tunnel  https://random-words.trycloudflare.com
+~~~
+
+Put the **permanent URL** into **Wearsic → Settings → Server URL** and enter
+your API key. The address never changes: if the tunnel restarts and hands out
+a new random hostname, the Worker is re-uploaded automatically and the watch
+carries on.
+
+Notes:
+
+- **No domain, no DNS, no cost.** The `workers.dev` subdomain is created on
+  first use if the account does not have one yet.
+- The credentials can live in `~/wearsic-server/.env` (see `.env.example`)
+  instead of the environment.
+- `wearsic cloudflare status` checks the permanent URL end to end;
+  `wearsic cloudflare stop` shuts it down.
+- Like every other public path here, this REQUIRES an API key — without one
+  the engine would be open to anyone who guesses the address.
+
+
 ### First-time Tailscale requirement
 
 If Funnel says HTTPS certificates are disabled, enable them in the Tailscale admin console:

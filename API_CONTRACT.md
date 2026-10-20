@@ -197,8 +197,60 @@ Note: album `id` is a full playlist URL, not a bare id.
 
 ---
 
-## Response Compression & Caching (server ≥ v1.9.1)
+## The Cloudflare front door (a permanent public URL)
 
+This is not an endpoint — it is a *deployment* shape for the whole API above.
+
+- **GET** `https://<worker>.<subdomain>.workers.dev/<any endpoint>`
+- The Worker is a transparent proxy: method, path, query, request headers and
+  body are forwarded to the current tunnel origin, and the response (status,
+  headers and body) is streamed straight back.
+
+### Why it exists
+
+A Cloudflare Quick Tunnel (`cloudflared tunnel --url http://localhost:PORT`)
+is the fastest and cheapest public path — the watch reaches Cloudflare's edge
+directly, with no Tailscale DERP relay in between. But its hostname is
+**random** and changes on every restart, so a watch app cannot remember it.
+
+A Cloudflare Worker in front of the tunnel fixes that: the Worker has a
+**permanent** `workers.dev` address, and the CLI re-uploads it (with a new
+`ORIGIN` binding) whenever the tunnel hands out a new hostname. The watch only
+ever knows the permanent address and is never re-paired.
+
+### Contract requirements on the Worker
+
+The proxy MUST preserve these, or audio breaks:
+
+- **`Range`** request headers and `Content-Range`/`206` responses. The engine
+  answers byte-range audio; dropping `Range` turns every seek into a full
+  re-download.
+- **Streaming** responses. Buffering a whole track in the Worker would add
+  seconds of latency and exceed the memory limit on long songs.
+- The **`X-Wearsic-Key`** (or whatever the engine's auth header is) request
+  header, unchanged.
+- **No caching** of any response — a cached track would be served forever and
+  the tunnel hostname would stop mattering.
+- Hop-by-hop headers (`Connection`, `Transfer-Encoding`, `Host`, …) are
+  stripped in both directions: they describe the single hop they arrived on.
+
+The implementation is `wearsic-server/wearsic-cloudflare-worker.js` and is
+uploaded verbatim — nothing is generated at runtime that cannot be read first.
+
+### Operations
+
+- `wearsic cloudflare` — start the tunnel and the front door, print the
+  permanent URL.
+- `wearsic cloudflare status` — the permanent URL and a live health check
+  *through* it.
+- `wearsic cloudflare stop` — stop both.
+- `wearsic cloudflare url` — print just the permanent URL (for scripting).
+
+Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, and — because the
+address is public — a `WEARSIC_API_KEY`. The Worker is created on first use;
+the account's `workers.dev` subdomain is created if it does not exist yet.
+
+## Response Compression & Caching (server ≥ v1.9.1)
 - **gzip**: JSON responses ≥ 512 bytes are gzip-compressed
   (`Content-Encoding: gzip`) when the client sends `Accept-Encoding`. The
   compressor is allow-listed to `application/json` — audio bytes are never

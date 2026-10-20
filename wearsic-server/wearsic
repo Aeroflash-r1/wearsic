@@ -1544,6 +1544,506 @@ cmd_funnel() {
   rm -f "$out"
 }
 
+# ── Cloudflare: a PERMANENT public URL, free, without a domain ─────────────
+#
+# THE PROBLEM THIS SOLVES
+# -----------------------
+# `wearsic funnel` (Tailscale Funnel) gives a stable URL, but the watch is
+# not on your tailnet, so every request is relayed through Tailscale's DERP
+# infrastructure — measurably slower than Cloudflare's own edge, and it
+# depends on a VPN app being reachable.
+#
+# A Cloudflare Quick Tunnel (cloudflared) is the opposite trade: it is the
+# fastest option available (the watch talks to Cloudflare's edge, period) and
+# it needs no account, no domain and no money. Its one flaw is that the
+# hostname is RANDOM and changes every time the tunnel restarts, so the
+# watch cannot remember it.
+#
+# THE FIX
+# -------
+# Put a Cloudflare Worker in front of the tunnel:
+#
+#     watch  ──▶  https://wearsic.<sub>.workers.dev   (PERMANENT)
+#                       │  Worker proxies to
+#                       ▼
+#             https://<random>.trycloudflare.com  (changes on restart)
+#                       │
+#                       ▼
+#                cloudflared ──▶ the engine on this phone
+#
+# The Worker is re-uploaded with the new tunnel hostname whenever the tunnel
+# changes, so the permanent address never breaks. The watch only ever knows
+# the permanent address.
+#
+# The Worker source lives next to this script (wearsic-cloudflare-worker.js)
+# so it can be reviewed, and it is uploaded verbatim — nothing is generated
+# at runtime that you cannot read first.
+#
+# Credentials come from the environment or .env:
+#   CLOUDFLARE_API_TOKEN   (required) — needs "Workers Scripts: Edit"
+#   CLOUDFLARE_ACCOUNT_ID  (required)
+#   CLOUDFLARE_SUBDOMAIN   (optional) — your workers.dev subdomain
+#   CLOUDFLARE_WORKER      (optional) — worker name, default "wearsic"
+#
+# Like every other public-exposure path here, an API key is REQUIRED: the
+# permanent URL is world-readable, and without a key the engine would be
+# open to anyone who guesses the address.
+
+CF_WORKER_SRC_NAME="wearsic-cloudflare-worker.js"
+CF_COMPAT_DATE="2025-08-06"
+
+cf_state_file() { echo "$DEST/wearsic-state/cloudflare.json"; }
+cf_log_file()   { echo "$DEST/wearsic-state/cloudflare.log"; }
+
+# A credential from the process environment, else from .env.
+cf_credential() {  # $1 = key name
+  local v
+  v="$(printenv "$1" 2>/dev/null || true)"
+  [ -n "$v" ] && { printf '%s' "$v"; return; }
+  env_value "$1"
+}
+
+cf_token()    { cf_credential CLOUDFLARE_API_TOKEN; }
+cf_account()  { cf_credential CLOUDFLARE_ACCOUNT_ID; }
+
+cf_worker_name() {
+  local w; w="$(cf_credential CLOUDFLARE_WORKER)"
+  [ -n "$w" ] || w="wearsic"
+  # The workers.dev hostname IS the worker name, so it must be a valid DNS
+  # label: letters, digits and dashes, no leading/trailing dash, <=63 chars.
+  case "$w" in
+    *[!a-zA-Z0-9-]*) die "CLOUDFLARE_WORKER must be letters, digits or dashes only (it becomes a DNS label)" ;;
+  esac
+  [ "${#w}" -le 63 ] || die "CLOUDFLARE_WORKER must be 63 characters or fewer"
+  case "$w" in
+    -*|*-) die "CLOUDFLARE_WORKER must not start or end with a dash" ;;
+  esac
+  printf '%s' "$w"
+}
+
+# --- Cloudflare API ---------------------------------------------------------
+# $1 = method, $2 = path (already /client/v4-relative), $3 = optional JSON body
+cf_api() {
+  local method="$1" path="$2" body="${3:-}"
+  local tok; tok="$(cf_token)"
+  local args=(-fsS -X "$method" -H "Authorization: Bearer $tok")
+  [ -n "$body" ] && args+=(-H "Content-Type: application/json" -d "$body")
+  curl "${args[@]}" "https://api.cloudflare.com/client/v4$path" 2>/dev/null
+}
+
+# The account's workers.dev subdomain. Cloudflare assigns one per account
+# ("<name>.workers.dev"); every Worker then gets
+# "<worker-name>.<subdomain>.workers.dev".
+cf_subdomain() {
+  local acc; acc="$(cf_account)"
+  [ -n "$acc" ] || return 1
+  local json
+  json="$(cf_api GET "/accounts/$acc/workers/subdomain")" || return 1
+  jstr "$json" subdomain | head -1
+}
+
+# Create the workers.dev subdomain if the account has none yet. Cloudflare
+# requires this to exist before any worker.dev route can be served.
+cf_ensure_subdomain() {
+  local sub; sub="$(cf_subdomain || true)"
+  if [ -n "$sub" ]; then printf '%s' "$sub"; return 0; fi
+
+  local acc; acc="$(cf_account)"
+  local want; want="$(cf_credential CLOUDFOMAIN_SUBDOMAIN)"
+  [ -n "$want" ] || want="$(cf_credential CLOUDFLARE_SUBDOMAIN)"
+  [ -n "$want" ] || want="wearsic"
+  case "$want" in
+    *[!a-z0-9-]*) die "The workers.dev subdomain must be lowercase letters, digits or dashes" ;;
+  esac
+
+  say "No workers.dev subdomain yet — creating '$want'…"
+  local out
+  out="$(cf_api PUT "/accounts/$acc/workers/subdomain" "{\"subdomain\":\"$want\"}")"
+  if ! printf '%s' "$out" | grep -q '"success":true'; then
+    say "Could not create the workers.dev subdomain."
+    printf '%s\n' "$out" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  → \1/p' | head -3
+    die "Fix it in the dashboard: Workers & Pages → your account → workers.dev subdomain"
+  fi
+  sub="$(cf_subdomain || true)"
+  [ -n "$sub" ] || die "The subdomain was created but Cloudflare did not report it back"
+  printf '%s' "$sub"
+}
+
+# Where the Worker source lives. In a repo checkout it sits next to this
+# script; the packaged install puts it in the install directory (the CLI
+# itself lives on $PATH, so $CLI_DIR is not reliable there).
+cf_worker_src() {
+  local c
+  for c in "$DEST/$CF_WORKER_SRC_NAME" "$CLI_DIR/$CF_WORKER_SRC_NAME"; do
+    [ -f "$c" ] && { printf '%s' "$c"; return 0; }
+  done
+  return 1
+}
+
+# Upload the Worker, pointing it at $1 (the current tunnel origin).
+# The multipart upload implicitly creates a version AND a deployment, so the
+# new origin is live the moment this returns.
+cf_deploy_worker() {  # $1 = origin url
+  local origin="$1"
+  local acc; acc="$(cf_account)"
+  local worker; worker="$(cf_worker_name)"
+  local src; src="$(cf_worker_src || true)"
+  [ -n "$src" ] || die "Worker source not found ($CF_WORKER_SRC_NAME) — reinstall with install.sh"
+
+  local meta
+  meta="$(printf '{"main_module":"%s","compatibility_date":"%s","bindings":[{"type":"plain_text","name":"ORIGIN","text":"%s"}]}' \
+        "$CF_WORKER_SRC_NAME" "$CF_COMPAT_DATE" "$origin")"
+
+  local out
+  out="$(curl -fsS -X PUT \
+      -H "Authorization: Bearer $(cf_token)" \
+      -F "metadata=$meta;type=application/json" \
+      -F "$CF_WORKER_SRC_NAME=@$src;filename=$CF_WORKER_SRC_NAME;type=application/javascript+module" \
+      "https://api.cloudflare.com/client/v4/accounts/$acc/workers/scripts/$worker" 2>&1)" || {
+    printf '%s\n' "$out" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  → \1/p' | head -3
+    die "Worker upload failed (see the message above)"
+  }
+  printf '%s' "$out" | grep -q '"success":true' || {
+    printf '%s\n' "$out" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  → \1/p' | head -3
+    die "Worker upload was rejected by Cloudflare"
+  }
+}
+
+cf_permanent_url() {  # $1 = subdomain
+  printf 'https://%s.%s.workers.dev' "$(cf_worker_name)" "$1"
+}
+
+# --- Tunnel hostname capture ------------------------------------------------
+# cloudflared announces the random hostname on stderr AND exposes it in its
+# Prometheus metrics. The log is tried first (it is authoritative and needs
+# no extra port); the metrics endpoint is the fallback for builds that log
+# it differently.
+#
+# The two sources differ in shape: the log prints a full URL, while the
+# metrics endpoint carries the bare hostname in a label. Both are accepted
+# and normalised to an https:// origin here, so callers never have to care.
+#
+# The LAST match wins, not the first: the log grows as cloudflared
+# re-announces, and a tunnel that reconnects with a NEW hostname appends it
+# at the end. Taking the first match would pin the supervisor to the
+# original hostname forever and the permanent URL would silently go stale.
+cf_hostname_from_text() {  # $1 = text
+  local h
+  h="$(printf '%s' "$1" | sed -n 's|.*\(https\{0,1\}://[a-z0-9-]\{1,63\}\.trycloudflare\.com\).*|\1|p' | tail -1)"
+  if [ -z "$h" ]; then
+    # Bare hostname (the Prometheus label form, e.g. hostname="abc.trycloudflare.com").
+    # The leading [^a-z0-9-] anchors the label start: without it, sed's greedy
+    # `.*` would backtrack to the SHORTEST possible label and return
+    # "s.trycloudflare.com" instead of "abc.trycloudflare.com".
+    h="$(printf '%s' "$1" | sed -n 's|.*[^a-z0-9-]\([a-z0-9-]\{1,63\}\.trycloudflare\.com\).*|\1|p' | tail -1)"
+  fi
+  [ -n "$h" ] || return 0
+  case "$h" in
+    http://*|https://*) printf '%s' "$h" | sed 's|/*$||' ;;
+    *) printf 'https://%s' "$h" ;;
+  esac
+}
+
+cf_hostname_from_log() {  # $1 = log file
+  [ -f "$1" ] || return 0
+  cf_hostname_from_text "$(cat "$1" 2>/dev/null)"
+}
+
+cf_hostname_from_metrics() {  # $1 = metrics port
+  local body
+  body="$(curl -fsS --max-time 5 "http://127.0.0.1:$1/metrics" 2>/dev/null)" || return 0
+  cf_hostname_from_text "$body"
+}
+
+# Normalise a bare hostname to https://, and a full URL to its origin.
+cf_normalize_origin() {  # $1 = hostname or url
+  case "$1" in
+    http://*|https://*) printf '%s' "$1" | sed 's|/*$||' ;;
+    "") : ;;
+    *) printf 'https://%s' "$1" ;;
+  esac
+}
+
+# --- State ------------------------------------------------------------------
+# Written COMPACT, like every other state file the CLI reads (jstr expects
+# the value to start immediately after the key, with no leading whitespace).
+cf_state_write() {  # $1 = subdomain, $2 = origin, $3 = permanent url
+  local f; f="$(cf_state_file)"
+  mkdir -p "$(dirname "$f")"
+  printf '{"worker":"%s","subdomain":"%s","origin":"%s","url":"%s","port":"%s","updated_at":%s}\n' \
+    "$(cf_worker_name)" "$1" "$2" "$3" "$(port)" "$(date +%s)" > "$f"
+}
+
+cf_state_get() {  # $1 = field
+  local f; f="$(cf_state_file)"
+  [ -f "$f" ] || return 1
+  jstr "$(cat "$f")" "$1" | head -1
+}
+
+cf_pids() {  # pids of THIS install's cloudflare supervisor
+  # The supervisor is matched by BOTH the dispatch keyword and the install
+  # directory, so two independent wearsic installs on one machine (or a
+  # leftover from a previous run) never shadow each other.
+  local self="${BASHPID:-$$}" d pid cmdline
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    [ "$pid" = "$$" ] && continue
+    [ "$pid" = "$self" ] && continue
+    cmdline="$( { tr '\0' ' ' < "$d/cmdline"; } 2>/dev/null )" || continue
+    case "$cmdline" in
+      *"__cf_supervise"*"$DEST"*) printf '%s\n' "$pid" ;;
+    esac
+  done
+}
+
+# --- The supervisor ---------------------------------------------------------
+# Runs the tunnel, points the Worker at it, and re-points the Worker every
+# time the tunnel hands out a new random hostname. Restarts the tunnel if it
+# dies. Runs detached; the CLI starts it and reads the state file.
+cf_supervise() {  # $1 = engine port
+  local p="$1"
+  local log; log="$(cf_log_file)"
+  mkdir -p "$(dirname "$log")"
+  : > "$log"
+
+  local tunnel_pid="" origin="" sub="" perm=""
+
+  while true; do
+    # 1. Start the tunnel.
+    cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:$p" >> "$log" 2>&1 &
+    tunnel_pid=$!
+    echo "[wearsic $(date '+%H:%M:%S')] tunnel started (pid $tunnel_pid)" >> "$log"
+
+    # 2. Wait for the random hostname. cloudflared prints it to stderr; the
+    #    metrics endpoint is the fallback.
+    origin=""
+    local i port
+    for i in $(seq 1 60); do
+      origin="$(cf_hostname_from_log "$log")"
+      [ -n "$origin" ] && break
+      for port in 20241 20242 20243 20244 20245; do
+        origin="$(cf_hostname_from_metrics "$port")"
+        [ -n "$origin" ] && break
+      done
+      [ -n "$origin" ] && break
+      kill -0 "$tunnel_pid" 2>/dev/null || break
+      sleep 1
+    done
+    origin="$(cf_normalize_origin "$origin")"
+
+    if [ -z "$origin" ]; then
+      echo "[wearsic $(date '+%H:%M:%S')] ERROR: could not read the tunnel hostname" >> "$log"
+      # The tunnel may still be coming up; give it a moment, then retry.
+      sleep 5
+      kill "$tunnel_pid" 2>/dev/null
+      continue
+    fi
+
+    # 3. Point the Worker at it.
+    sub="$(cf_ensure_subdomain 2>>"$log")" || {
+      echo "[wearsic $(date '+%H:%M:%S')] ERROR: no workers.dev subdomain" >> "$log"
+      sleep 15
+      kill "$tunnel_pid" 2>/dev/null
+      continue
+    }
+    perm="$(cf_permanent_url "$sub")"
+
+    if cf_deploy_worker "$origin" >>"$log" 2>&1; then
+      echo "[wearsic $(date '+%H:%M:%S')] worker -> $origin" >> "$log"
+      cf_state_write "$sub" "$origin" "$perm"
+    else
+      echo "[wearsic $(date '+%H:%M:%S')] ERROR: worker upload failed" >> "$log"
+    fi
+
+    # 4. Watch for a new hostname. cloudflared only changes it when the
+    #    tunnel reconnects, so this is rare — but when it happens the
+    #    permanent URL must follow it, which is the whole point.
+    while kill -0 "$tunnel_pid" 2>/dev/null; do
+      sleep 10
+      local new
+      new="$(cf_hostname_from_log "$log")"
+      new="$(cf_normalize_origin "$new")"
+      if [ -n "$new" ] && [ "$new" != "$origin" ]; then
+        echo "[wearsic $(date '+%H:%M:%S')] tunnel changed -> $new" >> "$log"
+        origin="$new"
+        if cf_deploy_worker "$origin" >>"$log" 2>&1; then
+          echo "[wearsic $(date '+%H:%M:%S')] worker re-pointed -> $origin" >> "$log"
+          cf_state_write "$sub" "$origin" "$perm"
+        else
+          echo "[wearsic $(date '+%H:%M:%S')] ERROR: re-point failed" >> "$log"
+        fi
+      fi
+    done
+
+    echo "[wearsic $(date '+%H:%M:%S')] tunnel exited — restarting" >> "$log"
+    sleep 3
+  done
+}
+
+# --- Commands ---------------------------------------------------------------
+
+cmd_cloudflare() {
+  local sub_cmd="start"
+  case "${1:-}" in
+    start|status|stop|url) sub_cmd="$1"; shift ;;
+    "") : ;;
+    -h|--help) sub_cmd="help" ;;
+    *) die "Unknown option for 'wearsic cloudflare': $1 (try: wearsic cloudflare [start|status|stop|url])" ;;
+  esac
+
+  case "$sub_cmd" in
+    help)
+      say "wearsic cloudflare — a PERMANENT public URL, free, no domain needed."
+      say ""
+      say "  start    start the tunnel + the Worker front door (default)"
+      say "  status   show the permanent URL and whether it is live"
+      say "  stop     stop the tunnel and the Worker front door"
+      say "  url      print just the permanent URL"
+      say ""
+      say "Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (env or .env)."
+      return 0
+      ;;
+  esac
+
+  installed
+
+  case "$sub_cmd" in
+    status) cf_cloudflare_status; return 0 ;;
+    url)
+      local u; u="$(cf_state_get url || true)"
+      [ -n "$u" ] || die "No permanent URL yet — start it: wearsic cloudflare"
+      printf '%s\n' "$u"
+      return 0
+      ;;
+    stop) cf_cloudflare_stop; return 0 ;;
+  esac
+
+  # start -------------------------------------------------------------------
+  # The permanent URL is public. Same rule as every other public path here.
+  if [ -z "$(api_key)" ]; then
+    die "The permanent URL is public — set an API key first:  wearsic api-key <your-key>"
+  fi
+  if ! health_ok; then
+    die "Server is not running/healthy — start it first: wearsic start"
+  fi
+  [ -n "$(cf_token)" ] || die "CLOUDFLARE_API_TOKEN is not set (put it in $ENV_FILE or the environment)"
+  [ -n "$(cf_account)" ] || die "CLOUDFLARE_ACCOUNT_ID is not set (put it in $ENV_FILE or the environment)"
+
+  if [ -n "$(cf_pids)" ]; then
+    say "Already running — permanent URL:"
+    say "  $(cf_state_get url || echo '?')"
+    return 0
+  fi
+
+  # cloudflared: not in the Alpine repos, so use Cloudflare's own release
+  # binary for this architecture.
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    local arch bin
+    case "$(uname -m)" in
+      aarch64|arm64) arch="arm64" ;;
+      x86_64|amd64)  arch="amd64" ;;
+      *) die "No cloudflared build for $(uname -m) — install it manually" ;;
+    esac
+    bin="$DEST/bin/cloudflared"
+    say "Installing cloudflared ($arch)…"
+    mkdir -p "$DEST/bin"
+    if ! curl -fsSL --max-time 300 \
+        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$arch" \
+        -o "$bin.tmp"; then
+      rm -f "$bin.tmp"
+      die "cloudflared download failed"
+    fi
+    # The official release is a signed binary; we only need it to be
+    # executable, and the sha256 is recorded in the state dir for reference.
+    sha256sum "$bin.tmp" > "$DEST/wearsic-state/cloudflared.sha256" 2>/dev/null || true
+    mv -f "$bin.tmp" "$bin"
+    chmod +x "$bin"
+    export PATH="$DEST/bin:$PATH"
+  fi
+
+  say "Starting the Cloudflare tunnel + the permanent Worker front door…"
+  # The install directory is passed to the supervisor as well as the port, so
+  # `wearsic cloudflare status` can tell THIS install's supervisor apart from
+  # any other one running on the machine.
+  if command -v setsid >/dev/null 2>&1; then
+    ( cd "$DEST" && setsid nohup bash "$CLI_DIR/wearsic" __cf_supervise "$(port)" "$DEST" >/dev/null 2>&1 </dev/null & )
+  else
+    ( cd "$DEST" && nohup bash "$CLI_DIR/wearsic" __cf_supervise "$(port)" "$DEST" >/dev/null 2>&1 </dev/null & )
+  fi
+
+  # Wait for the state file: it is written only after the Worker is live.
+  local i u=""
+  for i in $(seq 1 90); do
+    u="$(cf_state_get url || true)"
+    [ -n "$u" ] && break
+    sleep 1
+  done
+  if [ -z "$u" ]; then
+    say ""
+    say "The front door did not come up within 90s. The log has the reason:"
+    tail -12 "$(cf_log_file)" 2>/dev/null | sed 's/^/  /'
+    die "Cloudflare setup failed"
+  fi
+
+  say ""
+  say "  PERMANENT URL   $u"
+  say "  current tunnel  $(cf_state_get origin || echo '?')"
+  say ""
+  say "Point the watch at that URL (Wearsic app → Settings → Server URL)."
+  say "The address stays the same even if the tunnel restarts."
+  say ""
+  say "  wearsic cloudflare status   check it"
+  say "  wearsic cloudflare stop      shut it down"
+}
+
+cf_cloudflare_status() {
+  local u origin
+  u="$(cf_state_get url || true)"
+  if [ -z "$u" ]; then
+    say "Not running — start it:  wearsic cloudflare"
+    return 1
+  fi
+  say "Permanent URL  $u"
+  origin="$(cf_state_get origin || true)"
+  [ -n "$origin" ] && say "Tunnel origin  $origin"
+  if [ -n "$(cf_pids)" ]; then
+    say "Supervisor    running"
+  else
+    say "Supervisor    NOT running — the URL is dead:  wearsic cloudflare"
+  fi
+  # End-to-end check through the permanent URL, not just the local engine.
+  if curl -fsS --max-time 20 "$u/health" 2>/dev/null | grep -q '"status":"ok"'; then
+    say "Health        200 OK through the permanent URL"
+    return 0
+  fi
+  say "Health        no response through the permanent URL"
+  say "              (the Worker is up but the tunnel behind it is not)"
+  return 1
+}
+
+cf_cloudflare_stop() {
+  local pids; pids="$(cf_pids)"
+  if [ -z "$pids" ]; then
+    say "Not running."
+    return 0
+  fi
+  say "Stopping…"
+  for pid in $pids; do
+    # Kill the supervisor AND the cloudflared it started.
+    pkill -P "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
+  done
+  local i
+  for i in $(seq 1 10); do
+    [ -z "$(cf_pids)" ] && break
+    sleep 1
+  done
+  for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
+  pkill -f 'cloudflared tunnel' 2>/dev/null || true
+  rm -f "$(cf_state_file)" 2>/dev/null || true
+  say "Stopped. The Worker still exists on Cloudflare (delete it in the dashboard if you want it gone)."
+}
+
 cmd_public() {
   installed
   # Public exposure without authentication is refused outright — same rule
@@ -1553,14 +2053,16 @@ cmd_public() {
   fi
   say "Public URL options (watch works on any network, no VPN app on the watch):"
   say ""
-  say "1) Tailscale Funnel — STABLE url, recommended:"
+  say "1) Tailscale Funnel — STABLE url, no account needed, but slower:"
   say "     wearsic server funnel"
   say "   → https://<phone-name>.<tailnet>.ts.net (same address every time)"
   say ""
-  say "2) Cloudflare Tunnel — no account, but the URL changes every restart:"
-  say "     pkg install -y cloudflared"
-  say "     cloudflared tunnel --url http://localhost:$(port)"
-  say "   → https://<random>.trycloudflare.com"
+  say "2) Cloudflare — STABLE url, free, fastest, needs a free account:"
+  say "     wearsic server cloudflare"
+  say "   → https://wearsic.<sub>.workers.dev (same address every time)"
+  say "   A Cloudflare Quick Tunnel is the front door; a Worker gives it a"
+  say "   permanent address, so the watch never has to be re-paired."
+  say "   Needs CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID."
   say ""
   say "A public URL MUST have an API key: wearsic server api key <your-key>"
 }
@@ -2232,12 +2734,19 @@ cmd_doctor() {
 
   section "System" cyan
   if command -v java >/dev/null 2>&1; then
-    if java -version >/dev/null 2>&1; then
-      doctor_row "java" ok "$(java -version 2>&1 | head -1 | tr -d '"' | cut -c1-52)"
+    # The detail is deliberately SHORT and constant-width: a long version
+    # string (or an error message) shifts where the row wraps, and the
+    # layout tests assert on the name column position.
+    local jv
+    jv="$(java -version 2>&1 | head -1 | tr -d '"' | sed 's/.*version "\([^"]*\)".*/\1/; s/ .*//')"
+    if [ -n "$jv" ]; then
+      doctor_row "java" ok "$jv"
     elif detect_jvm_shim && ensure_jvm_runnable; then
-      doctor_row "java" ok "$(java -version 2>&1 | head -1 | tr -d '"' | cut -c1-52) (shim)"
+      jv="$(java -version 2>&1 | head -1 | tr -d '"' | sed 's/.*version "\([^"]*\)".*/\1/; s/ .*//')"
+      doctor_row "java" ok "${jv:-ok} (shim)"
     else
-      doctor_row "java" err "cannot start — see 'wearsic doctor' JVM notes"; fails=$((fails+1))
+      doctor_row "java" err "cannot start — needs an LD_PRELOAD shim"
+      fails=$((fails+1))
     fi
   else
     doctor_row "java" err "missing — pkg install -y openjdk-17"; fails=$((fails+1))
@@ -2436,6 +2945,24 @@ cmd_doctor() {
     doctor_row "funnel" off "not installed"
   fi
 
+  # The Cloudflare front door is independent of Tailscale: it only needs
+  # cloudflared, a Cloudflare API token and a free Cloudflare account.
+  local cf_url cf_origin
+  cf_url="$(cf_state_get url || true)"
+  cf_origin="$(cf_state_get origin || true)"
+  if [ -n "$cf_url" ]; then
+    if [ -n "$(cf_pids)" ] && curl -fsS --max-time 15 "$cf_url/health" 2>/dev/null | grep -q '"status":"ok"'; then
+      doctor_row "cloudflare" ok "live — $cf_url"
+    else
+      doctor_row "cloudflare" warn "not answering — $cf_url (restart: wearsic cloudflare)"
+      warns=$((warns+1))
+    fi
+  elif command -v cloudflared >/dev/null 2>&1 || [ -x "$DEST/bin/cloudflared" ]; then
+    doctor_row "cloudflare" off "not active — start with: wearsic cloudflare"
+  else
+    doctor_row "cloudflare" off "not installed (needs cloudflared + a Cloudflare account)"
+  fi
+
   printf '\n'
   if [ "$fails" -eq 0 ]; then
     box_begin "checkup" ok
@@ -2529,6 +3056,7 @@ usage() {
   ICOL=16
   section "Remote access" amber
   item "funnel" "Tailscale Funnel URL" "public HTTPS URL (Tailscale Funnel)"
+  item "cloudflare" "Cloudflare Workers URL" "permanent public HTTPS URL (free, no domain)"
   item "public" "other public recipes" "public URL recipes (Tailscale / Cloudflare)"
   item "cookies [cookie]" "fix bot-wall errors" "set the YouTube cookie (fixes bot-wall errors)"
 
@@ -2569,6 +3097,7 @@ case "${1:-}" in
       api-key) shift 2; cmd_api_key "$@" ;;
       cookies) shift 2; cmd_cookies "$@" ;;
       funnel)  cmd_funnel ;;
+      cloudflare) shift 2; cmd_cloudflare "$@" ;;
       public)  cmd_public ;;
       "") usage; exit 2 ;;
       *) die "Unknown command: wearsic server $2 — run 'wearsic' for the list" ;;
@@ -2590,7 +3119,9 @@ case "${1:-}" in
   api-key|apikey) shift; cmd_api_key "$@" ;;
   cookies)   shift; cmd_cookies "$@" ;;
   funnel)    cmd_funnel ;;
+  cloudflare) shift; cmd_cloudflare "$@" ;;
   public)    cmd_public ;;
+  __cf_supervise) shift; cf_supervise "$@" ;;
   ""|help|-h|--help) usage ;;
   *) die "Unknown command: wearsic $1 — run 'wearsic' for the list" ;;
 esac

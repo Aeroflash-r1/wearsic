@@ -146,17 +146,17 @@ done
 # ═══ 4. scripted output: plain, single-line key, no codes when piped ═════════
 echo "scripted output:"
 u="$(WEARSIC_DIR="$DEST" COLUMNS= WEARSIC_COLOR=auto bash "$CLI" url 2>/dev/null)"
-if printf '%s' "$u" | grep -q "$ESC"; then
+if printf '%s' "$u" | grep "$ESC" >/dev/null; then
   fail "piped url is plain (no escape codes)"
 else
   pass "piped url is plain (no escape codes)"
 fi
-if printf '%s\n' "$u" | grep -q "test2345"; then
+if printf '%s\n' "$u" | grep "test2345" >/dev/null; then
   pass "piped url keeps the API key on one line"
 else
   fail "piped url keeps the API key on one line"
 fi
-if printf '%s\n' "$u" | grep -q '╭'; then
+if printf '%s\n' "$u" | grep '╭' >/dev/null; then
   pass "piped url still draws the pairing panel"
 else
   fail "piped url still draws the pairing panel"
@@ -166,12 +166,12 @@ fi
 hj="$(WEARSIC_DIR="$DEST" WEARSIC_COLOR=always bash "$CLI" health --json 2>/dev/null)"
 rc=$?
 check "health --json exits 0" "0" "$rc"
-if printf '%s' "$hj" | grep -q '"status":"ok"'; then
+if printf '%s' "$hj" | grep '"status":"ok"' >/dev/null; then
   pass "health --json carries the raw body"
 else
   fail "health --json carries the raw body"
 fi
-if printf '%s' "$hj" | grep -q "$ESC"; then
+if printf '%s' "$hj" | grep "$ESC" >/dev/null; then
   fail "health --json has no escape codes"
 else
   pass "health --json has no escape codes"
@@ -179,7 +179,7 @@ fi
 
 # ═══ 6. NO_COLOR wins over WEARSIC_COLOR=always ═════════════════════════════
 nc="$(WEARSIC_DIR="$DEST" NO_COLOR=1 WEARSIC_COLOR=always COLUMNS=46 bash "$CLI" help 2>&1)"
-if printf '%s' "$nc" | grep -q "$ESC"; then
+if printf '%s' "$nc" | grep "$ESC" >/dev/null; then
   fail "NO_COLOR=1 forces plain output"
 else
   pass "NO_COLOR=1 forces plain output"
@@ -188,7 +188,7 @@ fi
 # ═══ 7. help lists every command group ══════════════════════════════════════
 h="$(run 46 help)"
 for grp in "Server" "Watch pairing" "Engine" "Remote access"; do
-  if printf '%s' "$h" | grep -q "$grp"; then
+  if printf '%s' "$h" | grep "$grp" >/dev/null; then
     pass "help lists '$grp'"
   else
     fail "help lists '$grp'"
@@ -198,12 +198,12 @@ done
 echo "components:"
 # ═══ 8. doctor rows = glyph + NAME (not the old "— ok" state-in-name bug) ═
 do="$(run 46 doctor)"
-if printf '%s\n' "$do" | strip | grep -qE '^    .[[:space:]]+(java|ffmpeg|storage|termux|install|health)'; then
+if printf '%s\n' "$do" | strip | grep -E '^    .[[:space:]]+(java|ffmpeg|storage|termux|install|health)' >/dev/null; then
   pass "doctor rows render glyph + check name"
 else
   fail "doctor rows render glyph + check name"
 fi
-if printf '%s\n' "$do" | strip | grep -qE '— (ok|warn|err|off)'; then
+if printf '%s\n' "$do" | strip | grep -E '— (ok|warn|err|off)' >/dev/null; then
   fail "doctor rows do not print the state in the name column"
 else
   pass "doctor rows do not print the state in the name column"
@@ -224,12 +224,12 @@ else
 fi
 
 # ═══ 10. status is a titled panel and states its verdict ══════════════════
-if printf '%s\n' "$st" | strip | grep -q '╭─ status'; then
+if printf '%s\n' "$st" | strip | grep '╭─ status' >/dev/null; then
   pass "status draws the status panel"
 else
   fail "status draws the status panel"
 fi
-if printf '%s\n' "$st" | strip | grep -qE '(healthy|not healthy|stopped)'; then
+if printf '%s\n' "$st" | strip | grep -E '(healthy|not healthy|stopped)' >/dev/null; then
   pass "status states its verdict"
 else
   fail "status states its verdict"
@@ -237,7 +237,7 @@ fi
 
 # ═══ 11. state chips degrade to [label] without colour ════════════════════
 pp="$(WEARSIC_DIR="$DEST" NO_COLOR=1 COLUMNS=46 bash "$CLI" help 2>&1)"
-if printf '%s\n' "$pp" | grep -qE '\[(not )?(running|installed)\]'; then
+if printf '%s\n' "$pp" | grep -E '\[(not )?(running|installed)\]' >/dev/null; then
   pass "state chips fall back to [label] when colour is off"
 else
   fail "state chips fall back to [label] when colour is off"

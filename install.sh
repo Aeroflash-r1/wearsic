@@ -555,7 +555,7 @@ mv "$DEST/bin.new" "$DEST/bin" && mv "$DEST/lib.new" "$DEST/lib" \
 # Launcher + supporting files (code only — never data). run-termux.sh goes
 # in atomically: re-running the installer over a LIVE server must not
 # truncate the supervisor's script while bash is reading it.
-for f in run-termux.sh .env.example README.md; do
+for f in run-termux.sh .env.example README.md wearsic-cloudflare-worker.js; do
   [ -f "$SRC/$f" ] || continue
   if [ "$f" = "run-termux.sh" ]; then
     replace_file "$SRC/$f" "$DEST/$f"

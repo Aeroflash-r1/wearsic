@@ -162,6 +162,25 @@ jobs:
       - name: Run CLI shell tests (screen layout at phone widths)
         run: bash wearsic-server/tests/ui-layout-test.sh
 
+      # The Cloudflare front door turns a random Quick Tunnel hostname into a
+      # PERMANENT workers.dev address, so the watch never has to be re-paired
+      # after a restart. Offline: stubs the Cloudflare API and pins hostname
+      # capture (log + Prometheus metrics), the permanent-URL construction,
+      # the Worker upload (endpoint, bearer token, ORIGIN binding,
+      # compatibility_date) and the re-point that happens when the tunnel
+      # hands out a NEW random hostname.
+      - name: Run CLI shell tests (Cloudflare front door)
+        run: bash wearsic-server/tests/cloudflare-tunnel-test.sh
+
+      # End-to-end for the same feature: a real engine behind a mocked
+      # Cloudflare edge. Proves the permanent URL actually serves the engine
+      # and that it survives a tunnel hostname change. The engine is built
+      # here because the shell-test job runs before the Gradle build steps.
+      - name: Run CLI shell tests (Cloudflare end-to-end)
+        run: |
+          ./gradlew :wearsic-server:installDist
+          bash wearsic-server/tests/cloudflare-e2e-test.sh
+
       # Real pixels at Galaxy Watch7 dimensions. `ScreenGalleryTest` renders
       # every reachable screen through Robolectric and writes PNGs into
       # app/src/test/screenshots/. Roborazzi only WRITES pixels in record

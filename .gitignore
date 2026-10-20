@@ -35,3 +35,6 @@ keystore.properties
 *.log
 wearsic-server/wearsic-server.log
 build-release.log
+
+# Supervisor state dir (staged engine updates, rollback records)
+wearsic-server/wearsic-state/

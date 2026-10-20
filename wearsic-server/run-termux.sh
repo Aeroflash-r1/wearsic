@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # Wearsic server launcher (Termux) — auto-heal supervisor.
 #
 # Responsibilities:
@@ -79,6 +79,33 @@ fi
 export JAVA_OPTS="${JAVA_OPTS:--Xms64m -Xmx512m -XX:+UseG1GC -XX:TieredStopAtLevel=1 -XX:MaxGCPauseMillis=150 -Dhttp.keepAlive=true -Dhttp.maxConnections=10}"
 export PORT="${PORT:-8080}"
 export WEARSIC_DB_PATH="${WEARSIC_DB_PATH:-$SCRIPT_DIR/wearsic.db}"
+
+# --- JVM bootstrap ----------------------------------------------------------
+# Some hosts cannot start a JVM without help: inside an Android proot
+# (Acode's Alpine), HotSpot's startup probe tries to mprotect() a page to
+# PROT_READ|PROT_WRITE|PROT_EXEC, which Android's SELinux policy refuses
+# (EACCES), so the VM aborts with "Failed to mark memory page as executable".
+# A tiny LD_PRELOAD shim works around it. If the JVM cannot start and a shim
+# is available, use it — the engine then works without the caller having
+# sourced any environment first.
+if ! java -version >/dev/null 2>&1; then
+  _shim="${WEARSIC_JVM_SHIM:-}"
+  if [ -z "$_shim" ]; then
+    for _c in "/public/dev/android/toolchains/jvm-shim/libmprotect-shim.so" \
+               "$HOME/.wearsic/libmprotect-shim.so"; do
+      [ -f "$_c" ] && { _shim="$_c"; break; }
+    done
+  fi
+  if [ -n "$_shim" ]; then
+    LD_PRELOAD="$_shim${LD_PRELOAD:+:$LD_PRELOAD}"
+    export LD_PRELOAD
+    java -version >/dev/null 2>&1 \
+      && log "JVM needed the LD_PRELOAD shim ($_shim) — engine starting" \
+      || log "ERROR: the JVM still cannot start with the shim ($_shim)"
+  else
+    log "ERROR: the JVM cannot start and no shim was found — set WEARSIC_JVM_SHIM"
+  fi
+fi
 
 log() { echo "[wearsic $(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
 
@@ -306,8 +333,17 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
         log "ERROR: ffmpeg installation FAILED — Opus/WebM-only songs will answer 503."
         log "Fix with: pkg update -y && pkg install -y ffmpeg   (then: wearsic restart)"
       fi ) &
+  elif command -v apk >/dev/null 2>&1; then
+    # Alpine (Acode's proot userspace) uses apk, not Termux's pkg.
+    log "ffmpeg not found — installing in the background (music plays meanwhile)…"
+    ( if apk add --no-cache ffmpeg >> "$LOG" 2>&1 && command -v ffmpeg >/dev/null 2>&1; then
+        log "ffmpeg installed and verified — all songs now play"
+      else
+        log "ERROR: ffmpeg installation FAILED — Opus/WebM-only songs will answer 503."
+        log "Fix with: apk add ffmpeg   (then: wearsic restart)"
+      fi ) &
   else
-    log "ERROR: pkg not found — cannot install ffmpeg automatically (run: pkg install ffmpeg manually)"
+    log "ERROR: neither pkg nor apk found — cannot install ffmpeg automatically (run: pkg install ffmpeg manually)"
   fi
 fi
 

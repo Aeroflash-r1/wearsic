@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────
 # wearsic — the everyday command for the Wearsic server.
 #
@@ -27,8 +27,42 @@
 # ─────────────────────────────────────────────────────────────────────
 set -u
 
-DEST="${WEARSIC_DIR:-$HOME/wearsic-server}"
-RUN="$DEST/run-termux.sh"
+# Where the engine lives. Resolution order:
+#   1. $WEARSIC_DIR                       — explicit override, always wins
+#   2. <repo>/build/install/wearsic-server — a Gradle build in this checkout
+#   3. ~/wearsic-server                   — the packaged Termux install
+# The repo layout comes first so `wearsic` works straight after
+# `./gradlew :wearsic-server:installDist`, with no copy step.
+detect_dest() {
+    if [ -n "${WEARSIC_DIR:-}" ]; then
+        echo "$WEARSIC_DIR"
+        return
+    fi
+    local repo_build
+    # The :wearsic-server Gradle project builds into wearsic-server/build/.
+    repo_build="$CLI_DIR/build/install/wearsic-server"
+    if [ -x "$repo_build/bin/wearsic-server" ]; then
+        echo "$repo_build"
+        return
+    fi
+    echo "$HOME/wearsic-server"
+}
+
+# The supervisor script ships in the packaged install; in a repo checkout it
+# lives next to this CLI.
+detect_run() {
+    if [ -f "$DEST/run-termux.sh" ]; then
+        echo "$DEST/run-termux.sh"
+    elif [ -f "$CLI_DIR/run-termux.sh" ]; then
+        echo "$CLI_DIR/run-termux.sh"
+    else
+        echo "$DEST/run-termux.sh"
+    fi
+}
+
+CLI_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+DEST="$(detect_dest)"
+RUN="$(detect_run)"
 LOG="$DEST/wearsic-server.log"
 ENV_FILE="$DEST/.env"
 
@@ -738,7 +772,11 @@ doctor_row() { # name state detail
   esac
 }
 
-installed() { [ -f "$RUN" ] || die "Not installed (no $DEST). Run the one-line installer first."; }
+installed() {
+  [ -x "$DEST/bin/wearsic-server" ] \
+    || die "Not installed (no $DEST/bin/wearsic-server). Run the one-line installer, or: ./gradlew :wearsic-server:installDist"
+  [ -f "$RUN" ] || die "Not installed (no supervisor script at $RUN)."
+}
 
 # --- .env parsing (never `source` it — values may contain spaces) ----
 env_value() {  # $1 = key name
@@ -1003,7 +1041,14 @@ cmd_start() {
     note "starting (keep WiFi on; unrestricted battery for Termux helps)…"
     # bash explicitly so the launcher starts on any system (its shebang
     # points at the Termux bash path); identical behavior on Termux.
-    ( cd "$DEST" && nohup bash "$RUN" >/dev/null 2>&1 & )
+    # setsid detaches the supervisor into its own session, so it survives the
+    # shell that started it — and the process-group kill that a terminal or
+    # an app teardown sends. nohup alone only ignores SIGHUP.
+    if command -v setsid >/dev/null 2>&1; then
+      ( cd "$DEST" && setsid nohup bash "$RUN" >/dev/null 2>&1 < /dev/null & )
+    else
+      ( cd "$DEST" && nohup bash "$RUN" >/dev/null 2>&1 < /dev/null & )
+    fi
   fi
   # Wait up to ~30s for /health (the supervisor installs ffmpeg on
   # first start, which can take a while).
@@ -2147,6 +2192,37 @@ cmd_ready() {
   return 1
 }
 
+# Some hosts need an LD_PRELOAD shim before the JVM can start at all: on
+# Android-in-a-proot (Acode), HotSpot's startup probe tries to mprotect() a
+# page to RWX, which SELinux refuses, so the VM aborts with "Failed to mark
+# memory page as executable". The shim works around it. Probe for it once
+# and export it for the rest of the process when a plain JVM cannot start.
+JVM_SHIM=""
+ensure_jvm_runnable() {
+    java -version >/dev/null 2>&1 && return 0
+    [ -n "$JVM_SHIM" ] && [ -f "$JVM_SHIM" ] || return 1
+    LD_PRELOAD="$JVM_SHIM${LD_PRELOAD:+:$LD_PRELOAD}"
+    export LD_PRELOAD
+    java -version >/dev/null 2>&1
+}
+
+# Locate a shim when WEARSIC_JVM_SHIM is not set: the Acode dev root, then a
+# user-local copy.
+detect_jvm_shim() {
+    if [ -n "${WEARSIC_JVM_SHIM:-}" ]; then
+        [ -f "$WEARSIC_JVM_SHIM" ] && JVM_SHIM="$WEARSIC_JVM_SHIM"
+        return
+    fi
+    local c
+    for c in "/public/dev/android/toolchains/jvm-shim/libmprotect-shim.so" \
+             "$HOME/.wearsic/libmprotect-shim.so"; do
+        if [ -f "$c" ]; then
+            JVM_SHIM="$c"
+            return
+        fi
+    done
+}
+
 # End-to-end environment diagnostics. Prints only the PRESENCE of the API
 # key, never its value; never prints cookies or other secrets.
 # Exit codes: 0 = READY, 1 = problems found.
@@ -2156,7 +2232,13 @@ cmd_doctor() {
 
   section "System" cyan
   if command -v java >/dev/null 2>&1; then
-    doctor_row "java" ok "$(java -version 2>&1 | head -1 | tr -d '"' | cut -c1-52)"
+    if java -version >/dev/null 2>&1; then
+      doctor_row "java" ok "$(java -version 2>&1 | head -1 | tr -d '"' | cut -c1-52)"
+    elif detect_jvm_shim && ensure_jvm_runnable; then
+      doctor_row "java" ok "$(java -version 2>&1 | head -1 | tr -d '"' | cut -c1-52) (shim)"
+    else
+      doctor_row "java" err "cannot start — see 'wearsic doctor' JVM notes"; fails=$((fails+1))
+    fi
   else
     doctor_row "java" err "missing — pkg install -y openjdk-17"; fails=$((fails+1))
   fi
@@ -2182,11 +2264,13 @@ cmd_doctor() {
   if [ -n "${PREFIX:-}" ] && [ -d "${PREFIX:-/nonexistent}/bin" ]; then
     doctor_row "termux" ok "$PREFIX"
   else
-    doctor_row "termux" off "not Termux"; warns=$((warns+1))
+    # Not Termux is a legitimate deployment (the engine also runs on any
+    # Linux host with a JDK) — not a problem worth warning about.
+    doctor_row "termux" off "not Termux (generic Linux host)"
   fi
 
   section "Server" green
-  if [ -x "$DEST/bin/wearsic-server" ] && [ -f "$DEST/run-termux.sh" ]; then
+  if [ -x "$DEST/bin/wearsic-server" ] && [ -n "$(ls -A "$DEST/lib" 2>/dev/null)" ]; then
     doctor_row "install" ok "$DEST"
   else
     doctor_row "install" err "not installed in $DEST"; fails=$((fails+1))

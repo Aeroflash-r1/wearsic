@@ -2542,6 +2542,54 @@ cf_auth_write() {  # access_token expires_at refresh_token scope
 
 cf_auth_clear() { rm -f "$(cf_auth_file)" 2>/dev/null; }
 
+# --- A tiny crash-safe lock --------------------------------------------------
+# mkdir(2) is atomic on every filesystem this CLI runs on, so a lock
+# directory is the portable choice (flock is missing on macOS and on some
+# busybox installs). The current owner records its PID; if the owner dies
+# the stale lock is taken over immediately, so a killed supervisor cannot
+# wedge the session file forever.
+#
+# Why a lock here is not ceremony: every refresh ROTATES Cloudflare's
+# refresh token. Two processes refreshing in parallel means the loser gets
+# "invalid_grant" for a token that was already consumed — and the loser's
+# cleanup then deletes the session the winner just wrote. A phone can
+# easily have two supervisors alive (the engine's watchdog and a manual
+# run), and users hit exactly that: login at night, session gone by morning.
+cf_lock_try() {  # $1 = name (creates "<name>.lock")
+  local d="$1.lock" pid
+  if mkdir "$d" 2>/dev/null; then
+    printf '%s\n' "$$" > "$d/owner" 2>/dev/null
+    return 0
+  fi
+  # Distinguish a live owner from a crashed one.
+  pid="$(sed -n '1p' "$d/owner" 2>/dev/null | tr -dc '0-9')"
+  if [ -n "$pid" ] && [ "$pid" != "$$" ] && kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+  # Dead or unreadable owner: take over. Two takers race on the rmdir+mkdir
+  # pair and only one mkdir wins.
+  rmdir "$d" 2>/dev/null || rm -rf "$d"
+  mkdir "$d" 2>/dev/null || return 1
+  printf '%s\n' "$$" > "$d/owner" 2>/dev/null
+  return 0
+}
+
+cf_lock_wait() {  # $1 = name [tries] — acquires the lock or gives up
+  local tries="${2:-10}" i
+  for i in $(seq 1 "$tries"); do
+    cf_lock_try "$1" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+cf_unlock() {  # $1 = name
+  local d="$1.lock" p
+  p="$(sed -n '1p' "$d/owner" 2>/dev/null | tr -dc '0-9')"
+  [ "$p" = "$$" ] && { rm -rf "$d"; return 0; }
+  return 1
+}
+
 # Verification URLs come from Cloudflare's JSON and are shown to the user and
 # handed to the OS opener, so they are validated strictly. The authority
 # segment (everything after https:// up to the first /) must be exactly the
@@ -2561,16 +2609,34 @@ cf_assert_trusted_url() {  # $1 = URL
 }
 
 cf_oauth_refresh() {
-  local rt out status body
-  rt="$(cf_auth_field refresh_token)" || return 1
-  [ -n "$rt" ] || return 1
+  local out status body at ei exp_at rt lock
+  lock="$(cf_auth_file)"
+  # Serialize: refreshes rotate the refresh token, and the loser of a race
+  # would get invalid_grant for a token that was already consumed.
+  if ! cf_lock_wait "$lock" 10; then
+    return 1
+  fi
+  # Another process may have refreshed while we waited: if the access token
+  # is now valid, hand it out instead of burning another rotation.
+  at="$(cf_auth_field access_token 2>/dev/null || true)"
+  exp_at="$(cf_auth_field_num expires_at 2>/dev/null || true)"
+  if [ -n "$at" ] && [ -n "$exp_at" ] && [ "$exp_at" -gt $(( $(date +%s) + 60 )) ]; then
+    cf_unlock "$lock"
+    return 0
+  fi
+  rt="$(cf_auth_field refresh_token)" || { cf_unlock "$lock"; return 1; }
+  if [ -z "$rt" ]; then
+    cf_unlock "$lock"
+    return 1
+  fi
   out="$(curl -sS --max-time 30 -A "$CF_UA" -X POST "$CF_OAUTH_TOKEN_URL" \
       --data-urlencode 'grant_type=refresh_token' \
       --data-urlencode "refresh_token=$rt" \
       --data-urlencode "client_id=$CF_OAUTH_CLIENT_ID" \
-      -w $'\n%{http_code}' 2>/dev/null)" || return 1
+      -w $'\n%{http_code}' 2>/dev/null)" || { cf_unlock "$lock"; return 1; }
   status="${out##*$'\n'}"
   body="${out%$'\n'*}"
+  cf_unlock "$lock"
   case "$status" in
     2??) ;;
     4??)
@@ -2581,13 +2647,11 @@ cf_oauth_refresh() {
       ;;
     *) return 1 ;;   # transient (network/5xx): keep the session, try again later
   esac
-  local at ei exp_at
   at="$(jstr "$body" access_token | head -1)"
   [ -n "$at" ] || return 1
   ei="$(jnum "$body" expires_in | head -1)"
   case "$ei" in ''|*[!0-9]*|0) ei=900 ;; esac
-  exp_at=$(( $(date +%s) + ei - 60 ))
-  cf_auth_write "$at" "$exp_at" "$(jstr "$body" refresh_token | head -1)" "$(jstr "$body" scope | head -1)"
+  cf_auth_write "$at" "$(( $(date +%s) + ei - 60 ))" "$(jstr "$body" refresh_token | head -1)" "$(jstr "$body" scope | head -1)"
 }
 
 cf_oauth_token() {
@@ -2918,7 +2982,10 @@ cf_api_explain() {  # $1 = what was being attempted
       err "Re-authorize: wearsic cloudflare login"
       ;;
     10007)
-      err "The credential is valid but not allowed to perform this operation (permission error)."
+      # 10007 is "this account has no workers.dev subdomain yet" — an account
+      # state, never a permission problem. wearsic creates one on the next
+      # deploy; visiting the Workers & Pages dashboard once also creates it.
+      err "This account has no workers.dev subdomain yet; wearsic creates one on the next deploy."
       ;;
   esac
   return 1
@@ -3038,24 +3105,31 @@ cf_ensure_subdomain() {  # $1 = account id
   fi
 
   cf_api GET "/accounts/$acc/workers/subdomain"
-  if cf_api_ok; then
-    sub="$(jstr "$CF_API_BODY" subdomain | head -1)"
-    if [ -n "$sub" ]; then
-      # Persist the authoritative value too, so a later run can keep the
-      # URL stable even if the token loses the Account Settings permission.
-      cf_env_set CLOUDFLARE_SUBDOMAIN "$sub"
-      printf '%s' "$sub"
-      return 0
-    fi
-  elif [ -n "$want" ]; then
+  sub="$(jstr "$CF_API_BODY" subdomain | head -1)"
+  if [ -n "$sub" ]; then
+    # Persist the authoritative value too, so a later run can keep the
+    # URL stable even if the token loses the Account Settings permission.
+    cf_env_set CLOUDFLARE_SUBDOMAIN "$sub"
+    printf '%s' "$sub"
+    return 0
+  fi
+  # No usable answer from Cloudflare. If the lookup failed for any reason
+  # OTHER than "this account has no workers.dev subdomain yet" (Cloudflare
+  # error 10007), reuse a saved name when there is one — that keeps the URL
+  # stable even if the token lost the read permission. A plain 10007 means
+  # the subdomain genuinely does not exist, so a saved name could not be
+  # live either: fall through and create one.
+  if [ -n "$want" ] \
+      && [ "$(cf_api_code "$CF_API_BODY")" != "10007" ] \
+      && [ "${CF_HTTP_STATUS:-0}" != "200" ]; then
     cf_log "workers.dev lookup failed; reusing saved subdomain '$want'"
     printf '%s' "$want"
     return 0
-  else
-    cf_api_explain "Could not read the workers.dev subdomain"
-    return 1
   fi
 
+  # The account has no workers.dev subdomain (or Cloudflare could not say
+  # so): create one. The PUT uses the same Workers Scripts write permission
+  # the Worker upload itself uses.
   candidates="${want:-wearsic wearsic-$(cf_rand4)}"
   for cand in $candidates; do
     say "No workers.dev subdomain yet — creating '$cand'…" >&2
@@ -3070,7 +3144,11 @@ cf_ensure_subdomain() {  # $1 = account id
       return 0
     fi
     case "${CF_HTTP_STATUS:-0}" in
-      401|403) cf_api_explain "Could not create the workers.dev subdomain"; return 1 ;;
+      401|403)
+        cf_api_explain "Could not create the workers.dev subdomain"
+        err "Opening https://dash.cloudflare.com/?to=/:account/workers/workers-and-pages once also creates one automatically; then run wearsic cloudflare again."
+        return 1
+        ;;
     esac
     cf_api_explain "Could not create the workers.dev subdomain '$cand'"
   done
@@ -3269,13 +3347,24 @@ cf_deploy_worker_retry() {  # $1 = origin, $2 = max attempts
 # for the current one.
 cf_hostname_from_text() {  # $1 = text
   local h
-  h="$(printf '%s' "$1" | sed -n 's|.*\(https\{0,1\}://[a-z0-9-]\{1,63\}\.trycloudflare\.com\).*|\1|p' | tail -1)"
+  # api.trycloudflare.com is the tunnel-REQUEST endpoint, not an assigned
+  # hostname. cloudflared's failure lines quote it in full
+  # ("...: Post \"https://api.trycloudflare.com/tunnel\": dial tcp: ..."),
+  # and matching that would pin the Worker to a dead origin. Assigned
+  # quick-tunnel names are random words; "api" is reserved for the API.
+  h="$(printf '%s' "$1" \
+      | sed -n 's|.*\(https\{0,1\}://[a-z0-9-]\{1,63\}\.trycloudflare\.com\).*|\1|p' \
+      | grep -Ev '^(https://|http://)?api\.trycloudflare\.com$' \
+      | tail -1)"
   if [ -z "$h" ]; then
     # Bare hostname (the Prometheus label form, e.g. hostname="abc.trycloudflare.com").
     # The leading [^a-z0-9-] anchors the label start: without it, sed's greedy
     # `.*` would backtrack to the SHORTEST possible label and return
     # "s.trycloudflare.com" instead of "abc.trycloudflare.com".
-    h="$(printf '%s' "$1" | sed -n 's|.*[^a-z0-9-]\([a-z0-9-]\{1,63\}\.trycloudflare\.com\).*|\1|p' | tail -1)"
+    h="$(printf '%s' "$1" \
+        | sed -n 's|.*[^a-z0-9-]\([a-z0-9-]\{1,63\}\.trycloudflare\.com\).*|\1|p' \
+        | grep -Ev '^api\.trycloudflare\.com$' \
+        | tail -1)"
   fi
   [ -n "$h" ] || return 0
   case "$h" in
@@ -3432,24 +3521,74 @@ cf_http_code() {  # url [timeout]
   curl -sS -o /dev/null -w '%{http_code}' --max-time "${2:-15}" "$1" 2>/dev/null || true
 }
 
+# /health must answer 200 AND carry the engine's own `{"status":"ok"}` body.
+# A bare 200 is not enough: when cloudflared fails before assigning a tunnel,
+# its failure text can still point at a trycloudflare host (the request
+# endpoint api.trycloudflare.com in particular), and whatever answers there
+# must never read as "our engine is reachable".
+cf_health_ok() {  # url [timeout]
+  local tf code found=1
+  tf="$(mktemp "${TMPDIR:-/tmp}/wearsic-h.XXXXXX")" || return 1
+  code="$(curl -sS -o "$tf" -w '%{http_code}' --max-time "${2:-15}" "$1" 2>/dev/null)" || true
+  if [ "$code" = "200" ] && grep -q '"status":"ok"' "$tf" 2>/dev/null; then
+    found=0
+  fi
+  rm -f "$tf"
+  return "$found"
+}
+
 # A Quick Tunnel can hand out a hostname before its edge route is serving.
 # Deploying then would "succeed" while every playback request 502s.
 cf_origin_ready() {  # origin [tries]
-  local origin="$1" tries="${2:-15}" i code
+  local origin="$1" tries="${2:-15}" i
   case "$tries" in ''|*[!0-9]*) tries=15 ;; esac
   for i in $(seq 1 "$tries"); do
-    code="$(cf_http_code "$origin/health" 8)"
-    [ "$code" = "200" ] && return 0
+    if cf_health_ok "$origin/health" 8; then
+      return 0
+    fi
     sleep 2
   done
   return 1
 }
 
 cf_permanent_health() {  # permanent url
-  [ "$(cf_http_code "$1/health" 15)" = "200" ]
+  cf_health_ok "$1/health" 15
 }
 
 # --- The supervisor ---------------------------------------------------------
+# Starts one cloudflared quick tunnel in the background. Two things used to
+# break this single line on real phones, both now handled here:
+#
+# 1. DNS. cloudflared is a static Go binary; on Android there is no readable
+#    /etc/resolv.conf for it, so its resolver silently falls back to the
+#    loopback nameservers (127.0.0.1:53 / [::1]:53) and every lookup failed
+#    with "connection refused" — the tunnel never even got started and the
+#    supervisor sat in "tunnel exited; restarting" forever. When running
+#    inside Termux we bind-mount Termux's own resolv.conf (real nameservers,
+#    installed with the app) over /etc/resolv.conf for the tunnel process
+#    only. WEARSIC_CF_DNS=bare opts out.
+# 2. Transport. Without --protocol, cloudflared prefers QUIC; mobile
+#    networks that block UDP then kill the tunnel in a restart loop. http2
+#    rides ordinary TCP and works on every carrier, at no practical cost
+#    for the requests this engine serves.
+cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
+  local p="$1" tlog="$2" prefix resolv
+  prefix="${TERMUX_PREFIX:-/data/data/com.termux/files/usr}"
+  resolv="$prefix/etc/resolv.conf"
+  if [ -n "$DEST" ] \
+      && case "$DEST" in /data/data/com.termux/*) true ;; *) false ;; esac \
+      && [ "${WEARSIC_CF_DNS:-}" != "bare" ] \
+      && [ -x "$prefix/bin/proot" ] \
+      && grep -qi 'nameserver' "$resolv" 2>/dev/null; then
+    "$prefix/bin/proot" -b "$resolv:/etc/resolv.conf" \
+      "$cfbin" tunnel --no-autoupdate --protocol http2 \
+      --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
+  else
+    "$cfbin" tunnel --no-autoupdate --protocol http2 \
+      --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
+  fi
+}
+
 # Runs the tunnel, points the Worker at it, and re-points the Worker every
 # time the tunnel hands out a new random hostname. Restarts the tunnel if it
 # dies. Runs detached; the CLI starts it and reads the state file.
@@ -3535,7 +3674,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
   while :; do
     started_at="$(date +%s)"
     : > "$tlog"
-    "$cfbin" tunnel --no-autoupdate --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
+    cf_tunnel_launch "$p" "$tlog"
     tunnel_pid=$!
     cf_log "tunnel started (pid $tunnel_pid)"
     cf_state_write starting "$sub" "$perm" "" "$deployed" "waiting for the tunnel hostname" "$acc"
@@ -3716,6 +3855,11 @@ cf_verify() {  # $1 = permanent url, $2 = optional video id for a playback probe
     ok "health       200 OK through $url"
   else
     err "health       expected 200 + {\"status\":\"ok\"} from $url/health, got ${code:-no response}"
+    if [ "$code" = "200" ]; then
+      err "                (200 with a different body: the tunnel was down at check time — the supervisor retries)"
+    elif [ "$code" = "405" ] || [ "$code" = "530" ]; then
+      err "                (this answer came from the edge, not the engine — the origin was unreachable)"
+    fi
     rc=1
   fi
 
@@ -3727,6 +3871,9 @@ cf_verify() {  # $1 = permanent url, $2 = optional video id for a playback probe
       ok "auth         the engine rejects requests without the API key (401)"
     else
       err "auth         expected 401 without a key, got ${code:-no response}"
+      if [ "$code" = "405" ]; then
+        err "                (the answer is not from the engine — the tunnel origin was unreachable)"
+      fi
       rc=1
     fi
   fi

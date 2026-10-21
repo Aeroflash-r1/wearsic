@@ -287,11 +287,23 @@ class EngineUpdater(
             if (resp.status.value != 200) error("HTTP ${resp.status.value} downloading update")
             val channel = resp.bodyAsChannel()
             val buffer = ByteArray(64 * 1024)
+            var written = 0L
             tmpZip.outputStream().use { out ->
                 while (true) {
                     val n = channel.readAvailable(buffer, 0, buffer.size)
                     if (n == -1) break
-                    if (n > 0) out.write(buffer, 0, n)
+                    if (n > 0) {
+                        written += n
+                        // Abort BEFORE writing a hostile/oversized asset to
+                        // disk: 4 GiB cap (MAX_ZIP_BYTES) — real packages are
+                        // ~30MB, and the SHA-256 check happens AFTER the
+                        // download, so without this the write loop was the
+                        // only unbounded step.
+                        if (written > MAX_ZIP_BYTES) {
+                            error("Update package exceeds MAX_ZIP_BYTES (>4 GiB) — refusing download")
+                        }
+                        out.write(buffer, 0, n)
+                    }
                 }
             }
             tmpZip.length()
@@ -374,6 +386,11 @@ class EngineUpdater(
             "https://api.github.com/repos/Aeroflash-r1/wearsic/releases?per_page=10"
         private const val ZIP_ASSET_PREFIX = "wearsic-server-termux-"
         private const val MIN_ZIP_BYTES = 1_000_000L // real packages are ~30MB
+        // Upper sanity bound for a staged package: a hostile or runaway
+        // release asset must not be able to fill the phone's disk before the
+        // checksum step runs. Real packages are ~30MB; 4 GiB covers any
+        // plausible future release with a huge margin.
+        internal const val MAX_ZIP_BYTES = 4L * 1024L * 1024L * 1024L
 
         /**
          * Stage → apply → rollback attempts allowed per target version.

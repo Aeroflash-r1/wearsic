@@ -109,7 +109,7 @@ make_release() { # $1 = version tag, $2 = marker content
     done
     printf 'rc=$?; echo "wearsic-cli-tail v%s" >&2; exit $rc\n' "$1"
   } > "$f.new" && chmod +x "$f.new" && mv "$f.new" "$f"
-  (cd "$d" && zip -qr "wearsic-server-termux-v$1.zip" wearsic-server)
+  zipdir "$d" "wearsic-server-termux-v$1.zip"
   (cd "$d" && sha256sum "wearsic-server-termux-v$1.zip" > "wearsic-server-termux-v$1.zip.sha256")
   echo "$d"
 }
@@ -120,13 +120,29 @@ make_broken_release() { # $1 = version tag — engine binary can never start
   printf '#!/bin/sh\necho "engine is broken" >&2\nexit 1\n' > "$d/wearsic-server/bin/wearsic-server"
   chmod +x "$d/wearsic-server/bin/wearsic-server"
   rm -f "$d/wearsic-server-termux-v$1.zip" "$d/wearsic-server-termux-v$1.zip.sha256"
-  (cd "$d" && zip -qr "wearsic-server-termux-v$1.zip" wearsic-server)
+  zipdir "$d" "wearsic-server-termux-v$1.zip"
   (cd "$d" && sha256sum "wearsic-server-termux-v$1.zip" > "wearsic-server-termux-v$1.zip.sha256")
   echo "$d"
 }
 
 url() { echo "file://$1/wearsic-server-termux-v$2.zip"; }
 sha_url() { echo "file://$1/wearsic-server-termux-v$2.zip.sha256"; }
+
+# The build machine may not ship the `zip` CLI; python3 is always here.
+zipdir() { # $1 = dir with wearsic-server/, $2 = out zip
+  ( cd "$1" && if command -v zip >/dev/null 2>&1; then
+      zip -qr "$2" wearsic-server
+    else
+      python3 - "$2" <<'PYZ'
+import os, sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
+    for root, _dirs, files in os.walk('wearsic-server'):
+        for name in files:
+            p = os.path.join(root, name)
+            z.write(p, os.path.relpath(p))
+PYZ
+    fi )
+}
 
 run_install() { # $1 = dist dir, $2 = version
   ( export WEARSIC_ZIP_URL="$(url "$1" "$2")" WEARSIC_SHA_URL="$(sha_url "$1" "$2")"

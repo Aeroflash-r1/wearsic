@@ -94,9 +94,9 @@ fun WearsicSongRow(
         modifier = modifier
             .fillMaxWidth()
             // Rows enter with the list, not every time lazy scrolling recycles them.
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
             .background(WearsicSurface)
-            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(20.dp))
+            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
             .wearsicClickable(pressedScale = 0.975f, onLongClick = onLongClick, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 10.dp)
             .testTag(testTag)

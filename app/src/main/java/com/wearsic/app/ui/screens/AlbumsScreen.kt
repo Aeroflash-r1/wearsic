@@ -242,9 +242,9 @@ private fun AlbumCard(
 ) {
     Column(
         modifier = modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
             .background(WearsicSurfaceRaised)
-            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(24.dp))
+            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
             .wearsicClickable(onClick = onClick)
             .testTag("album_${album.id}")
             .padding(12.dp),

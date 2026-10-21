@@ -214,8 +214,6 @@ class WearsicDownloadManager(
             }
             return
         }
-        if (activeJobs.size >= MAX_CONCURRENT_DOWNLOADS) return
-
         if (!autoCached) {
             // Record the promotion intent on the CALLING thread, before any
             // coroutine runs: an eviction/Clear-auto racing this tap must see
@@ -224,13 +222,32 @@ class WearsicDownloadManager(
         }
 
         val holder = ActiveDownload(autoCached = autoCached)
+        // Atomic admission: putIfAbsent turns the check-then-register into a
+        // single operation. Two simultaneous callers previously could BOTH
+        // pass the `existing == null` read and later `put`, overwriting each
+        // other's holder and launching two jobs writing the SAME .part file
+        // (interleaved/resumed garbage audio).
+        if (activeJobs.putIfAbsent(track.id, holder) != null) {
+            // Lost the race: a job is already registered — behave exactly
+            // like the pre-existing-job path above.
+            if (!autoCached) applyManualPromotion(track.id)
+            return
+        }
+        if (activeJobs.size > MAX_CONCURRENT_DOWNLOADS) {
+            // Over the live-job cap: un-register BEFORE any coroutine or DB
+            // work, so this admission is never visible as a live download to
+            // startup cleanup or eviction.
+            activeJobs.remove(track.id, holder)
+            if (!autoCached) manualPromotionRequests.remove(track.id)
+            return
+        }
+
         val targetFile = getTargetFile(track.id)
         val partFile = getPartFile(targetFile)
-        // Register BEFORE launching the body: any QUEUED/DOWNLOADING row that
-        // appears in the DB is then guaranteed to have this entry, so startup
-        // cleanup can never mistake a live download for a crashed one.
-        activeJobs[track.id] = holder
-
+        // Registered atomically BEFORE launching the body: any QUEUED/
+        // DOWNLOADING row that appears in the DB is then guaranteed to have
+        // this entry, so startup cleanup can never mistake a live download
+        // for a crashed one.
         val job = scope.launch {
             // Whether the completed file must be marked AUTO. Starts from the
             // request intent, but a MANUAL request arriving mid-download can
@@ -316,6 +333,13 @@ class WearsicDownloadManager(
                 }
 
                 stateMutex.withLock {
+                    // A cancelled job (cancelDownload/deleteDownload/
+                    // clearAllDownloads all run under this mutex too) must not
+                    // resurrect a row + file after one of those paths already
+                    // deleted it. Either their delete wins and this write is
+                    // suppressed, or this write landed first and their delete
+                    // removes it — never a stale COMPLETED row + orphan file.
+                    if (!coroutineContext.isActive) return@launch
                     // Read the (possibly promoted mid-flight) ownership under
                     // the lock that promotion also uses.
                     val finalAuto = holder.autoCached && effectiveAutoCached
@@ -379,8 +403,17 @@ class WearsicDownloadManager(
      */
     private suspend fun downloadWithResume(track: Track, partFile: File) {
         var downloaded = if (partFile.exists()) partFile.length() else 0L
-        var totalLength = (track.durationMs * 16).coerceAtLeast(1L)
+        // Rough initial guess for the progress bar (≈16 kB/s); authoritative
+        // total replaces it on the first Content-Range header. 0 keeps the UI
+        // at "unknown" instead of a fake 99% (the old coerceAtLeast(1) made
+        // zero-duration tracks clamp instantly).
+        var totalLength = (track.durationMs * 16).takeIf { it > 0L } ?: 0L
         var consecutiveFailures = 0
+        // Times the server/proxy ignored or mismatched the Range contract.
+        // Beyond 2, a resume-based download can never make forward progress
+        // without risking the partial file — abort with a real error instead
+        // of silently restarting the whole song forever.
+        var rangeContractViolations = 0
 
         while (coroutineContext.isActive) {
             var response: Response? = null
@@ -397,11 +430,43 @@ class WearsicDownloadManager(
                     throw Exception("HTTP error ${response.code}")
                 }
 
-                // Total length from Content-Range: "bytes a-b/total"
-                response.header("Content-Range")?.let { contentRange ->
-                    contentRange.substringAfter('/').trim().toLongOrNull()?.let { total ->
-                        if (total > 0) totalLength = total
+                // RESUME INTEGRITY: a resumed attempt (offset > 0) MUST answer
+                // `206 Partial Content` and start writing at exactly the
+                // resumed offset. A plain 200 means the server (or a proxy /
+                // tunnel hop in front of it) ignored the Range header and is
+                // sending the FULL body — appending that would duplicate the
+                // first `downloaded` bytes and yield a silently corrupted,
+                // still-"COMPLETED", unplayable file. Same for a Content-Range
+                // that disagrees with the offset we asked for. In both cases,
+                // drop the partial bytes and restart from zero (clean data),
+                // until the violation repeats enough times to prove resume is
+                // impossible on this path, then fail with a real message.
+                val statusCode = response.code
+                val contentRangeHeader = response.header("Content-Range")
+                var rangeStart: Long? = null
+                var rangeTotal: Long? = null
+                if (contentRangeHeader != null) {
+                    val startRaw = contentRangeHeader.substringBefore('/')
+                        .removePrefix("bytes ")
+                        .substringBefore('-')
+                        .trim()
+                    rangeStart = startRaw.toLongOrNull()
+                    rangeTotal = contentRangeHeader.substringAfter('/').trim().toLongOrNull()
+                }
+                val resumeContractBroken =
+                    (statusCode != 206 && downloaded > 0L) ||
+                        (rangeStart != null && rangeStart != downloaded)
+                if (resumeContractBroken) {
+                    response.close()
+                    partFile.delete()
+                    downloaded = 0L
+                    if (++rangeContractViolations > 2) {
+                        throw Exception("Server does not honour Range resume — aborted")
                     }
+                    continue
+                }
+                if (rangeTotal != null && rangeTotal > 0) {
+                    totalLength = rangeTotal
                 }
 
                 val body = response.body ?: throw Exception("Empty response body")
@@ -579,7 +644,18 @@ class WearsicDownloadManager(
     fun cancelDownload(trackId: String) {
         activeJobs.remove(trackId)?.job?.cancel()
         scope.launch {
-            repository.deleteDownload(trackId)
+            try {
+                // Serialize with the job's completion write (also under this
+                // mutex): either their COMPLETED write landed first and this
+                // removes row + file, or this delete wins and the cancelled
+                // job's completion write is suppressed by the isActive guard
+                // in the job body. Previously the delete ran WITHOUT the
+                // mutex, so a racing completion could write a COMPLETED row
+                // for a file that had just been deleted (permanent orphan).
+                stateMutex.withLock {
+                    repository.deleteDownload(trackId)
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -615,7 +691,28 @@ class WearsicDownloadManager(
         activeJobs.values.forEach { it.job?.cancel() }
         activeJobs.clear()
         scope.launch {
-            repository.clearAllDownloads()
+            try {
+                stateMutex.withLock {
+                    // Same playback-safety rule the per-row path enforces: a
+                    // COMPLETED AUTO file the player is currently streaming
+                    // from is only FLAGGED (the pendingDeletion intent
+                    // survives process death and is deleted once the file is
+                    // released) instead of deleted out from under the reader —
+                    // previously this wiped ALL rows and files with no mutex
+                    // and no in-use check, which could pull the bytes out of
+                    // the file the active session was reading. Every other
+                    // row (manual included — this is an explicit wipe-all) is
+                    // deleted now, along with its .part leftovers.
+                    for (entity in repository.getAllDownloadEntities()) {
+                        if (isTrackProtected(entity.trackId) && entity.autoCached) {
+                            repository.markDeletionPending(entity.trackId, true)
+                        } else {
+                            repository.deleteDownload(entity.trackId)
+                        }
+                    }
+                    manualPromotionRequests.clear()
+                }
+            } catch (_: Exception) {}
         }
     }
 

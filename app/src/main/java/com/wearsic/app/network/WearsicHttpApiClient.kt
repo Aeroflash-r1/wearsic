@@ -21,6 +21,7 @@ import com.wearsic.app.network.model.SuggestionsResponseDto
 import com.wearsic.app.network.model.TrackDto
 import com.wearsic.app.util.Validation
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -62,7 +63,7 @@ class WearsicHttpApiClient(
                 .get()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            runInterruptible { client.newCall(request).execute() }.use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         HttpError(healthUrl, response.code, "Server returned HTTP ${response.code}")
@@ -70,9 +71,18 @@ class WearsicHttpApiClient(
                 }
 
                 val bodyString = response.body?.string() ?: ""
+                if (bodyString.isBlank()) {
+                    // An empty 200 is NOT a healthy answer: silently decoding
+                    // it used to report status="ok" with default telemetry on
+                    // the connection test.
+                    return@withContext Result.failure(
+                        HttpError(healthUrl, response.code, "Server returned an empty /health body")
+                    )
+                }
                 val dto = try {
                     json.decodeFromString<ServerHealthDto>(bodyString)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
                     ServerHealthDto()
                 }
 
@@ -102,7 +112,7 @@ class WearsicHttpApiClient(
                 .get()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            runInterruptible { client.newCall(request).execute() }.use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         HttpError(readyUrl, response.code, "Server returned HTTP ${response.code}")
@@ -115,7 +125,8 @@ class WearsicHttpApiClient(
                 // to "not ready" rather than failing the whole probe.
                 val dto = try {
                     json.decodeFromString<ReadyResponseDto>(bodyString)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
                     ReadyResponseDto()
                 }
 
@@ -156,7 +167,7 @@ class WearsicHttpApiClient(
                 .get()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            runInterruptible { client.newCall(request).execute() }.use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         HttpError(searchUrl, response.code, "Server error: HTTP ${response.code}")
@@ -166,7 +177,8 @@ class WearsicHttpApiClient(
                 val bodyString = response.body?.string() ?: ""
                 val dto = try {
                     json.decodeFromString<SearchResultsResponseDto>(bodyString)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
                     SearchResultsResponseDto()
                 }
 
@@ -219,7 +231,7 @@ class WearsicHttpApiClient(
                 .get()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            runInterruptible { client.newCall(request).execute() }.use { response ->
                 // Drain the tiny body even on 404: a fully-read response keeps
                 // the connection alive for the stream request that follows.
                 val body = response.body?.string().orEmpty()
@@ -250,7 +262,7 @@ class WearsicHttpApiClient(
                 .get()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            runInterruptible { client.newCall(request).execute() }.use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         HttpError("$sanitizedUrl/api/favorites", response.code, "Server error: HTTP ${response.code}")
@@ -259,10 +271,12 @@ class WearsicHttpApiClient(
                 val bodyString = response.body?.string() ?: "[]"
                 val dto = try {
                     json.decodeFromString<List<TrackDto>>(bodyString)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
                     try {
                         json.decodeFromString<FavoritesResponseDto>(bodyString).favorites
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
                         emptyList()
                     }
                 }
@@ -287,7 +301,7 @@ class WearsicHttpApiClient(
                 .post(track.toRequestBodyJson().toRequestBody(JSON_MEDIA_TYPE))
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            runInterruptible { client.newCall(request).execute() }.use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         HttpError("$sanitizedUrl/api/favorites", response.code, "Server error: HTTP ${response.code}")
@@ -321,7 +335,7 @@ class WearsicHttpApiClient(
                 .delete()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            runInterruptible { client.newCall(request).execute() }.use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         HttpError("$sanitizedUrl/api/favorites", response.code, "Server error: HTTP ${response.code}")
@@ -350,7 +364,7 @@ class WearsicHttpApiClient(
                 .get()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            runInterruptible { client.newCall(request).execute() }.use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
@@ -359,7 +373,8 @@ class WearsicHttpApiClient(
                 val bodyString = response.body?.string() ?: "[]"
                 val playlists = try {
                     json.decodeFromString<List<PlaylistDto>>(bodyString)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
                     emptyList()
                 }
                 Result.success(playlists)
@@ -383,7 +398,7 @@ class WearsicHttpApiClient(
                 .get()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            runInterruptible { client.newCall(request).execute() }.use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
@@ -392,7 +407,8 @@ class WearsicHttpApiClient(
                 val bodyString = response.body?.string() ?: "{}"
                 val dto = try {
                     json.decodeFromString<PlaylistWithTracksDto>(bodyString)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
                     PlaylistWithTracksDto(id = playlistId, name = "Playlist")
                 }
                 Result.success(dto.copy(tracks = dto.tracks.withStreamUrls(sanitizedUrl)))
@@ -421,7 +437,7 @@ class WearsicHttpApiClient(
                 .delete()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            runInterruptible { client.newCall(request).execute() }.use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
@@ -456,7 +472,7 @@ class WearsicHttpApiClient(
                     .get()
                     .build()
 
-                client.newCall(request).execute().use { response ->
+                runInterruptible { client.newCall(request).execute() }.use { response ->
                     if (!response.isSuccessful) {
                         return@use Result.failure(
                             HttpError("$sanitizedUrl/api/suggestions", response.code, "Server error: HTTP ${response.code}")
@@ -465,7 +481,8 @@ class WearsicHttpApiClient(
                     val bodyString = response.body?.string() ?: "{}"
                     val dto = try {
                         json.decodeFromString<SuggestionsResponseDto>(bodyString)
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
                         SuggestionsResponseDto()
                     }
                     Result.success(dto.suggestions)
@@ -494,7 +511,7 @@ class WearsicHttpApiClient(
                     .get()
                     .build()
 
-                client.newCall(request).execute().use { response ->
+                runInterruptible { client.newCall(request).execute() }.use { response ->
                     if (!response.isSuccessful) {
                         return@use Result.failure(
                             HttpError("$sanitizedUrl/api/related", response.code, "Server error: HTTP ${response.code}")
@@ -503,7 +520,8 @@ class WearsicHttpApiClient(
                     val bodyString = response.body?.string() ?: "{}"
                     val dto = try {
                         json.decodeFromString<com.wearsic.app.network.model.RelatedResponseDto>(bodyString)
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
                         com.wearsic.app.network.model.RelatedResponseDto()
                     }
                     Result.success(dto.results.withStreamUrls(sanitizedUrl))
@@ -532,7 +550,7 @@ class WearsicHttpApiClient(
                     .get()
                     .build()
 
-                client.newCall(request).execute().use { response ->
+                runInterruptible { client.newCall(request).execute() }.use { response ->
                     if (!response.isSuccessful) {
                         return@use Result.failure(
                             HttpError("$sanitizedUrl/api/search/albums", response.code, "Server error: HTTP ${response.code}")
@@ -541,7 +559,8 @@ class WearsicHttpApiClient(
                     val bodyString = response.body?.string() ?: "[]"
                     val albums = try {
                         json.decodeFromString<List<AlbumDto>>(bodyString)
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
                         emptyList()
                     }
                     Result.success(albums)
@@ -565,7 +584,7 @@ class WearsicHttpApiClient(
                     .get()
                     .build()
 
-                client.newCall(request).execute().use { response ->
+                runInterruptible { client.newCall(request).execute() }.use { response ->
                     if (!response.isSuccessful) {
                         return@use Result.failure(
                             HttpError("$sanitizedUrl/api/playlist", response.code, "Server error: HTTP ${response.code}")
@@ -574,7 +593,8 @@ class WearsicHttpApiClient(
                     val bodyString = response.body?.string() ?: "{}"
                     val dto = try {
                         json.decodeFromString<PlaylistWithTracksDto>(bodyString)
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
                         PlaylistWithTracksDto(id = url, name = "Album")
                     }
                     Result.success(dto.copy(tracks = dto.tracks.withStreamUrls(sanitizedUrl)))
@@ -607,7 +627,7 @@ class WearsicHttpApiClient(
                     .post(body)
                     .build()
 
-                client.newCall(request).execute().use { response ->
+                runInterruptible { client.newCall(request).execute() }.use { response ->
                     if (!response.isSuccessful) {
                         return@use Result.failure(
                             HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
@@ -618,8 +638,17 @@ class WearsicHttpApiClient(
                     val bodyString = response.body?.string() ?: "{}"
                     val dto = try {
                         json.decodeFromString<PlaylistDto>(bodyString)
-                    } catch (_: Exception) {
-                        PlaylistDto(id = "", name = nameValidation.getOrThrow())
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
+                        // Loud failure: falling back to PlaylistDto(id = "")
+                        // previously let a bad/unexpected response "create" a
+                        // playlist whose id was empty, and the follow-up
+                        // add-track call then hit /api/playlists//tracks (404)
+                        // and silently did nothing while the UI reported
+                        // success.
+                        return@use Result.failure(
+                            UnknownError("Server sent an unrecognisable playlist response", e)
+                        )
                     }
                     Result.success(dto)
                 }
@@ -642,7 +671,7 @@ class WearsicHttpApiClient(
                     .post(track.toRequestBodyJson().toRequestBody(JSON_MEDIA_TYPE))
                     .build()
 
-                client.newCall(request).execute().use { response ->
+                runInterruptible { client.newCall(request).execute() }.use { response ->
                     if (!response.isSuccessful) {
                         return@use Result.failure(
                             HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
@@ -694,4 +723,19 @@ class WearsicHttpApiClient(
         /** Expanded page ("Show more"): server clamps to the same ceiling. */
         const val SEARCH_MAX_LIMIT = 25
     }
+}
+
+/**
+ * Logs a response-decode failure before a default/empty DTO fallback is
+ * returned. Without this, server contract drift (a changed response shape)
+ * shows up on the watch as a silently EMPTY library/search/favorites screen
+ * instead of an error — the exact failure the network-models KDoc documents
+ * for an earlier breakage.
+ */
+private fun logDecodeFailure(e: Exception) {
+    android.util.Log.e(
+        "WearsicHttpApi",
+        "Response decode failed — server response shape may have drifted: " +
+            "${e.javaClass.simpleName}: ${e.message ?: "no message"}"
+    )
 }

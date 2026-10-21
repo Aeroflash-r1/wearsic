@@ -241,7 +241,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val created = musicRepository.createPlaylist(name.trim())
             created.onSuccess { playlist ->
-                if (track != null && track.id.isNotBlank()) {
+                if (track != null && track.id.isNotBlank() && playlist.id.isNotBlank()) {
+                    // playlist.id must be real: a decode fallback used to hand
+                    // back an empty-id playlist, so this add hit a malformed
+                    // /api/playlists//tracks URL and silently achieved
+                    // nothing while the UI moved on as if it had worked. (The
+                    // client now fails loudly; the guard is belt-and-braces.)
                     musicRepository.addTrackToPlaylist(playlist.id, track)
                 }
                 refreshLibrary()

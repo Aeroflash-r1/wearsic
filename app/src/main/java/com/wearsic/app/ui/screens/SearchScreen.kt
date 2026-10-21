@@ -337,7 +337,7 @@ fun SearchScreen(
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                             .testTag("search_loading_more"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -353,7 +353,7 @@ fun SearchScreen(
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
                             .wearsicClickable(onClick = onLoadMore)
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                             .testTag("search_show_more"),
                         contentAlignment = Alignment.Center
                     ) {

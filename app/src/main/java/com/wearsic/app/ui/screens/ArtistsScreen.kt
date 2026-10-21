@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicAccentPeach
 import androidx.compose.material.icons.Icons
@@ -155,9 +156,9 @@ fun ArtistsScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
+                            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
                             .background(WearsicSurfaceRaised)
-                            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(20.dp))
+                            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
                             .wearsicClickable { selected = artist }
                             .padding(horizontal = 12.dp, vertical = 10.dp)
                             .testTag("artist_${artist.name}")

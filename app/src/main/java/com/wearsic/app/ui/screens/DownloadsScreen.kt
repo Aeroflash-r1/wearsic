@@ -177,7 +177,7 @@ fun DownloadsScreen(
                                     showClearAllConfirmation = false
                                 }
                                 .heightIn(min = WearsicDimens.TouchTarget)
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                                .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("confirm_clear_all_downloads"),
                             contentAlignment = Alignment.Center
                         ) {
@@ -197,7 +197,7 @@ fun DownloadsScreen(
                                 .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
                                 .wearsicClickable { showClearAllConfirmation = true }
                                 .heightIn(min = WearsicDimens.TouchTarget)
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                                .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("clear_all_downloads_button"),
                             contentAlignment = Alignment.Center
                         ) {

@@ -121,10 +121,26 @@ class AudioProxy(
             // actionable message here — match that contract instead of leaking
             // a 500 + stack trace to the watch.
             logger.warn("Audio extraction failed for {}: {}", videoId, e.message)
+            // The old blanket text blamed authentication for EVERY extraction
+            // failure. This call fails for many reasons — bot-wall without a
+            // cookie, network outage, InnerTube change, a simply non-playable
+            // video — and "add your cookie" advice only helps the first one.
+            // Tell the truth; keep the cookie guidance for auth-shaped errors.
+            val message = e.message.orEmpty()
+            val maybeAuthSignal =
+                listOf("login", "sign in", "auth", "bot", "age", "visitor", "consent")
+                    .any { message.contains(it, ignoreCase = true) }
             call.respond(
                 HttpStatusCode.ServiceUnavailable,
                 ErrorResponse(
-                    "YouTube requires authentication for audio extraction. Add your YouTube cookie in the app Settings."
+                    if (maybeAuthSignal) {
+                        "YouTube requires authentication for audio extraction. " +
+                            "Add your YouTube cookie in the app Settings."
+                    } else {
+                        "Audio extraction failed for this track. It may be unavailable " +
+                            "or the server could not reach YouTube — check server logs " +
+                            "and try again."
+                    }
                 )
             )
             return
@@ -170,7 +186,7 @@ class AudioProxy(
                     if (result.status !in DEAD_URL_STATUSES) {
                         call.respond(
                             HttpStatusCode.BadGateway,
-                            ErrorResponse("Upstream audio unavailable (HTTP ${result.status})")
+                            ErrorResponse(upstreamUnavailableText(result.status))
                         )
                         return
                     }
@@ -182,7 +198,7 @@ class AudioProxy(
                         when (val retry = transcoder.handle(call, fresh.url, rangeHeader, refreshForTranscode)) {
                             is Transcoder.TranscodeResult.UpstreamError -> call.respond(
                                 HttpStatusCode.BadGateway,
-                                ErrorResponse("Upstream audio unavailable (HTTP ${retry.status})")
+                                ErrorResponse(upstreamUnavailableText(retry.status))
                             )
                             else -> Unit // Streamed / Unavailable / Aborted already responded
                         }
@@ -192,7 +208,7 @@ class AudioProxy(
                     // not a generic message, so logs stay actionable.
                     call.respond(
                         HttpStatusCode.BadGateway,
-                        ErrorResponse("Upstream audio unavailable (HTTP ${result.status})")
+                        ErrorResponse(upstreamUnavailableText(result.status))
                     )
                     return
                 }
@@ -210,7 +226,7 @@ class AudioProxy(
                 if (outcome.status !in DEAD_URL_STATUSES) {
                     call.respond(
                         HttpStatusCode.BadGateway,
-                        ErrorResponse("Upstream audio unavailable (HTTP ${outcome.status})")
+                        ErrorResponse(upstreamUnavailableText(outcome.status))
                     )
                     return
                 }
@@ -224,7 +240,7 @@ class AudioProxy(
                     when (val retry = streamFresh(call, fresh, rangeHeader, videoId)) {
                         is ProxyOutcome.UpstreamError -> call.respond(
                             HttpStatusCode.BadGateway,
-                            ErrorResponse("Upstream audio unavailable (HTTP ${retry.status})")
+                            ErrorResponse(upstreamUnavailableText(retry.status))
                         )
                         else -> Unit
                     }
@@ -233,7 +249,7 @@ class AudioProxy(
                 logger.warn("Re-resolve after dead URL failed for {}", videoId)
                 call.respond(
                     HttpStatusCode.BadGateway,
-                    ErrorResponse("Upstream audio unavailable (HTTP ${outcome.status})")
+                    ErrorResponse(upstreamUnavailableText(outcome.status))
                 )
             }
         }
@@ -244,6 +260,13 @@ class AudioProxy(
         data object Aborted : ProxyOutcome
         data class UpstreamError(val status: Int) : ProxyOutcome
     }
+
+    /** Maps the probe layer's status-0 sentinel ("connect/IO failed before
+     *  any HTTP status arrived") to honest client-facing text instead of the
+     *  nonsensical "(HTTP 0)" the watch's error surface used to display. */
+    private fun upstreamUnavailableText(status: Int): String =
+        if (status == 0) "Upstream audio unavailable (connection failed)"
+        else "Upstream audio unavailable (HTTP $status)"
 
     /** Streams one already-resolved [fresh] target (transcode-aware). */
     private suspend fun streamFresh(
@@ -290,7 +313,11 @@ class AudioProxy(
         var firstByteMs = -1L
         var written = 0L
         return try {
-            val (start, end) = parseRangeHeader(rangeHeader)
+            val hasRangeHeader = !rangeHeader.isNullOrBlank()
+            // First parse: `start` anchors the 1-byte length probe below.
+            // Suffix ranges ("bytes=-N") probe byte 0 — their true window is
+            // resolved in the second parse once the total is known.
+            var (start, end) = parseRangeHeader(rangeHeader)
             // The upstream total. Lean targets carry it from the player
             // response (contentLength) — re-using it skips the old 1-byte
             // validating probe: a full CDN round trip before the first byte
@@ -307,6 +334,14 @@ class AudioProxy(
             if (probeStatus != HttpStatusCode.PartialContent.value || total == null) {
                 return ProxyOutcome.UpstreamError(probeStatus)
             }
+            // Second parse with the authoritative total: resolves RFC 7233
+            // suffix ranges ("bytes=-N" = the LAST N bytes). Without a total,
+            // a suffix request fell through as (0, null) and previously got
+            // the WHOLE file from byte 0 wrongly presented as a 206.
+            parseRangeHeader(rangeHeader, availableTotal = total).let { (s, e) ->
+                start = s
+                end = e
+            }
             val lastByte = minOf(end ?: Long.MAX_VALUE, total - 1)
             if (start > lastByte) {
                 call.respond(
@@ -315,7 +350,13 @@ class AudioProxy(
                 )
                 return ProxyOutcome.Aborted // responded; nothing more to do
             }
-            call.response.header(HttpHeaders.ContentRange, "bytes $start-$lastByte/$total")
+            // RFC 7233: a plain GET (no Range header) must be answered 200
+            // with the full representation; only a Range request earns a 206
+            // + Content-Range. (Previously every response was a 206 with a
+            // bytes-0 Content-Range even unsolicited.)
+            if (hasRangeHeader) {
+                call.response.header(HttpHeaders.ContentRange, "bytes $start-$lastByte/$total")
+            }
             call.response.header(HttpHeaders.AcceptRanges, "bytes")
 
             // The client's declared window. The open pump runs to the natural
@@ -332,7 +373,7 @@ class AudioProxy(
 
             call.respondBytesWriter(
                 contentType = io.ktor.http.ContentType.parse(target.mimeType),
-                status = HttpStatusCode.PartialContent
+                status = if (hasRangeHeader) HttpStatusCode.PartialContent else HttpStatusCode.OK
             ) {
                 // Every failure in here tears the connection down (see
                 // [abortOnFailure]): an abandoned writer would leave the

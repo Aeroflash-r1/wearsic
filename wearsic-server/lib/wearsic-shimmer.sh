@@ -206,20 +206,74 @@ shim_bytes() { # $1 = bytes
   else printf '%sB' "$b"; fi
 }
 
+# Fork-free byte/rate/time helpers for the BAR (the old path forked a
+# subshell per frame — `wc` + two `awk`s at ~11 fps read as stutter on a
+# phone; these do pure integer math and return through $SHIM_FMT / $SHIM_MS).
+shim_fmt_bytes() { # $1 = bytes -> SHIM_FMT = "4.2M" / "900K" / "12B"
+  local b="${1:-0}"
+  case "$b" in ''|*[!0-9]*) b=0 ;; esac
+  if [ "$b" -ge 1048576 ]; then
+    local h=$(( b / 1048576 )) l=$(( (b % 1048576) * 10 / 1048576 ))
+    SHIM_FMT="${h}.${l}M"
+  elif [ "$b" -ge 1024 ]; then
+    SHIM_FMT="$(( b / 1024 ))K"
+  else
+    SHIM_FMT="${b}B"
+  fi
+}
+
+shim_fmt_rate() { # $1 = bytes/s -> SHIM_FMT = "5.2MB/s" / "480KB/s"
+  local r="${1:-0}" w f
+  case "$r" in ''|*[!0-9]*) r=0 ;; esac
+  if [ "$r" -ge 1048576 ]; then
+    w=$(( r / 1048576 )); f=$(( (r % 1048576) * 10 / 1048576 ))
+    SHIM_FMT="${w}.${f}MB/s"
+  elif [ "$r" -ge 1024 ]; then
+    w=$(( r / 1024 )); f=$(( (r % 1024) * 10 / 1024 ))
+    SHIM_FMT="${w}.${f}KB/s"
+  else
+    SHIM_FMT="${r}B/s"
+  fi
+}
+
+shim_now_ms() { # SHIM_MS = milliseconds (bash 5's $EPOCHREALTIME; 0 if absent)
+  local r="${EPOCHREALTIME:-}" sec sub
+  if [ -z "$r" ]; then SHIM_MS=0; return 0; fi
+  case "$r" in
+    *.**) sec="${r%%.*}"; sub="${r#*.}" ;;
+    *)    sec="$r";      sub="" ;;
+  esac
+  case "$sec" in ''|*[!0-9]*) sec=0 ;; esac
+  case "$sub" in ''|*[!0-9]*) sub=0 ;; esac
+  sub="${sub:0:6}"
+  SHIM_MS=$(( sec * 1000 + 10#$sub / 1000 ))
+}
+
 # Animate until the job ($1) exits. A progress hook ($SHIM_PROGRESS_HOOK) is
 # called before every frame, so a download can report its real percentage.
+# A hook may paint its OWN frame (the download bar) and set SHIM_HOOK_DREW —
+# the generic shimmer then sits out that tick instead of overpainting.
 shim_animate() { # $1 = pid
   local pid="$1" frame=0 t=""
   shim_cursor_hide
   while kill -0 "$pid" 2>/dev/null; do
     if [ -n "$SHIM_PROGRESS_HOOK" ]; then
-      "$SHIM_PROGRESS_HOOK" >/dev/null 2>&1 || true
+      SHIM_HOOK_DREW=0
+      "$SHIM_PROGRESS_HOOK" 2>/dev/null || true
+    else
+      SHIM_HOOK_DREW=0
     fi
-    if [ -n "$SHIM_STATUS_FILE" ] && [ -s "$SHIM_STATUS_FILE" ]; then
-      t="$(cat "$SHIM_STATUS_FILE" 2>/dev/null || true)"
-      [ -n "$t" ] && SHIM_LIVE_TEXT="$t"
+    if [ "${SHIM_HOOK_DREW:-0}" = "1" ]; then
+      # The hook already put a line on screen; remember that a live line
+      # exists so shim_clear_live erases it later.
+      SHIM_LIVE_ACTIVE=1
+    else
+      if [ -n "$SHIM_STATUS_FILE" ] && [ -s "$SHIM_STATUS_FILE" ]; then
+        t="$(cat "$SHIM_STATUS_FILE" 2>/dev/null || true)"
+        [ -n "$t" ] && SHIM_LIVE_TEXT="$t"
+      fi
+      shim_draw_live "$frame"
     fi
-    shim_draw_live "$frame"
     sleep "$SHIM_FRAME_S"
     frame=$(( (frame + 1) % SHIM_LOOP_FRAMES ))
   done
@@ -296,22 +350,223 @@ shim_fetch_start() { # $1 = url, $2 = out file, $3 = live text prefix
   SHIM_FETCH_TOTAL="$(curl -fsSIL --max-time 15 "$1" 2>/dev/null \
     | grep -i '^content-length:' | tail -1 | tr -d '\r' | awk '{print $2}')"
   case "$SHIM_FETCH_TOTAL" in ''|*[!0-9]*) SHIM_FETCH_TOTAL="" ;; esac
+  # Fresh rate/paint state per download — a second fetch must not
+  # inherit the previous one's sliding window or repaint guard.
+  SHIM_F_PREV_MS=0; SHIM_F_PREV_B=0
+  SHIM_F_RATE=0
+  SHIM_F_PAINT_B=""; SHIM_F_PAINT_MS=0
+  SHIM_F_START_MS=0; SHIM_F_START_B=0
   curl -fL --retry 3 --retry-delay 2 -o "$2" "$1" >/dev/null 2>&1 &
   SHIM_FETCH_PID=$!
 }
 
-# The animation hook: report the real percentage of the running download.
+# The animation hook: the download bar paints ITSELF here instead of pushing
+# text into the generic shimmer. Why: the old path re-rendered gray letters
+# character-by-character every frame with several forks, which on a phone
+# read as blinking. This frame is a SINGLE atomic `\r\e[K` write with a green
+# gradient fill, a partial-cell head (▏▎…▉) so the bar climbs smoothly, a
+# fixed-width tail (no wobble), and a byte rate from $EPOCHREALTIME — zero
+# forks per frame. Sets SHIM_HOOK_DREW=1 so shim_animate skips the shimmer
+# for this tick (and remembers a live line is on screen for its cleanup).
 shim_fetch_progress() {
-  local have=0 pct=0
+  SHIM_HOOK_DREW=1
+  [ "${TTY_OUT:-0}" = "1" ] || { SHIM_HOOK_DREW=0; return 0; }
+  local have=0 cells=24 pct=0 filled=0 prog=0 frac=0 i=0
+  local bar="" track="" tc="" fillcol pc
+  local line pp havetxt tottext ratetxt label budget plain
   [ -n "$SHIM_FETCH_PID" ] || return 0
-  if [ -e "$SHIM_FETCH_OUT" ]; then have="$(wc -c < "$SHIM_FETCH_OUT" 2>/dev/null || echo 0)"; fi
+  if [ -e "$SHIM_FETCH_OUT" ]; then
+    have="$(wc -c < "$SHIM_FETCH_OUT" 2>/dev/null)" || have=0
+  fi
   case "$have" in ''|*[!0-9]*) have=0 ;; esac
+
+  # Byte rate over a sliding ~2-frame window; the first frame just seeds it.
+  shim_now_ms
+  if [ "${SHIM_F_PREV_MS:-0}" = "0" ]; then
+    SHIM_F_PREV_MS="$SHIM_MS"; SHIM_F_PREV_B="$have"
+    SHIM_F_START_MS="$SHIM_MS"; SHIM_F_START_B=0
+  elif [ "$SHIM_MS" -gt "${SHIM_F_PREV_MS:-0}" ] && [ "$have" != "${SHIM_F_PREV_B:-0}" ]; then
+    SHIM_F_RATE=$(( ( have - SHIM_F_PREV_B ) * 1000 / ( SHIM_MS - SHIM_F_PREV_MS ) ))
+    [ "${SHIM_F_RATE:-0}" -lt 0 ] && SHIM_F_RATE=0
+    SHIM_F_PREV_MS="$SHIM_MS"; SHIM_F_PREV_B="$have"
+  fi
+  # Repaint only when the picture moved, or half a second passed (stalls
+  # stay alive on screen without burning terminal I/O).
+  if [ "$have" != "${SHIM_F_PAINT_B:-}" ] \
+     || [ -z "${SHIM_F_PAINT_MS:-}" ] \
+     || [ "$(( SHIM_MS - SHIM_F_PAINT_MS ))" -ge 500 ]; then
+    SHIM_F_PAINT_B="$have"; SHIM_F_PAINT_MS="$SHIM_MS"
+  else
+    return 0
+  fi
+
+  shim_fmt_rate "${SHIM_F_RATE:-0}"; ratetxt="$SHIM_FMT"
+  case "$SHIM_DEPTH" in
+    24|256) tc="${SHIM_ESC}[38;5;240m"; pc="" ;;
+    *)      tc=""; pc="" ;;
+  esac
+
   if [ -n "$SHIM_FETCH_TOTAL" ] && [ "$SHIM_FETCH_TOTAL" -gt 0 ]; then
     pct=$(( have * 100 / SHIM_FETCH_TOTAL )); [ "$pct" -gt 100 ] && pct=100
-    shim_status "$SHIM_FETCH_PREFIX  ${pct}% · $(shim_bytes "$have") / $(shim_bytes "$SHIM_FETCH_TOTAL")"
+    prog=$(( have * cells * 100 / SHIM_FETCH_TOTAL ))
+    [ "$prog" -gt $(( cells * 100 )) ] && prog=$(( cells * 100 ))
+    filled=$(( prog / 100 )); frac=$(( prog % 100 ))
+    while [ "$i" -lt "$filled" ]; do
+      case "$SHIM_DEPTH" in
+        256) fillcol="${SHIM_ESC}[38;5;$(( 114 + i * 43 / (cells - 1) ))m" ;;
+        24)  pc=$(( i * 100 / (cells - 1) ))
+             fillcol="${SHIM_ESC}[38;2;$(( 104 + 86 * pc / 100 ));$(( 232 + 18 * pc / 100 ));$(( 150 + 55 * pc / 100 ))m" ;;
+        *)   fillcol="" ;;
+      esac
+      bar="${bar}${fillcol}█"
+      i=$(( i + 1 ))
+    done
+    if [ "$frac" -gt 0 ] && [ "$filled" -lt "$cells" ]; then
+      hb=$(( (frac * 7 + 50) / 100 )); [ "$hb" -eq 0 ] && hb=1
+      # Byte-safe partial-cell head: case mapping instead of substring
+      # slicing — a C-locale bash counts BYTES in ${var:$n:1}, which would
+      # slice a middle byte out of ▌ and corrupt the frame.
+      case "$hb" in
+        1) hc='▏' ;; 2) hc='▎' ;; 3) hc='▍' ;; 4) hc='▌' ;;
+        5) hc='▋' ;; 6) hc='▊' ;; 7) hc='▉' ;; *) hc="" ;;
+      esac
+      case "$SHIM_DEPTH" in
+        256) bar="${bar}${SHIM_ESC}[38;5;$(( 114 + filled * 43 / (cells - 1) ))m${hc}" ;;
+        24)  pc=$(( filled * 100 / (cells - 1) ))
+             bar="${bar}${SHIM_ESC}[38;2;$(( 104 + 86 * pc / 100 ));$(( 232 + 18 * pc / 100 ));$(( 150 + 55 * pc / 100 ))m${hc}" ;;
+        *)   bar="${bar}${hc}" ;;
+      esac
+      i=$(( filled + 1 ))
+    else
+      i="$filled"
+    fi
+    while [ "$i" -lt "$cells" ]; do
+      track="${track}${tc}░"
+      i=$(( i + 1 ))
+    done
+    case "$pct" in [0-9]) pp="  $pct" ;; [0-9][0-9]) pp=" $pct" ;; *) pp="$pct" ;; esac
+    shim_fmt_bytes "$have"; havetxt="$SHIM_FMT"
+    shim_fmt_bytes "$SHIM_FETCH_TOTAL"; tottext="$SHIM_FMT"
+    case "$SHIM_DEPTH" in
+      24|256) bar="${bar}${tc}${track}${SHIM_ESC}[0m" ;;
+      *)      bar="${bar}${track}" ;;
+    esac
+    line="${SHIM_FETCH_PREFIX}  [${bar}]${pp}%"
+    core=$(( ${#SHIM_FETCH_PREFIX} + 31 ))
   else
-    shim_status "$SHIM_FETCH_PREFIX  downloading…"
+    shim_fmt_bytes "$have"; havetxt="$SHIM_FMT"
+    line="${SHIM_FETCH_PREFIX}  ${havetxt}"
+    core=$(( ${#SHIM_FETCH_PREFIX} + 2 + ${#havetxt} ))
   fi
+
+  # Phone-width safety (portrait Termux ≈ 55 cols): the prefix + bar + % are
+  # sacred; the size pair survives next; the rate is the first to be shed;
+  # the prefix itself is truncated only as a last resort. One line per frame
+  # — a wrapped frame is what looked like blinking.
+  budget="${COLUMNS:-80}"
+  case "$budget" in ''|*[!0-9]*) budget=80 ;; esac
+  [ "$budget" -lt 24 ] && budget=24
+  local szkeep=0 rtkeep=0 cut nlen
+  if [ -n "${tottext:-}" ]; then
+    szlen="$(( 5 + ${#havetxt} + 3 + ${#tottext} ))"
+    rtlen=$(( 5 + ${#ratetxt} ))
+    if [ $(( core + szlen + rtlen )) -le "$budget" ]; then
+      szkeep=1; rtkeep=1; core=$(( core + szlen + rtlen ))
+    elif [ $(( core + szlen )) -le "$budget" ]; then
+      szkeep=1; core=$(( core + szlen ))
+    fi
+    [ "$szkeep" = "1" ] && line="${line}  ·  ${havetxt} / ${tottext}"
+    [ "$rtkeep" = "1" ] && line="${line}  ·  ${ratetxt}"
+  else
+    rtlen=$(( 5 + ${#ratetxt} ))
+    if [ $(( core + rtlen )) -le "$budget" ]; then
+      rtkeep=1; core=$(( core + rtlen ))
+    fi
+    [ "$rtkeep" = "1" ] && line="${line}  ·  ${ratetxt}"
+  fi
+  if [ "$core" -gt "$budget" ]; then
+    cut=$(( core - budget + 1 ))
+    nlen=${#SHIM_FETCH_PREFIX}
+    [ "$cut" -gt $(( nlen - 1 )) ] && cut=$(( nlen - 1 ))
+    [ "$cut" -lt 0 ] && cut=0
+    line="…${line:$cut}"
+  fi
+  printf '\r%s[K%s' "$SHIM_ESC" "$line"
+}
+
+# The last frame: refill the bar at 100%, park a ✓ on it, then a newline so
+# the stage's own summary lands on a fresh line. Failures clear the line
+# instead — the stage machinery speaks there.
+# The last frame: refill the bar at 100% and park a green ✓ on it, then a
+# newline so the stage's own summary lands on a fresh line. The width budget
+# sheds sizes, speed and seconds the same way the live bar does, so the
+# finish never wraps on a narrow phone. Failures wipe the line instead —
+# the stage machinery speaks there.
+shim_fetch_done() {
+  local have=0 rate=0 secs=0 i=0 fc f tc="" bar="" cells=24 line core cut nlen
+  local havetxt tottext="" ratetxt budget shown=0 szlen
+  [ "${TTY_OUT:-0}" = "1" ] || return 0
+  [ -n "$SHIM_FETCH_OUT" ] || return 0
+  if [ -e "$SHIM_FETCH_OUT" ]; then
+    have="$(wc -c < "$SHIM_FETCH_OUT" 2>/dev/null)" || have=0
+  fi
+  case "$have" in ''|*[!0-9]*) have=0 ;; esac
+  shim_now_ms
+  if [ "${SHIM_F_START_MS:-0}" != "0" ] && [ "$SHIM_MS" -gt "$SHIM_F_START_MS" ]; then
+    rate=$(( have * 1000 / ( SHIM_MS - SHIM_F_START_MS ) ))
+    secs=$(( ( SHIM_MS - SHIM_F_START_MS + 500 ) / 1000 ))
+  fi
+  shim_fmt_rate "$rate"; ratetxt="$SHIM_FMT"
+  shim_fmt_bytes "$have"; havetxt="$SHIM_FMT"
+  budget="${COLUMNS:-80}"
+  case "$budget" in ''|*[!0-9]*) budget=80 ;; esac
+  [ "$budget" -lt 24 ] && budget=24
+  if [ -n "$SHIM_FETCH_TOTAL" ] && [ "$SHIM_FETCH_TOTAL" -gt 0 ]; then
+    shim_fmt_bytes "$SHIM_FETCH_TOTAL"; tottext="$SHIM_FMT"
+    while [ "$i" -lt "$cells" ]; do
+      case "$SHIM_DEPTH" in
+        256) f="${SHIM_ESC}[38;5;$(( 114 + i * 43 / (cells - 1) ))m" ;;
+        24)  fc=$(( i * 100 / (cells - 1) ))
+             f="${SHIM_ESC}[38;2;$(( 104 + 86 * fc / 100 ));$(( 232 + 18 * fc / 100 ));$(( 150 + 55 * fc / 100 ))m" ;;
+        *)   f="" ;;
+      esac
+      bar="${bar}${f}█"
+      i=$(( i + 1 ))
+    done
+    case "$SHIM_DEPTH" in 24|256) bar="${bar}${SHIM_ESC}[0m" ;; esac
+    line="${SHIM_FETCH_PREFIX}  [${bar}] 100%"
+    core=$(( ${#SHIM_FETCH_PREFIX} + 2 + 26 + 5 ))
+  else
+    line="${SHIM_FETCH_PREFIX}  ${havetxt}"
+    core=$(( ${#SHIM_FETCH_PREFIX} + 2 + ${#havetxt} ))
+  fi
+  # The ✓ is the payoff — always shown; the stats yield to the width.
+  line="${line}  ${SHIM_OK:-}✓${SHIM_RESET:-}"
+  core=$(( core + 3 ))
+  if [ -n "$tottext" ]; then
+    szlen=$(( 5 + ${#havetxt} + 3 + ${#tottext} ))
+    if [ $(( core + szlen )) -le "$budget" ]; then
+      line="${line}  ·  ${havetxt} / ${tottext}"
+      core=$(( core + szlen ))
+    fi
+  fi
+  if [ $(( core + 9 + ${#ratetxt} )) -le "$budget" ]; then
+    line="${line}  ·  ${ratetxt} avg"
+    core=$(( core + 9 + ${#ratetxt} ))
+    shown=1
+  fi
+  if [ "$shown" = "1" ] && [ $(( core + 6 + ${#secs} )) -le "$budget" ]; then
+    line="${line}  ·  ${secs}s"
+    core=$(( core + 6 + ${#secs} ))
+  fi
+  if [ "$core" -gt "$budget" ]; then
+    cut=$(( core - budget + 1 ))
+    nlen=${#SHIM_FETCH_PREFIX}
+    [ "$cut" -gt $(( nlen - 1 )) ] && cut=$(( nlen - 1 ))
+    [ "$cut" -lt 0 ] && cut=0
+    line="…${line:$cut}"
+  fi
+  printf '\r%s[K%s\n' "$SHIM_ESC" "$line"
 }
 
 shim_fetch_wait() {
@@ -319,6 +574,12 @@ shim_fetch_wait() {
   [ -n "$SHIM_FETCH_PID" ] || return 1
   wait "$SHIM_FETCH_PID"; rc=$?
   SHIM_FETCH_PID=""
+  if [ "$rc" = "0" ]; then
+    shim_fetch_done
+  else
+    # Wipe the mid-flight bar so the stage's own error line starts clean.
+    [ "${TTY_OUT:-0}" = "1" ] && { printf '\r%s[K\n' "$SHIM_ESC"; SHIM_LIVE_ACTIVE=0; }
+  fi
   return "$rc"
 }
 

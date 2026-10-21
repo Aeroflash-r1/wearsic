@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Cloud Auto Backup rules (API <= 30). DataStore holds the API key and the
-  private server URL — neither must ever leave the device in a backup.
+  Cloud Auto Backup rules (API <= 30). The settings preference file holds the
+  API key and the private server URL; the files dir holds downloaded audio
+  (which must never leave the device — the whole privacy promise of the app)
+  and the diagnostics crash journal (potentially personal stack traces).
+  None of this may be included in an automatic backup.
 -->
 <full-backup-content>
     <exclude domain="file" path="datastore/wearsic_settings.preferences_pb" />
     <exclude domain="root" path="datastore/wearsic_settings.preferences_pb" />
+    <exclude domain="file" path="wearsic_downloads" />
+    <exclude domain="file" path="wearsic_diagnostics" />
 </full-backup-content>

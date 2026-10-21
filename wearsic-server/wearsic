@@ -617,20 +617,74 @@ shim_bytes() { # $1 = bytes
   else printf '%sB' "$b"; fi
 }
 
+# Fork-free byte/rate/time helpers for the BAR (the old path forked a
+# subshell per frame — `wc` + two `awk`s at ~11 fps read as stutter on a
+# phone; these do pure integer math and return through $SHIM_FMT / $SHIM_MS).
+shim_fmt_bytes() { # $1 = bytes -> SHIM_FMT = "4.2M" / "900K" / "12B"
+  local b="${1:-0}"
+  case "$b" in ''|*[!0-9]*) b=0 ;; esac
+  if [ "$b" -ge 1048576 ]; then
+    local h=$(( b / 1048576 )) l=$(( (b % 1048576) * 10 / 1048576 ))
+    SHIM_FMT="${h}.${l}M"
+  elif [ "$b" -ge 1024 ]; then
+    SHIM_FMT="$(( b / 1024 ))K"
+  else
+    SHIM_FMT="${b}B"
+  fi
+}
+
+shim_fmt_rate() { # $1 = bytes/s -> SHIM_FMT = "5.2MB/s" / "480KB/s"
+  local r="${1:-0}" w f
+  case "$r" in ''|*[!0-9]*) r=0 ;; esac
+  if [ "$r" -ge 1048576 ]; then
+    w=$(( r / 1048576 )); f=$(( (r % 1048576) * 10 / 1048576 ))
+    SHIM_FMT="${w}.${f}MB/s"
+  elif [ "$r" -ge 1024 ]; then
+    w=$(( r / 1024 )); f=$(( (r % 1024) * 10 / 1024 ))
+    SHIM_FMT="${w}.${f}KB/s"
+  else
+    SHIM_FMT="${r}B/s"
+  fi
+}
+
+shim_now_ms() { # SHIM_MS = milliseconds (bash 5's $EPOCHREALTIME; 0 if absent)
+  local r="${EPOCHREALTIME:-}" sec sub
+  if [ -z "$r" ]; then SHIM_MS=0; return 0; fi
+  case "$r" in
+    *.**) sec="${r%%.*}"; sub="${r#*.}" ;;
+    *)    sec="$r";      sub="" ;;
+  esac
+  case "$sec" in ''|*[!0-9]*) sec=0 ;; esac
+  case "$sub" in ''|*[!0-9]*) sub=0 ;; esac
+  sub="${sub:0:6}"
+  SHIM_MS=$(( sec * 1000 + 10#$sub / 1000 ))
+}
+
 # Animate until the job ($1) exits. A progress hook ($SHIM_PROGRESS_HOOK) is
 # called before every frame, so a download can report its real percentage.
+# A hook may paint its OWN frame (the download bar) and set SHIM_HOOK_DREW —
+# the generic shimmer then sits out that tick instead of overpainting.
 shim_animate() { # $1 = pid
   local pid="$1" frame=0 t=""
   shim_cursor_hide
   while kill -0 "$pid" 2>/dev/null; do
     if [ -n "$SHIM_PROGRESS_HOOK" ]; then
-      "$SHIM_PROGRESS_HOOK" >/dev/null 2>&1 || true
+      SHIM_HOOK_DREW=0
+      "$SHIM_PROGRESS_HOOK" 2>/dev/null || true
+    else
+      SHIM_HOOK_DREW=0
     fi
-    if [ -n "$SHIM_STATUS_FILE" ] && [ -s "$SHIM_STATUS_FILE" ]; then
-      t="$(cat "$SHIM_STATUS_FILE" 2>/dev/null || true)"
-      [ -n "$t" ] && SHIM_LIVE_TEXT="$t"
+    if [ "${SHIM_HOOK_DREW:-0}" = "1" ]; then
+      # The hook already put a line on screen; remember that a live line
+      # exists so shim_clear_live erases it later.
+      SHIM_LIVE_ACTIVE=1
+    else
+      if [ -n "$SHIM_STATUS_FILE" ] && [ -s "$SHIM_STATUS_FILE" ]; then
+        t="$(cat "$SHIM_STATUS_FILE" 2>/dev/null || true)"
+        [ -n "$t" ] && SHIM_LIVE_TEXT="$t"
+      fi
+      shim_draw_live "$frame"
     fi
-    shim_draw_live "$frame"
     sleep "$SHIM_FRAME_S"
     frame=$(( (frame + 1) % SHIM_LOOP_FRAMES ))
   done
@@ -707,22 +761,223 @@ shim_fetch_start() { # $1 = url, $2 = out file, $3 = live text prefix
   SHIM_FETCH_TOTAL="$(curl -fsSIL --max-time 15 "$1" 2>/dev/null \
     | grep -i '^content-length:' | tail -1 | tr -d '\r' | awk '{print $2}')"
   case "$SHIM_FETCH_TOTAL" in ''|*[!0-9]*) SHIM_FETCH_TOTAL="" ;; esac
+  # Fresh rate/paint state per download — a second fetch must not
+  # inherit the previous one's sliding window or repaint guard.
+  SHIM_F_PREV_MS=0; SHIM_F_PREV_B=0
+  SHIM_F_RATE=0
+  SHIM_F_PAINT_B=""; SHIM_F_PAINT_MS=0
+  SHIM_F_START_MS=0; SHIM_F_START_B=0
   curl -fL --retry 3 --retry-delay 2 -o "$2" "$1" >/dev/null 2>&1 &
   SHIM_FETCH_PID=$!
 }
 
-# The animation hook: report the real percentage of the running download.
+# The animation hook: the download bar paints ITSELF here instead of pushing
+# text into the generic shimmer. Why: the old path re-rendered gray letters
+# character-by-character every frame with several forks, which on a phone
+# read as blinking. This frame is a SINGLE atomic `\r\e[K` write with a green
+# gradient fill, a partial-cell head (▏▎…▉) so the bar climbs smoothly, a
+# fixed-width tail (no wobble), and a byte rate from $EPOCHREALTIME — zero
+# forks per frame. Sets SHIM_HOOK_DREW=1 so shim_animate skips the shimmer
+# for this tick (and remembers a live line is on screen for its cleanup).
 shim_fetch_progress() {
-  local have=0 pct=0
+  SHIM_HOOK_DREW=1
+  [ "${TTY_OUT:-0}" = "1" ] || { SHIM_HOOK_DREW=0; return 0; }
+  local have=0 cells=24 pct=0 filled=0 prog=0 frac=0 i=0
+  local bar="" track="" tc="" fillcol pc
+  local line pp havetxt tottext ratetxt label budget plain
   [ -n "$SHIM_FETCH_PID" ] || return 0
-  if [ -e "$SHIM_FETCH_OUT" ]; then have="$(wc -c < "$SHIM_FETCH_OUT" 2>/dev/null || echo 0)"; fi
+  if [ -e "$SHIM_FETCH_OUT" ]; then
+    have="$(wc -c < "$SHIM_FETCH_OUT" 2>/dev/null)" || have=0
+  fi
   case "$have" in ''|*[!0-9]*) have=0 ;; esac
+
+  # Byte rate over a sliding ~2-frame window; the first frame just seeds it.
+  shim_now_ms
+  if [ "${SHIM_F_PREV_MS:-0}" = "0" ]; then
+    SHIM_F_PREV_MS="$SHIM_MS"; SHIM_F_PREV_B="$have"
+    SHIM_F_START_MS="$SHIM_MS"; SHIM_F_START_B=0
+  elif [ "$SHIM_MS" -gt "${SHIM_F_PREV_MS:-0}" ] && [ "$have" != "${SHIM_F_PREV_B:-0}" ]; then
+    SHIM_F_RATE=$(( ( have - SHIM_F_PREV_B ) * 1000 / ( SHIM_MS - SHIM_F_PREV_MS ) ))
+    [ "${SHIM_F_RATE:-0}" -lt 0 ] && SHIM_F_RATE=0
+    SHIM_F_PREV_MS="$SHIM_MS"; SHIM_F_PREV_B="$have"
+  fi
+  # Repaint only when the picture moved, or half a second passed (stalls
+  # stay alive on screen without burning terminal I/O).
+  if [ "$have" != "${SHIM_F_PAINT_B:-}" ] \
+     || [ -z "${SHIM_F_PAINT_MS:-}" ] \
+     || [ "$(( SHIM_MS - SHIM_F_PAINT_MS ))" -ge 500 ]; then
+    SHIM_F_PAINT_B="$have"; SHIM_F_PAINT_MS="$SHIM_MS"
+  else
+    return 0
+  fi
+
+  shim_fmt_rate "${SHIM_F_RATE:-0}"; ratetxt="$SHIM_FMT"
+  case "$SHIM_DEPTH" in
+    24|256) tc="${SHIM_ESC}[38;5;240m"; pc="" ;;
+    *)      tc=""; pc="" ;;
+  esac
+
   if [ -n "$SHIM_FETCH_TOTAL" ] && [ "$SHIM_FETCH_TOTAL" -gt 0 ]; then
     pct=$(( have * 100 / SHIM_FETCH_TOTAL )); [ "$pct" -gt 100 ] && pct=100
-    shim_status "$SHIM_FETCH_PREFIX  ${pct}% · $(shim_bytes "$have") / $(shim_bytes "$SHIM_FETCH_TOTAL")"
+    prog=$(( have * cells * 100 / SHIM_FETCH_TOTAL ))
+    [ "$prog" -gt $(( cells * 100 )) ] && prog=$(( cells * 100 ))
+    filled=$(( prog / 100 )); frac=$(( prog % 100 ))
+    while [ "$i" -lt "$filled" ]; do
+      case "$SHIM_DEPTH" in
+        256) fillcol="${SHIM_ESC}[38;5;$(( 114 + i * 43 / (cells - 1) ))m" ;;
+        24)  pc=$(( i * 100 / (cells - 1) ))
+             fillcol="${SHIM_ESC}[38;2;$(( 104 + 86 * pc / 100 ));$(( 232 + 18 * pc / 100 ));$(( 150 + 55 * pc / 100 ))m" ;;
+        *)   fillcol="" ;;
+      esac
+      bar="${bar}${fillcol}█"
+      i=$(( i + 1 ))
+    done
+    if [ "$frac" -gt 0 ] && [ "$filled" -lt "$cells" ]; then
+      hb=$(( (frac * 7 + 50) / 100 )); [ "$hb" -eq 0 ] && hb=1
+      # Byte-safe partial-cell head: case mapping instead of substring
+      # slicing — a C-locale bash counts BYTES in ${var:$n:1}, which would
+      # slice a middle byte out of ▌ and corrupt the frame.
+      case "$hb" in
+        1) hc='▏' ;; 2) hc='▎' ;; 3) hc='▍' ;; 4) hc='▌' ;;
+        5) hc='▋' ;; 6) hc='▊' ;; 7) hc='▉' ;; *) hc="" ;;
+      esac
+      case "$SHIM_DEPTH" in
+        256) bar="${bar}${SHIM_ESC}[38;5;$(( 114 + filled * 43 / (cells - 1) ))m${hc}" ;;
+        24)  pc=$(( filled * 100 / (cells - 1) ))
+             bar="${bar}${SHIM_ESC}[38;2;$(( 104 + 86 * pc / 100 ));$(( 232 + 18 * pc / 100 ));$(( 150 + 55 * pc / 100 ))m${hc}" ;;
+        *)   bar="${bar}${hc}" ;;
+      esac
+      i=$(( filled + 1 ))
+    else
+      i="$filled"
+    fi
+    while [ "$i" -lt "$cells" ]; do
+      track="${track}${tc}░"
+      i=$(( i + 1 ))
+    done
+    case "$pct" in [0-9]) pp="  $pct" ;; [0-9][0-9]) pp=" $pct" ;; *) pp="$pct" ;; esac
+    shim_fmt_bytes "$have"; havetxt="$SHIM_FMT"
+    shim_fmt_bytes "$SHIM_FETCH_TOTAL"; tottext="$SHIM_FMT"
+    case "$SHIM_DEPTH" in
+      24|256) bar="${bar}${tc}${track}${SHIM_ESC}[0m" ;;
+      *)      bar="${bar}${track}" ;;
+    esac
+    line="${SHIM_FETCH_PREFIX}  [${bar}]${pp}%"
+    core=$(( ${#SHIM_FETCH_PREFIX} + 31 ))
   else
-    shim_status "$SHIM_FETCH_PREFIX  downloading…"
+    shim_fmt_bytes "$have"; havetxt="$SHIM_FMT"
+    line="${SHIM_FETCH_PREFIX}  ${havetxt}"
+    core=$(( ${#SHIM_FETCH_PREFIX} + 2 + ${#havetxt} ))
   fi
+
+  # Phone-width safety (portrait Termux ≈ 55 cols): the prefix + bar + % are
+  # sacred; the size pair survives next; the rate is the first to be shed;
+  # the prefix itself is truncated only as a last resort. One line per frame
+  # — a wrapped frame is what looked like blinking.
+  budget="${COLUMNS:-80}"
+  case "$budget" in ''|*[!0-9]*) budget=80 ;; esac
+  [ "$budget" -lt 24 ] && budget=24
+  local szkeep=0 rtkeep=0 cut nlen
+  if [ -n "${tottext:-}" ]; then
+    szlen="$(( 5 + ${#havetxt} + 3 + ${#tottext} ))"
+    rtlen=$(( 5 + ${#ratetxt} ))
+    if [ $(( core + szlen + rtlen )) -le "$budget" ]; then
+      szkeep=1; rtkeep=1; core=$(( core + szlen + rtlen ))
+    elif [ $(( core + szlen )) -le "$budget" ]; then
+      szkeep=1; core=$(( core + szlen ))
+    fi
+    [ "$szkeep" = "1" ] && line="${line}  ·  ${havetxt} / ${tottext}"
+    [ "$rtkeep" = "1" ] && line="${line}  ·  ${ratetxt}"
+  else
+    rtlen=$(( 5 + ${#ratetxt} ))
+    if [ $(( core + rtlen )) -le "$budget" ]; then
+      rtkeep=1; core=$(( core + rtlen ))
+    fi
+    [ "$rtkeep" = "1" ] && line="${line}  ·  ${ratetxt}"
+  fi
+  if [ "$core" -gt "$budget" ]; then
+    cut=$(( core - budget + 1 ))
+    nlen=${#SHIM_FETCH_PREFIX}
+    [ "$cut" -gt $(( nlen - 1 )) ] && cut=$(( nlen - 1 ))
+    [ "$cut" -lt 0 ] && cut=0
+    line="…${line:$cut}"
+  fi
+  printf '\r%s[K%s' "$SHIM_ESC" "$line"
+}
+
+# The last frame: refill the bar at 100%, park a ✓ on it, then a newline so
+# the stage's own summary lands on a fresh line. Failures clear the line
+# instead — the stage machinery speaks there.
+# The last frame: refill the bar at 100% and park a green ✓ on it, then a
+# newline so the stage's own summary lands on a fresh line. The width budget
+# sheds sizes, speed and seconds the same way the live bar does, so the
+# finish never wraps on a narrow phone. Failures wipe the line instead —
+# the stage machinery speaks there.
+shim_fetch_done() {
+  local have=0 rate=0 secs=0 i=0 fc f tc="" bar="" cells=24 line core cut nlen
+  local havetxt tottext="" ratetxt budget shown=0 szlen
+  [ "${TTY_OUT:-0}" = "1" ] || return 0
+  [ -n "$SHIM_FETCH_OUT" ] || return 0
+  if [ -e "$SHIM_FETCH_OUT" ]; then
+    have="$(wc -c < "$SHIM_FETCH_OUT" 2>/dev/null)" || have=0
+  fi
+  case "$have" in ''|*[!0-9]*) have=0 ;; esac
+  shim_now_ms
+  if [ "${SHIM_F_START_MS:-0}" != "0" ] && [ "$SHIM_MS" -gt "$SHIM_F_START_MS" ]; then
+    rate=$(( have * 1000 / ( SHIM_MS - SHIM_F_START_MS ) ))
+    secs=$(( ( SHIM_MS - SHIM_F_START_MS + 500 ) / 1000 ))
+  fi
+  shim_fmt_rate "$rate"; ratetxt="$SHIM_FMT"
+  shim_fmt_bytes "$have"; havetxt="$SHIM_FMT"
+  budget="${COLUMNS:-80}"
+  case "$budget" in ''|*[!0-9]*) budget=80 ;; esac
+  [ "$budget" -lt 24 ] && budget=24
+  if [ -n "$SHIM_FETCH_TOTAL" ] && [ "$SHIM_FETCH_TOTAL" -gt 0 ]; then
+    shim_fmt_bytes "$SHIM_FETCH_TOTAL"; tottext="$SHIM_FMT"
+    while [ "$i" -lt "$cells" ]; do
+      case "$SHIM_DEPTH" in
+        256) f="${SHIM_ESC}[38;5;$(( 114 + i * 43 / (cells - 1) ))m" ;;
+        24)  fc=$(( i * 100 / (cells - 1) ))
+             f="${SHIM_ESC}[38;2;$(( 104 + 86 * fc / 100 ));$(( 232 + 18 * fc / 100 ));$(( 150 + 55 * fc / 100 ))m" ;;
+        *)   f="" ;;
+      esac
+      bar="${bar}${f}█"
+      i=$(( i + 1 ))
+    done
+    case "$SHIM_DEPTH" in 24|256) bar="${bar}${SHIM_ESC}[0m" ;; esac
+    line="${SHIM_FETCH_PREFIX}  [${bar}] 100%"
+    core=$(( ${#SHIM_FETCH_PREFIX} + 2 + 26 + 5 ))
+  else
+    line="${SHIM_FETCH_PREFIX}  ${havetxt}"
+    core=$(( ${#SHIM_FETCH_PREFIX} + 2 + ${#havetxt} ))
+  fi
+  # The ✓ is the payoff — always shown; the stats yield to the width.
+  line="${line}  ${SHIM_OK:-}✓${SHIM_RESET:-}"
+  core=$(( core + 3 ))
+  if [ -n "$tottext" ]; then
+    szlen=$(( 5 + ${#havetxt} + 3 + ${#tottext} ))
+    if [ $(( core + szlen )) -le "$budget" ]; then
+      line="${line}  ·  ${havetxt} / ${tottext}"
+      core=$(( core + szlen ))
+    fi
+  fi
+  if [ $(( core + 9 + ${#ratetxt} )) -le "$budget" ]; then
+    line="${line}  ·  ${ratetxt} avg"
+    core=$(( core + 9 + ${#ratetxt} ))
+    shown=1
+  fi
+  if [ "$shown" = "1" ] && [ $(( core + 6 + ${#secs} )) -le "$budget" ]; then
+    line="${line}  ·  ${secs}s"
+    core=$(( core + 6 + ${#secs} ))
+  fi
+  if [ "$core" -gt "$budget" ]; then
+    cut=$(( core - budget + 1 ))
+    nlen=${#SHIM_FETCH_PREFIX}
+    [ "$cut" -gt $(( nlen - 1 )) ] && cut=$(( nlen - 1 ))
+    [ "$cut" -lt 0 ] && cut=0
+    line="…${line:$cut}"
+  fi
+  printf '\r%s[K%s\n' "$SHIM_ESC" "$line"
 }
 
 shim_fetch_wait() {
@@ -730,6 +985,12 @@ shim_fetch_wait() {
   [ -n "$SHIM_FETCH_PID" ] || return 1
   wait "$SHIM_FETCH_PID"; rc=$?
   SHIM_FETCH_PID=""
+  if [ "$rc" = "0" ]; then
+    shim_fetch_done
+  else
+    # Wipe the mid-flight bar so the stage's own error line starts clean.
+    [ "${TTY_OUT:-0}" = "1" ] && { printf '\r%s[K\n' "$SHIM_ESC"; SHIM_LIVE_ACTIVE=0; }
+  fi
   return "$rc"
 }
 
@@ -2005,11 +2266,14 @@ cmd_funnel() {
 # AUTHORIZATION
 # -------------
 # Cloudflare credentials are resolved in this order:
-#   1. CLOUDFLARE_API_TOKEN in the environment or .env
-#   2. the official `wrangler login` OAuth session (if wrangler is installed)
-#   3. `wearsic cloudflare login`, which either runs wrangler's browser/device
-#      OAuth flow or prompts (hidden input) for a scoped API token and saves
-#      it to .env with mode 0600.
+#   1. CLOUDFLARE_API_TOKEN in the environment or .env (static override)
+#   2. this CLI's own OAuth session (`wearsic cloudflare login`): the access
+#      token is short-lived by design, but the refresh token stored in
+#      .wearsic-state/cloudflare-auth.json (mode 0600) renews it
+#      automatically, so the session does not go stale
+#   3. the official `wrangler login` OAuth session (if wrangler is installed)
+#   4. a manually pasted scoped API token (login --token-stdin), saved to
+#      .env with mode 0600
 # No credential is ever printed, embedded in a URL, or committed.
 #
 # Optional credentials:
@@ -2031,6 +2295,25 @@ CF_RETRY_CAP="${WEARSIC_CF_RETRY_CAP:-60}"
 CF_RETRY_MAX="${WEARSIC_CF_RETRY_MAX:-6}"
 CF_PROBE_PATH="/api/frontdoor/probe"
 CF_PROBE_SIZE=65536
+
+# Wrangler-compatible OAuth, implemented natively (no node/npm needed on the
+# device). Endpoints, client id and flow semantics mirror Cloudflare's own
+# first-party wrangler OAuth app (cloudflare/workers-sdk,
+# packages/workers-auth): the default login uses the RFC 8628 device flow and
+# `login --browser` uses PKCE S256 against the same authorization server.
+CF_OAUTH_AUTH_DOMAIN="dash.cloudflare.com"
+CF_OAUTH_DEVICE_URL="https://$CF_OAUTH_AUTH_DOMAIN/oauth2/device/auth"
+CF_OAUTH_TOKEN_URL="https://$CF_OAUTH_AUTH_DOMAIN/oauth2/token"
+CF_OAUTH_REVOKE_URL="https://$CF_OAUTH_AUTH_DOMAIN/oauth2/revoke"
+CF_OAUTH_AUTHZ_URL="https://$CF_OAUTH_AUTH_DOMAIN/oauth2/auth"
+CF_OAUTH_CLIENT_ID="54d11594-84e4-41aa-b438-e81b8fa78ee7"
+# Exactly the permissions this CLI needs; `offline_access` is what makes the
+# session refreshable instead of stale (RFC 6749 §6 refresh tokens).
+CF_OAUTH_SCOPES="account:read user:read workers_scripts:write offline_access"
+CF_OAUTH_CALLBACK="http://localhost:8976/oauth/callback"
+CF_OAUTH_POLL_FLOOR=1     # seconds; wrangler's minimum polling interval
+CF_OAUTH_MAX_WAIT=300     # hard cap on the approval window (wrangler parity)
+CF_UA="wearsic-cli (OAuth device flow; +https://github.com/Aeroflash-r1/wearsic)"
 
 cf_state_dir()   { printf '%s/wearsic-state' "$DEST"; }
 cf_state_file()  { printf '%s/cloudflare.json' "$(cf_state_dir)"; }
@@ -2195,6 +2478,8 @@ cf_token() {
   local t
   t="$(cf_token_from_env)"
   [ -n "$t" ] && { printf '%s' "$t"; return 0; }
+  t="$(cf_oauth_token 2>/dev/null || true)"
+  [ -n "$t" ] && { printf '%s' "$t"; return 0; }
   t="$(cf_token_from_wrangler 2>/dev/null || true)"
   [ -n "$t" ] && { printf '%s' "$t"; return 0; }
   return 1
@@ -2203,11 +2488,338 @@ cf_token() {
 cf_token_source() {
   if [ -n "$(cf_token_from_env)" ]; then
     printf 'API token (.env or environment)'
+  elif [ -s "$(cf_auth_file 2>/dev/null)" ]; then
+    printf 'OAuth session (wearsic login, auto-refreshing)'
   elif [ -n "$(cf_token_from_wrangler 2>/dev/null || true)" ]; then
     printf 'wrangler OAuth session'
   else
     printf 'none'
   fi
+}
+
+# --- Native OAuth session (device + browser flows) ---------------------------
+# The session file holds the long-lived refresh token plus the current access
+# token and its expiry. Access tokens are short-lived BY DESIGN; everything
+# here re-mints them from the refresh token, which is what keeps a login from
+# going stale the way a saved static token does.
+cf_auth_file() { printf '%s/cloudflare-auth.json' "$(cf_state_dir)"; }
+
+cf_auth_field() {  # $1 = field name (string values)
+  local f
+  f="$(cf_auth_file)"
+  [ -s "$f" ] || return 1
+  jstr "$(cat "$f")" "$1" | head -1
+}
+
+cf_auth_field_num() {  # $1 = field name (numeric values)
+  local f
+  f="$(cf_auth_file)"
+  [ -s "$f" ] || return 1
+  jnum "$(cat "$f")" "$1" | head -1
+}
+
+# Atomic write, mode 600. When $3 (refresh token) is empty the previous one
+# is kept — RFC 6749 §6 lets a refresh response omit refresh_token.
+cf_auth_write() {  # access_token expires_at refresh_token scope
+  local f tmp rt
+  f="$(cf_auth_file)"
+  mkdir -p "$(dirname "$f")" 2>/dev/null
+  rt="$3"
+  [ -n "$rt" ] || rt="$(cf_auth_field refresh_token 2>/dev/null || true)"
+  tmp="$f.tmp.$$"
+  if ! printf '{"source":"wearsic-oauth","access_token":"%s","expires_at":%s,"refresh_token":"%s","scope":"%s","updated_at":%s}\n' \
+      "$(cf_json_escape "$1")" \
+      "$(printf '%s' "$2" | tr -dc '0-9')" \
+      "$(cf_json_escape "$rt")" \
+      "$(cf_json_escape "${4:-$CF_OAUTH_SCOPES}")" \
+      "$(date +%s)" > "$tmp"; then
+    rm -f "$tmp" 2>/dev/null
+    return 1
+  fi
+  mv -f "$tmp" "$f"
+  chmod 600 "$f" 2>/dev/null || true
+}
+
+cf_auth_clear() { rm -f "$(cf_auth_file)" 2>/dev/null; }
+
+# Verification URLs come from Cloudflare's JSON and are shown to the user and
+# handed to the OS opener, so they are validated strictly. The authority
+# segment (everything after https:// up to the first /) must be exactly the
+# Cloudflare auth domain, with no userinfo — the browser-trick URL
+# "https://dash.cloudflare.com@evil.com/" fails here because of the '@'.
+cf_assert_trusted_url() {  # $1 = URL
+  local u="$1" authority
+  case "$u" in
+    https://*/*) authority="${u#https://}"; authority="${authority%%/*}" ;;
+    https://*)   authority="${u#https://}" ;;
+    *) return 1 ;;
+  esac
+  case "$authority" in
+    *@*) return 1 ;;
+  esac
+  [ "$authority" = "$CF_OAUTH_AUTH_DOMAIN" ]
+}
+
+cf_oauth_refresh() {
+  local rt out status body
+  rt="$(cf_auth_field refresh_token)" || return 1
+  [ -n "$rt" ] || return 1
+  out="$(curl -sS --max-time 30 -A "$CF_UA" -X POST "$CF_OAUTH_TOKEN_URL" \
+      --data-urlencode 'grant_type=refresh_token' \
+      --data-urlencode "refresh_token=$rt" \
+      --data-urlencode "client_id=$CF_OAUTH_CLIENT_ID" \
+      -w $'\n%{http_code}' 2>/dev/null)" || return 1
+  status="${out##*$'\n'}"
+  body="${out%$'\n'*}"
+  case "$status" in
+    2??) ;;
+    4??)
+      # Permanent (an expired or revoked refresh token): drop the session so
+      # the next login starts clean instead of quietly hiding the failure.
+      cf_auth_clear
+      return 1
+      ;;
+    *) return 1 ;;   # transient (network/5xx): keep the session, try again later
+  esac
+  local at ei exp_at
+  at="$(jstr "$body" access_token | head -1)"
+  [ -n "$at" ] || return 1
+  ei="$(jnum "$body" expires_in | head -1)"
+  case "$ei" in ''|*[!0-9]*|0) ei=900 ;; esac
+  exp_at=$(( $(date +%s) + ei - 60 ))
+  cf_auth_write "$at" "$exp_at" "$(jstr "$body" refresh_token | head -1)" "$(jstr "$body" scope | head -1)"
+}
+
+cf_oauth_token() {
+  local tok exp now
+  [ -s "$(cf_auth_file 2>/dev/null)" ] || return 1
+  tok="$(cf_auth_field access_token)" || return 1
+  [ -n "$tok" ] || return 1
+  exp="$(cf_auth_field_num expires_at 2>/dev/null || true)"
+  case "$exp" in ''|*[!0-9]*) exp="" ;; esac
+  now="$(date +%s)"
+  if [ -n "$exp" ] && [ "$exp" -gt $(( now + 60 )) ]; then
+    printf '%s' "$tok"
+    return 0
+  fi
+  # Expired (or expiry unknown): refresh once and hand out the fresh token.
+  cf_oauth_refresh || return 1
+  tok="$(cf_auth_field access_token)" || return 1
+  [ -n "$tok" ] && { printf '%s' "$tok"; return 0; }
+  return 1
+}
+
+# Shared tail for both OAuth flows: persist the session, drop any stale
+# static token that would keep shadowing it in cf_token(), and verify the
+# permissions that matter.
+cf_oauth_finish() {  # $1 = token endpoint JSON response
+  local at ei nrt scope exp_at
+  at="$(jstr "$1" access_token | head -1)"
+  [ -n "$at" ] || { err "Cloudflare's token response was unusable."; return 1; }
+  ei="$(jnum "$1" expires_in | head -1)"
+  case "$ei" in ''|*[!0-9]*|0) ei=900 ;; esac
+  exp_at=$(( $(date +%s) + ei - 60 ))
+  nrt="$(jstr "$1" refresh_token | head -1)"
+  scope="$(jstr "$1" scope | head -1)"
+  cf_auth_write "$at" "$exp_at" "$nrt" "$scope" || { err "Could not save the session file."; return 1; }
+  if [ -n "$(cf_token_from_env)" ]; then
+    cf_env_unset CLOUDFLARE_API_TOKEN
+    unset CLOUDFLARE_API_TOKEN 2>/dev/null || true
+    say "Removed the older static API token from $ENV_FILE — the refreshable session is used now."
+  fi
+  if cf_auth_check; then
+    ok "Cloudflare authorization complete (the token renews itself; it cannot go stale)."
+    cf_login_summary
+    return 0
+  fi
+  warn "Authorized, but the permission check above failed — the session is saved anyway."
+  return 1
+}
+
+# Default login: RFC 8628 device flow — the same UX wrangler gives with
+# --device. The user opens a link, approves once, and the CLI polls until the
+# grant succeeds. Only the user's browser touches the dashboard; this CLI
+# talks to /oauth2/token which is reachable from every network tested.
+cf_login_device_flow() {
+  local out status body tries=0
+  local device_code user_code verif_uri verif_complete expires interval
+  say "Starting browser authorization (no token copy-paste needed)…"
+  while :; do
+    out="$(curl -sS --max-time 30 -A "$CF_UA" -X POST "$CF_OAUTH_DEVICE_URL" \
+        --data-urlencode "client_id=$CF_OAUTH_CLIENT_ID" \
+        --data-urlencode "scope=$CF_OAUTH_SCOPES" \
+        -w $'\n%{http_code}' 2>/dev/null)" || {
+      err "Could not reach dash.cloudflare.com (DNS or network). Check the connection and try again."
+      return 1
+    }
+    status="${out##*$'\n'}"
+    body="${out%$'\n'*}"
+    case "$status" in
+      2??) break ;;
+    esac
+    # Cloudflare's edge sometimes answers the device-code request with a
+    # bot-challenge page instead of JSON (low-reputation networks, e.g. some
+    # mobile ISPs). One retry, then a clear explanation with a working path.
+    if printf '%s' "$body" | head -c 2000 | grep -q '<!DOCTYPE html'; then
+      tries=$(( tries + 1 ))
+      if [ "$tries" -lt 2 ]; then sleep 3; continue; fi
+      err "Cloudflare's bot protection blocked this login from your network."
+      say "  Two ways around it:"
+      say "   1. wearsic cloudflare login --browser   (browser-based; works everywhere)"
+      say "   2. run the same command while on another network (e.g. Wi-Fi)"
+      return 2
+    fi
+    err "Cloudflare rejected the device-code request: $(cf_api_message "$body" | head -1)"
+    say "  Try: wearsic cloudflare login --browser"
+    return 1
+  done
+  device_code="$(jstr "$body" device_code | head -1)"
+  user_code="$(jstr "$body" user_code | head -1)"
+  verif_uri="$(jstr "$body" verification_uri | head -1)"
+  verif_complete="$(jstr "$body" verification_uri_complete | head -1)"
+  expires="$(jnum "$body" expires_in | head -1)"
+  interval="$(jnum "$body" interval | head -1)"
+  { [ -n "$device_code" ] && [ -n "$user_code" ] && [ -n "$verif_uri" ]; } || {
+    err "Cloudflare's device-code response was unusable."
+    return 1
+  }
+  cf_assert_trusted_url "$verif_uri" || { err "Untrusted verification URL from Cloudflare — refusing."; return 1; }
+  if [ -n "$verif_complete" ]; then
+    cf_assert_trusted_url "$verif_complete" || verif_complete=""
+  fi
+  say ""
+  say "Open this link in any browser and approve the request:"
+  say ""
+  say "  $verif_uri"
+  say ""
+  say "Then enter the code when asked:  $user_code"
+  say ""
+  if cf_open_url "${verif_complete:-$verif_uri?user_code=$user_code}"; then
+    dim "  (opened in your browser — the code is pre-filled)"
+  else
+    dim "  (open the link above on any device, then enter the code)"
+  fi
+  case "$expires" in ''|*[!0-9]*|0) expires="$CF_OAUTH_MAX_WAIT" ;; esac
+  dim "  (the code is valid for $(( expires / 60 )) minutes)"
+  say ""
+  # Poll semantics mirror wrangler: first poll immediately, honor the
+  # server's interval with a 1s floor, slow_down adds +5s, and the same hard
+  # cap on the overall wait keeps login finite (RFC 8628 §3.5 anti-phishing).
+  case "$interval" in ''|*[!0-9]*|0) interval="$CF_OAUTH_POLL_FLOOR" ;; esac
+  [ "$interval" -ge "$CF_OAUTH_POLL_FLOOR" ] || interval="$CF_OAUTH_POLL_FLOOR"
+  local max_wait="$CF_OAUTH_MAX_WAIT" started elapsed poll_err
+  [ "$expires" -lt "$max_wait" ] && max_wait="$expires"
+  started="$(date +%s)"
+  say "Waiting for the approval in your browser…"
+  while :; do
+    elapsed=$(( $(date +%s) - started ))
+    if [ "$elapsed" -ge "$max_wait" ]; then
+      err "Timed out waiting for approval — run 'wearsic cloudflare login' again."
+      return 1
+    fi
+    out="$(curl -sS --max-time 30 -A "$CF_UA" -X POST "$CF_OAUTH_TOKEN_URL" \
+        --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:device_code' \
+        --data-urlencode "device_code=$device_code" \
+        --data-urlencode "client_id=$CF_OAUTH_CLIENT_ID" \
+        -w $'\n%{http_code}' 2>/dev/null)" || { sleep "$interval"; continue; }
+    status="${out##*$'\n'}"
+    body="${out%$'\n'*}"
+    poll_err="$(jstr "$body" error | head -1)"
+    if [ -n "$poll_err" ]; then
+      case "$poll_err" in
+        authorization_pending) sleep "$interval"; continue ;;
+        slow_down) interval=$(( interval + 5 )); sleep "$interval"; continue ;;
+        access_denied) err "Authorization was denied in the browser."; return 1 ;;
+        expired_token) err "The code expired before approval — run 'wearsic cloudflare login' again."; return 1 ;;
+        *) err "Authorization failed: $poll_err."; say "  Try: wearsic cloudflare login --browser"; return 1 ;;
+      esac
+    fi
+    case "$status" in
+      2??)
+        cf_oauth_finish "$body"
+        return $?
+        ;;
+    esac
+    sleep "$interval"
+  done
+}
+
+# Browser login (wrangler's default flow): PKCE S256 authorization code.
+# Works on networks where the device-code request is bot-challenged, because
+# only the user's browser touches the challenge-protected pages — this CLI
+# only calls /oauth2/token. After approval the browser lands on a localhost
+# address that cannot load (nothing listens on :8976 here); the user pastes
+# that address back and the code inside it is exchanged. The code is
+# single-use and PKCE-bound to this verifier, so pasting it around is safe.
+cf_login_browser_flow() {
+  local verifier challenge state pasted code pasted_state
+  local out status body h esc scope_enc auth_url
+  say "Browser authorization (Cloudflare OAuth, wrangler-compatible)…"
+  verifier="$(head -c 32 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  [ -n "$verifier" ] || { err "Cannot generate a PKCE nonce on this device."; return 1; }
+  state="$(head -c 16 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  if command -v openssl >/dev/null 2>&1; then
+    challenge="$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')"
+  else
+    # No openssl: sha256sum is hex; turn it into binary via printf escapes.
+    h="$(printf '%s' "$verifier" | sha256sum | awk '{print $1}')"
+    esc="$(printf '%s' "$h" | sed 's/../\\x&/g')"
+    challenge="$(printf '%b' "$esc" | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')"
+  fi
+  { [ -n "$challenge" ] && [ -n "$state" ]; } || { err "Cannot start the PKCE flow on this device."; return 1; }
+  scope_enc="$(printf '%s' "$CF_OAUTH_SCOPES" | sed 's/:/%3A/g; s/ /%20/g')"
+  auth_url="$CF_OAUTH_AUTHZ_URL?client_id=$CF_OAUTH_CLIENT_ID&redirect_uri=$(printf '%s' "$CF_OAUTH_CALLBACK" | sed 's/:/%3A/g; s@/@%2F@g')&scope=$scope_enc&state=$state&code_challenge=$challenge&code_challenge_method=S256&response_type=code"
+  say ""
+  say "1. Open this link in any browser, log in, and click Allow:"
+  say ""
+  say "  $auth_url"
+  say ""
+  say "2. After Allow the browser tries to load localhost — that will fail."
+  say "   Expected. Copy the FULL address from the browser's URL bar and paste it here."
+  if cf_open_url "$auth_url"; then
+    dim "  (opened in your browser)"
+  else
+    dim "  (open the link above on any device)"
+  fi
+  printf '\nPaste the redirected URL (empty cancels): '
+  IFS= read -r pasted || return 1
+  pasted="$(printf '%s' "$pasted" | tr -d '"')"
+  [ -n "$pasted" ] || { say "Login cancelled."; return 1; }
+  case "$pasted" in
+    http://localhost:8976/*|http://127.0.0.1:8976/*) ;;
+    https://$CF_OAUTH_AUTH_DOMAIN/*)
+      err "That is the dashboard address, not the redirect back to this machine."
+      return 1 ;;
+    *)
+      err "Expected a URL starting with http://localhost:8976/?code=…"
+      return 1 ;;
+  esac
+  code="$(printf '%s' "$pasted" | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')"
+  pasted_state="$(printf '%s' "$pasted" | sed -n 's/.*[?&]state=\([^&]*\).*/\1/p')"
+  [ -n "$code" ] || { err 'No "code=" found in the pasted URL.'; return 1; }
+  if [ -n "$pasted_state" ] && [ "$pasted_state" != "$state" ]; then
+    err "The pasted URL's state does not match this login (possible tampering)."
+    return 1
+  fi
+  say "Exchanging the code for a session…"
+  out="$(curl -sS --max-time 30 -A "$CF_UA" -X POST "$CF_OAUTH_TOKEN_URL" \
+      --data-urlencode 'grant_type=authorization_code' \
+      --data-urlencode "code=$code" \
+      --data-urlencode "redirect_uri=$CF_OAUTH_CALLBACK" \
+      --data-urlencode "client_id=$CF_OAUTH_CLIENT_ID" \
+      --data-urlencode "code_verifier=$verifier" \
+      -w $'\n%{http_code}' 2>/dev/null)" || {
+    err "Could not reach Cloudflare's token endpoint."
+    return 1
+  }
+  status="${out##*$'\n'}"
+  body="${out%$'\n'*}"
+  if ! [ "$status" -ge 200 ] 2>/dev/null || ! [ "$status" -lt 300 ] 2>/dev/null; then
+    err "Cloudflare rejected the code ($(cf_http_status_text)): $(jstr "$body" error_description | head -1)"
+    say "  Codes are single-use and expire within minutes — run the command again for a fresh one."
+    return 1
+  fi
+  cf_oauth_finish "$body"
 }
 
 cf_account() {
@@ -2223,27 +2835,36 @@ cf_account() {
 # Sets: CF_HTTP_STATUS, CF_API_BODY.
 cf_api() {  # $1 = method, $2 = /client/v4-relative path, $3 = optional JSON body
   local method="$1" path="$2" body="${3:-}"
-  local tok
-  tok="$(cf_token)"
   CF_HTTP_STATUS=0
-  CF_API_BODY='{"success":false,"errors":[{"code":0,"message":"No Cloudflare API token configured"}]}'
-  [ -n "$tok" ] || return 1
-  local args=(-sS --max-time 30 -X "$method"
-              -H "Authorization: Bearer $tok"
-              -H "Accept: application/json")
-  [ -n "$body" ] && args+=(-H "Content-Type: application/json" --data-binary "$body")
-  local out status
-  out="$(curl "${args[@]}" -w $'\n%{http_code}' "$CF_API_BASE$path" 2>&1)" || {
-    CF_API_BODY="$out"
-    CF_HTTP_STATUS=0
-    return 1
-  }
-  status="${out##*$'\n'}"
-  CF_API_BODY="${out%$'\n'*}"
-  case "$status" in
-    ''|*[!0-9]*) CF_HTTP_STATUS=0; return 1 ;;
-  esac
-  CF_HTTP_STATUS="$status"
+  CF_API_BODY='{"success":false,"errors":[{"code":0,"message":"No Cloudflare authorization. Run: wearsic cloudflare login"}]}'
+  local attempt tok status out args
+  for attempt in 1 2; do
+    tok="$(cf_token)"
+    [ -n "$tok" ] || return 1
+    args=(-sS --max-time 30 -X "$method"
+          -H "Authorization: Bearer $tok"
+          -H "Accept: application/json")
+    [ -n "$body" ] && args+=(-H "Content-Type: application/json" --data-binary "$body")
+    out="$(curl "${args[@]}" -w $'\n%{http_code}' "$CF_API_BASE$path" 2>&1)" || {
+      CF_API_BODY="$out"
+      CF_HTTP_STATUS=0
+      return 1
+    }
+    status="${out##*$'\n'}"
+    CF_API_BODY="${out%$'\n'*}"
+    case "$status" in
+      ''|*[!0-9]*) CF_HTTP_STATUS=0; return 1 ;;
+    esac
+    CF_HTTP_STATUS="$status"
+    # An OAuth access token refreshed at the 60-second-early margin can be a
+    # hair behind the server's clock: refresh once and retry rather than
+    # surfacing a spurious 401. Also heals the case where an OAuth session
+    # exists and the (rejected) static token was resolved first.
+    if [ "$status" = 401 ] && [ "$attempt" -eq 1 ] && cf_oauth_refresh 2>/dev/null; then
+      continue
+    fi
+    break
+  done
   [ "$status" -ge 200 ] && [ "$status" -lt 300 ]
 }
 
@@ -2270,10 +2891,11 @@ cf_api_explain() {  # $1 = what was being attempted
   err "$ctx${msg:+: $msg}${code:+ (Cloudflare error $code)}"
   case "${CF_HTTP_STATUS:-0}" in
     401)
-      err "The Cloudflare token is invalid or expired. Re-authorize: wearsic cloudflare login"
+      err "The Cloudflare credential is invalid or expired. Re-authorize: wearsic cloudflare login"
       ;;
     403)
-      err "The token is missing a permission. It needs Workers Scripts:Edit and Account Settings:Read."
+      err "The credential is missing a permission. It needs Workers Scripts:Edit and Account Settings:Read."
+      err "If you logged in with the browser, run 'wearsic cloudflare login' again to re-grant."
       ;;
     404)
       err "Cloudflare could not find that account or Worker. Check CLOUDFLARE_ACCOUNT_ID."
@@ -2282,7 +2904,12 @@ cf_api_explain() {  # $1 = what was being attempted
       err "Cloudflare rate-limited the request; it will be retried with backoff."
       ;;
     0)
-      err "Could not reach api.cloudflare.com (DNS or network). Check the connection and try again."
+      # When no credential was available the status-0 default body already
+      # told the user to re-authorize; only blame the network when a token
+      # was resolved and the request still failed.
+      if [ -n "$(cf_token 2>/dev/null)" ]; then
+        err "Could not reach api.cloudflare.com (DNS or network). Check the connection and try again."
+      fi
       ;;
   esac
   case "$code" in
@@ -3226,30 +3853,6 @@ cf_prompt_token() {
   return 1
 }
 
-cf_maybe_install_wrangler() {
-  cf_wrangler_available && return 0
-  [ -t 0 ] || return 0
-  command -v npm >/dev/null 2>&1 || return 0
-  say ""
-  say "Browser login is the easiest option, but wrangler is not installed."
-  printf 'Install wrangler now? [Y/n] '
-  local answer=""
-  IFS= read -r answer || answer=""
-  case "$answer" in
-    ""|y|Y|yes|YES) ;;
-    *) return 0 ;;
-  esac
-  say "Installing wrangler (one time)…"
-  if cf_run_timeout 600 npm install -g wrangler >/dev/null 2>&1; then
-    if cf_wrangler_available; then
-      ok "wrangler installed"
-      return 0
-    fi
-  fi
-  warn "Could not install wrangler — you can paste an API token instead."
-  return 0
-}
-
 cf_login_summary() {
   local acc sub
   say "Credential     $(cf_token_source)"
@@ -3269,11 +3872,15 @@ cf_login() {
   installed
   case "$mode" in
     auto|"") mode="auto" ;;
+    --device|device) mode="device" ;;
+    --browser|browser) mode="browser" ;;
     --wrangler|wrangler) mode="wrangler" ;;
     --token-stdin|token-stdin) mode="stdin" ;;
-    *) die "Unknown login option: $mode (try --wrangler or --token-stdin)" ;;
+    *) die "Unknown login option: $mode (try --browser, --wrangler or --token-stdin)" ;;
   esac
 
+  # 1) A static token still wins until it proves broken, so an existing
+  #    setup keeps working across this change.
   if [ "$mode" = "auto" ] && [ -n "$(cf_token_from_env)" ]; then
     if cf_auth_check; then
       ok "Already authorized"
@@ -3283,53 +3890,75 @@ cf_login() {
     warn "The saved Cloudflare token was rejected — authorizing again."
   fi
 
-  [ "$mode" = "auto" ] && cf_maybe_install_wrangler
+  # 2) The refreshable OAuth session from a previous login.
+  if [ "$mode" = "auto" ] && [ -s "$(cf_auth_file 2>/dev/null)" ]; then
+    if cf_oauth_token >/dev/null 2>&1 && cf_auth_check; then
+      ok "Already authorized (the session refreshes itself)"
+      cf_login_summary
+      return 0
+    fi
+    say "The saved session could not be refreshed — authorizing again."
+  fi
 
-  if [ "$mode" = "wrangler" ] || { [ "$mode" = "auto" ] && cf_wrangler_available && [ -t 0 ]; }; then
+  # 3) Native browser/device OAuth: nothing to install, just a browser.
+  if [ "$mode" = "device" ] || [ "$mode" = "auto" ]; then
+    cf_login_device_flow
+    local rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    # rc=2: Cloudflare's edge bot-challenged this network's device-code
+    # request (some mobile ISPs and hotspots). The browser flow goes through
+    # the user's actual browser and still works here, so chain into it.
+    if [ "$rc" -eq 2 ] && [ "$mode" = "auto" ] && [ -t 0 ]; then
+      warn "The device flow is blocked on this network — falling back to the browser flow."
+      cf_login_browser_flow
+      return $?
+    fi
+    return "$rc"
+  fi
+
+  if [ "$mode" = "browser" ]; then
+    cf_login_browser_flow
+    return $?
+  fi
+
+  if [ "$mode" = "wrangler" ]; then
     if ! cf_wrangler_available; then
       err "wrangler is not installed. Install it with: npm install -g wrangler"
-      [ "$mode" = "wrangler" ] && return 1
-    else
-      say "Opening Cloudflare's official OAuth login (wrangler)…"
-      local ok=0
-      if cf_run_timeout 10 wrangler login --help 2>/dev/null | grep -q -- '--device'; then
-        # Device flow: no localhost callback, so it works on Termux/remote
-        # machines. The user approves on any browser.
-        cf_run_timeout 600 wrangler login --device && ok=1
-      else
-        cf_run_timeout 900 wrangler login && ok=1
-      fi
-      if [ "$ok" -eq 1 ] && tok="$(cf_token_from_wrangler)" && [ -n "$tok" ]; then
-        if cf_auth_check_with_token "$tok"; then
-          # A stale CLOUDFLARE_API_TOKEN takes precedence over wrangler in
-          # cf_token(), which would silently keep using the rejected token.
-          # Drop the saved copy now; an exported one is unset for this run.
-          local env_token
-          env_token="$(printenv CLOUDFLARE_API_TOKEN 2>/dev/null || true)"
-          if [ -n "$(cf_token_from_env)" ]; then
-            cf_env_unset CLOUDFLARE_API_TOKEN
-            unset CLOUDFLARE_API_TOKEN
-            say "Using the wrangler session; removed the saved API token from $ENV_FILE."
-          fi
-          if [ -n "$env_token" ]; then
-            warn "CLOUDFLARE_API_TOKEN is exported in this shell; unset it there too so wrangler is used next time."
-          fi
-          ok "Authorized through wrangler (its OAuth token refreshes itself)."
-          cf_login_summary
-          return 0
-        fi
-      fi
-      err "wrangler login did not produce a usable credential."
-      [ "$mode" = "wrangler" ] && return 1
+      return 1
     fi
+    say "Opening Cloudflare's official OAuth login (wrangler)…"
+    local ok=0
+    if cf_run_timeout 10 wrangler login --help 2>/dev/null | grep -q -- '--device'; then
+      cf_run_timeout 600 wrangler login --device && ok=1
+    else
+      cf_run_timeout 900 wrangler login && ok=1
+    fi
+    if [ "$ok" -eq 1 ] && tok="$(cf_token_from_wrangler)" && [ -n "$tok" ]; then
+      if cf_auth_check_with_token "$tok"; then
+        # A stale CLOUDFLARE_API_TOKEN takes precedence over wrangler in
+        # cf_token(), which would silently keep using the rejected token.
+        local env_token
+        env_token="$(printenv CLOUDFLARE_API_TOKEN 2>/dev/null || true)"
+        if [ -n "$(cf_token_from_env)" ]; then
+          cf_env_unset CLOUDFLARE_API_TOKEN
+          unset CLOUDFLARE_API_TOKEN
+          say "Using the wrangler session; removed the saved API token from $ENV_FILE."
+        fi
+        if [ -n "$env_token" ]; then
+          warn "CLOUDFLARE_API_TOKEN is exported in this shell; unset it there too so wrangler is used next time."
+        fi
+        ok "Authorized through wrangler (its OAuth token refreshes itself)."
+        cf_login_summary
+        return 0
+      fi
+    fi
+    err "wrangler login did not produce a usable credential."
+    return 1
   fi
 
-  if [ "$mode" = "stdin" ] || { [ "$mode" = "auto" ] && [ -t 0 ]; }; then
-    cf_prompt_token || return 1
-    return 0
-  fi
-  err "No Cloudflare credentials. Set CLOUDFLARE_API_TOKEN or run: wearsic cloudflare login"
-  return 1
+  # 4) Manual fallback: hidden-input prompt for an API token.
+  cf_prompt_token || return 1
+  return 0
 }
 
 cf_ensure_auth() {
@@ -3338,14 +3967,11 @@ cf_ensure_auth() {
   if [ -n "$tok" ] && cf_auth_check; then return 0; fi
   say ""
   say "Cloudflare authorization is required (free account, no domain)."
-  if cf_wrangler_available && [ -t 0 ]; then
-    say "  Browser authorization is available because wrangler is installed:"
-    say "    wearsic cloudflare login --wrangler"
-  fi
-  say "  Or create an API token (Workers Scripts:Edit + Account Settings:Read):"
-  say "    https://dash.cloudflare.com/profile/api-tokens"
+  say "Run 'wearsic cloudflare login' — it opens the browser, you approve once, done."
+  say "  Alternatives: login --wrangler, or login --token-stdin to paste an"
+  say "  API token from https://dash.cloudflare.com/profile/api-tokens"
   if [ -t 0 ] && [ -t 1 ]; then
-    say "  I'll prompt for it now."
+    say "  I'll start the browser login now."
     say ""
     cf_login || return 1
     return 0
@@ -3358,6 +3984,20 @@ cf_ensure_auth() {
 
 cf_logout() {
   installed
+  if [ -s "$(cf_auth_file 2>/dev/null)" ]; then
+    local rt
+    rt="$(cf_auth_field refresh_token 2>/dev/null || true)"
+    if [ -n "$rt" ]; then
+      # Revoke the refresh token at Cloudflare. Best effort — a failed call
+      # must never block the local cleanup.
+      curl -sS --max-time 15 -A "$CF_UA" -X POST "$CF_OAUTH_REVOKE_URL" \
+        --data-urlencode "token=$rt" -o /dev/null 2>/dev/null || true
+    fi
+    cf_auth_clear
+    ok "Removed the refreshable OAuth session (refresh token revoked at Cloudflare)."
+  else
+    say "No OAuth session is stored"
+  fi
   if [ -n "$(env_value CLOUDFLARE_API_TOKEN)" ]; then
     cf_env_unset CLOUDFLARE_API_TOKEN
     ok "Removed CLOUDFLARE_API_TOKEN from $ENV_FILE"
@@ -3698,8 +4338,11 @@ cmd_cloudflare() {
       say "  verify     prove auth + Range/206 streaming through the permanent URL"
       say "  url        print just the permanent URL (for scripting)"
       say "  logs [-f]  recent supervisor activity (secrets redacted)"
-      say "  login      authorize Cloudflare (wrangler OAuth or a scoped API token)"
-      say "  logout     remove the saved API token (Worker stays deployed)"
+      say "  login      authorize Cloudflare in your browser: one approval, no"
+      say "             token copy-paste; the session refreshes itself and never"
+      say "             goes stale. Flags: --browser (PKCE flow), --device,"
+      say "             --wrangler, --token-stdin (paste an API token)"
+      say "  logout     remove the saved credentials (Worker stays deployed)"
       say "  stop       stop the tunnel and supervisor (Worker stays deployed)"
       say ""
       say "Needs a free Cloudflare account. Start:  wearsic cloudflare"

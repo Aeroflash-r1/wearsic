@@ -44,6 +44,7 @@ import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.network.model.ServerUpdateStatusDto
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAccentSky
+import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicGlassBorder
@@ -207,10 +208,10 @@ private fun StatusCard(state: ServerDashboardState) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
             .background(WearsicGlassFill)
-            .border(1.dp, WearsicGlassBorder, RoundedCornerShape(20.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
+            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 12.dp)
             .testTag("server_dashboard_status"),
         contentAlignment = Alignment.Center
     ) {
@@ -306,7 +307,7 @@ private fun RefreshChip(loading: Boolean, onRefresh: () -> Unit) {
             .background(WearsicGlassFill)
             .border(1.dp, WearsicGlassBorder, CircleShape)
             .wearsicClickable(pressedScale = 0.94f, onClick = onRefresh)
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 8.dp)
             .testTag("server_dashboard_refresh"),
         contentAlignment = Alignment.Center
     ) {
@@ -334,9 +335,9 @@ private fun DashboardCard(content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
             .background(WearsicGlassFill)
-            .border(1.dp, WearsicGlassBorder, RoundedCornerShape(20.dp))
+            .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {

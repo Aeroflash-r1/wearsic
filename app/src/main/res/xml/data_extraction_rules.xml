@@ -1,15 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Backup & device-transfer rules (API 31+). DataStore holds the API key and
-  the private server URL — neither must ever leave the device in a backup.
+  Backup & device-transfer rules (API 31+). The settings preference file
+  holds the API key and the private server URL; the files dir holds
+  downloaded audio (which must never leave the device — the whole privacy
+  promise of the app) and the diagnostics crash journal (potentially
+  personal stack traces). None of this may be included in a backup or a
+  device-to-device transfer.
 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="datastore/wearsic_settings.preferences_pb" />
         <exclude domain="root" path="datastore/wearsic_settings.preferences_pb" />
+        <exclude domain="file" path="wearsic_downloads" />
+        <exclude domain="file" path="wearsic_diagnostics" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="datastore/wearsic_settings.preferences_pb" />
         <exclude domain="root" path="datastore/wearsic_settings.preferences_pb" />
+        <exclude domain="file" path="wearsic_downloads" />
+        <exclude domain="file" path="wearsic_diagnostics" />
     </device-transfer>
 </data-extraction-rules>

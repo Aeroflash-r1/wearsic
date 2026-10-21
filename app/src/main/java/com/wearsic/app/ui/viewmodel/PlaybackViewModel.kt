@@ -126,11 +126,12 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
     // ============================================================================
 
     fun handleTileAction(action: String) {
-        when (action) {
-            "prev" -> skipToPrevious()
-            "next" -> skipToNext()
-            "toggle" -> togglePlayPause()
-        }
+        // Delegate: the controller now BUFFERS taps that arrive before the
+        // MediaController is live (up to INITIAL_CONNECTION_TIMEOUT_MS) and
+        // replays them once connected. The old direct switch was a silent
+        // no-op whenever the tap landed during a cold start, so tile presses
+        // regularly did nothing.
+        playbackController.handleTileAction(action)
     }
 
     // ============================================================================

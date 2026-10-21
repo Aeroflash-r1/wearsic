@@ -485,24 +485,35 @@ class WearsicPlayerViewModel(
     // Favorite Toggle
     // ============================================================================
 
+    /** In-flight favorite toggles. Rapid double taps previously raced each
+     *  other (POST + DELETE in opposite orders — the end state only "worked"
+     *  because the last write happened to win, while the icon flip-flopped
+     *  and the server saw twice the traffic for one intent). One toggle per
+     *  track at a time. */
+    private val favoriteTogglesInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     fun toggleFavorite() {
         val track = playbackViewModel.uiState.value.currentTrack
         if (track.id.isBlank()) return
-
+        if (!favoriteTogglesInFlight.add(track.id)) return // toggle already running
         val targetFavorite = !track.isFavorite
         playbackViewModel.setCurrentTrackFavorite(targetFavorite)
 
         viewModelScope.launch {
-            val result = if (targetFavorite) {
-                (getApplication<WearsicApp>()).container.musicRepository.addFavorite(track)
-            } else {
-                (getApplication<WearsicApp>()).container.musicRepository.removeFavorite(track.id)
-            }
+            try {
+                val result = if (targetFavorite) {
+                    (getApplication<WearsicApp>()).container.musicRepository.addFavorite(track)
+                } else {
+                    (getApplication<WearsicApp>()).container.musicRepository.removeFavorite(track.id)
+                }
 
-            result.onSuccess {
-                libraryViewModel.refreshFavorites()
-            }.onFailure {
-                playbackViewModel.setCurrentTrackFavorite(!targetFavorite)
+                result.onSuccess {
+                    libraryViewModel.refreshFavorites()
+                }.onFailure {
+                    playbackViewModel.setCurrentTrackFavorite(!targetFavorite)
+                }
+            } finally {
+                favoriteTogglesInFlight.remove(track.id)
             }
         }
     }
@@ -514,14 +525,19 @@ class WearsicPlayerViewModel(
      */
     fun toggleFavoriteFor(track: Track) {
         if (track.id.isBlank()) return
+        if (!favoriteTogglesInFlight.add(track.id)) return // toggle already running
         viewModelScope.launch {
-            val repo = (getApplication<WearsicApp>()).container.musicRepository
-            val result = if (track.id in favoriteIds) {
-                repo.removeFavorite(track.id)
-            } else {
-                repo.addFavorite(track)
+            try {
+                val repo = (getApplication<WearsicApp>()).container.musicRepository
+                val result = if (track.id in favoriteIds) {
+                    repo.removeFavorite(track.id)
+                } else {
+                    repo.addFavorite(track)
+                }
+                result.onSuccess { libraryViewModel.refreshFavorites() }
+            } finally {
+                favoriteTogglesInFlight.remove(track.id)
             }
-            result.onSuccess { libraryViewModel.refreshFavorites() }
         }
     }
 

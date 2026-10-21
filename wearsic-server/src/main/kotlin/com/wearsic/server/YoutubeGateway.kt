@@ -258,6 +258,9 @@ class YoutubeGateway(
         const val RELATED_TTL_MS = 30 * 60 * 1000L
         const val ALBUMS_TTL_MS = 30 * 60 * 1000L
         const val PLAYLIST_TTL_MS = 10 * 60 * 1000L
+        /** Search results re-resolve after 5 minutes like every other cache;
+         *  they previously never expired (stale rows served for days). */
+        const val SEARCH_TTL_MS = 5 * 60 * 1000L
 
         /** Effectively-permanent video used by the canary probe. */
         internal const val CANARY_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
@@ -265,7 +268,7 @@ class YoutubeGateway(
 
     // ---------------- Caches ----------------
 
-    private val searchCache = BoundedCache<String, List<TrackDto>>(maxSize = 128)
+    private val searchCache = BoundedCache<String, Timed<List<TrackDto>>>(maxSize = 128)
     private val streamCache = BoundedCache<String, CachedStreamTarget>(maxSize = 64)
     // Previously uncached endpoints (0% hit rate): every keystroke / radio tap
     // / album open paid a full YouTube round-trip. Small TTL caches make
@@ -317,18 +320,19 @@ class YoutubeGateway(
         if (normalized.length < 2) return emptyList()
 
         val cacheKey = "search:$normalized"
-        searchCache.get(cacheKey)?.let { return it }
+        val now = System.currentTimeMillis()
+        searchCache.get(cacheKey)?.let { if (it.expiresAt > now) return it.value }
 
         return searchSingleFlight.run(cacheKey) {
             // Double-check the cache after joining: the winner just populated it.
-            searchCache.get(cacheKey)?.let { return@run it }
+            searchCache.get(cacheKey)?.let { if (it.expiresAt > System.currentTimeMillis()) return@run it.value }
             val results = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
                 searchMusic(normalized)
             } ?: run {
                 logger.info("Search timed out for '{}'", normalized)
                 return@run emptyList()
             }
-            searchCache.put(cacheKey, results)
+            searchCache.put(cacheKey, Timed(results, now + SEARCH_TTL_MS))
             results
         }
     }

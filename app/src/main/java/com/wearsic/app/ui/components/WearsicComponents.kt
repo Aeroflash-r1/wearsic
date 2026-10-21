@@ -209,9 +209,9 @@ fun WearsicSecondaryPillButton(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
             .background(WearsicSurfaceRaised)
-            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(20.dp))
+            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
             .clickable(interactionSource = interaction, indication = null) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
@@ -501,9 +501,9 @@ fun WearsicEmptyState(
         Box(
             modifier = Modifier
                 .size(48.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(WearsicDimens.ArtRadius))
                 .background(WearsicLavenderContainer)
-                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(16.dp)),
+                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.ArtRadius)),
             contentAlignment = Alignment.Center
         ) {
             Icon(

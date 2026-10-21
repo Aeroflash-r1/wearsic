@@ -109,9 +109,9 @@ fun WearsicTrackActionSheet(
                 .fillMaxWidth()
                 .heightIn(max = maxHeight * 0.84f)
                 .wearsicEntrance(riseDp = 12f)
-                .clip(RoundedCornerShape(26.dp))
+                .clip(RoundedCornerShape(WearsicDimens.CardRadius))
                 .background(WearsicSurfaceRaised)
-                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(26.dp))
+                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 10.dp)
                 // Consume taps on the sheet body so they never reach the scrim.

@@ -304,7 +304,7 @@ private fun NowPlayingPage(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 14.dp)
+                .padding(horizontal = WearsicDimens.ScreenPaddingH)
                 .focusRequester(focusRequester)
                 .onRotaryScrollEvent { event ->
                     if (!active || !hasTrack || event.verticalScrollPixels == 0f) {

@@ -291,10 +291,17 @@ class Transcoder(
                     HttpStatusCode.OK
                 }
                 if (startByte > 0) {
-                    // RFC 7233 unsatisfied-range form: `bytes N-*/*` — total
-                    // is unknowable until ffmpeg finishes. A bare `bytes N-*`
-                    // (no "/total") is syntactically invalid and some clients
-                    // discard it, losing length hints for seeking.
+                    // KNOWN DEBT, deliberate: RFC 7233 has no legal encoding
+                    // for "content begins at byte N, total unknown", and the
+                    // transcoded AAC size cannot be known until ffmpeg winds
+                    // down. We answer 206 with `bytes N-*/*` (strictly, the
+                    // "unsatisfied-range" form may only be `bytes *` with a
+                    // real total) rather than downgrade to 200 — a 200 here
+                    // tells the client the body starts at byte 0, which
+                    // corrupts byte accounting WORSE than a header the client
+                    // ignores. ExoPlayer treats the 206 as "range honored
+                    // from N" and reads the body accordingly; revisit if a
+                    // client appears that rejects it.
                     call.response.header(HttpHeaders.ContentRange, "bytes $startByte-*/*")
                 }
                 call.response.header(HttpHeaders.AcceptRanges, "bytes")
@@ -428,8 +435,11 @@ class Transcoder(
         }
     }
 
-    /** Parses "bytes=N-..." → N (0 when absent/malformed). Suffix ranges like
-     *  "bytes=-500" are treated as 0 (serve from the start). */
+        /** Parses "bytes=N-..." → N (0 when absent/malformed). Suffix ranges
+         *  like "bytes=-500" are treated as 0 (serve from the start) — for a
+         *  live transcode the total is unknowable, so the suffix window can
+         *  never be resolved; serving the whole song is the least-wrong
+         *  answer and keeps the response byte-consistent. */
     private fun parseRangeStart(rangeHeader: String?): Long {
         if (rangeHeader.isNullOrBlank()) return 0L
         val m = Regex("bytes=(\\d+)-").find(rangeHeader) ?: return 0L

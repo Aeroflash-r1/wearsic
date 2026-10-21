@@ -293,15 +293,21 @@ and verifies the Worker, then prints a single card with the permanent URL and
 API key for **Wearsic → Settings**. Existing keys, `.env`, server data and
 the database are preserved.
 
-For an explicit pre-authorization, `wearsic cloudflare login` uses wrangler's
-browser/device OAuth flow when wrangler is installed. If `npm` is available
-but wrangler is not, the CLI offers a one-time wrangler install; otherwise it
-prompts for a scoped token (Workers Scripts:Edit + Account Settings:Read,
-never the Global API Key) and saves it to `.env` with mode 600. An existing
-`CLOUDFLARE_API_TOKEN` in the environment/.env or a wrangler session also
-works. The account id and `workers.dev` subdomain are detected automatically;
-the subdomain is created only when the account has none. To use your own API
-key, run `wearsic api-key <your-key>` first; setup keeps it.
+For an explicit pre-authorization, `wearsic cloudflare login` opens a
+wrangler-compatible OAuth flow in the browser and needs NO wrangler/npm
+install: the default is the device link flow (open the link, approve, done)
+and `--browser` gives the PKCE flow which also works on networks that
+bot-challenge the device endpoint on some mobile ISPs. The session is stored
+in `.wearsic-state/cloudflare-auth.json` (mode 600) and its refresh token
+re-mints the short-lived access token automatically, so a login never goes
+stale. Fallbacks: `--wrangler` (official wrangler session, if installed) or
+`--token-stdin` for a scoped token (Workers Scripts:Edit + Account
+Settings:Read, never the Global API Key) saved to `.env` with mode 600. An
+existing `CLOUDFLARE_API_TOKEN` in the environment/.env or a wrangler session
+also works and takes precedence until it is rejected. The account id and
+`workers.dev` subdomain are detected automatically; the subdomain is created
+only when the account has none. To use your own API key, run
+`wearsic api-key <your-key>` first; setup keeps it.
 
 `wearsic cloudflare status` reports live health and auth through the permanent
 URL; `verify` proves auth plus Range/206 streaming with

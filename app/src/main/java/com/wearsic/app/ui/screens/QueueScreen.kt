@@ -61,6 +61,7 @@ import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicError
@@ -254,7 +255,7 @@ fun QueueScreen(
                                     onClearQueue()
                                     showClearConfirmation = false
                                 }
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                                .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("confirm_clear_queue"),
                             contentAlignment = Alignment.Center
                         ) {
@@ -273,7 +274,7 @@ fun QueueScreen(
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicSurfaceBorderSubtle, CircleShape)
                                 .wearsicClickable { showClearConfirmation = true }
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                                .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("clear_queue_button"),
                             contentAlignment = Alignment.Center
                         ) {
@@ -304,9 +305,9 @@ private fun QueueCurrentCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
             .background(WearsicSurfaceRaised)
-            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), RoundedCornerShape(22.dp))
+            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), RoundedCornerShape(WearsicDimens.CardRadius))
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag("queue_current_track")
     ) {
@@ -322,8 +323,8 @@ private fun QueueCurrentCard(
                 // Real album art (or the music-note chip when there is none).
                 val art = Modifier
                     .size(40.dp)
-                    .clip(RoundedCornerShape(11.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(11.dp))
+                    .clip(RoundedCornerShape(WearsicDimens.ArtRadius))
+                    .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(WearsicDimens.ArtRadius))
                 if (!track.artworkUrl.isNullOrBlank()) {
                     val artRequest = remember(track.artworkUrl) {
                         ImageRequest.Builder(context)

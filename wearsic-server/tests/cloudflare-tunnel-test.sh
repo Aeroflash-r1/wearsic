@@ -864,10 +864,21 @@ printf '%s' "$START" | grep -q 'cf_ensure_auth' \
   || fail "no Cloudflare authorization step"
 
 LOGIN_HELPER="$(sed -n '/^cf_login() {/,/^}/p' "$CLI")"
-printf '%s' "$LOGIN_HELPER" | grep -q 'cf_maybe_install_wrangler' \
-  && grep -q 'npm install -g wrangler' "$CLI" \
-  && pass "offers a one-time wrangler install for browser login" \
-  || fail "no easy browser-login path when wrangler is missing"
+# Native OAuth: the default login implements browser OAuth itself
+# (device flow + PKCE browser flow) and needs no wrangler/npm at all.
+printf '%s' "$LOGIN_HELPER" | grep -q 'cf_login_device_flow' \
+  && printf '%s' "$LOGIN_HELPER" | grep -q 'cf_login_browser_flow' \
+  && pass "native browser OAuth login (no wrangler/npm required)" \
+  || fail "no native browser-login path"
+
+grep -q -- '--token-stdin' "$CLI" \
+  && pass "manual scoped-token fallback retained" \
+  || fail "no manual token fallback"
+
+grep -q 'cf_oauth_refresh' "$CLI" \
+  && grep -q 'refresh_token' "$CLI" \
+  && pass "the OAuth session auto-refreshes (does not go stale)" \
+  || fail "no refresh-token handling"
 
 printf '%s' "$START" | grep -q 'Worker source not found' \
   && pass "refuses to run without the real Worker source" \

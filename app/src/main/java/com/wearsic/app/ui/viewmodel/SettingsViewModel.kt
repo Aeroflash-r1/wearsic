@@ -244,7 +244,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     init {
         viewModelScope.launch {
-            _startupHealth.value = com.wearsic.app.StartupDiagnostics.lastStartupSummary(application.applicationContext)
+            // lastStartupSummary reads the whole startup journal + up to a
+            // 64 KB crash log — disk IO on a watch. Its own KDoc says
+            // "read on a background thread"; route it through Dispatchers.IO
+            // so the first Settings open doesn't pay that on the main thread.
+            _startupHealth.value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.wearsic.app.StartupDiagnostics.lastStartupSummary(application.applicationContext)
+            }
         }
     }
 }

@@ -232,12 +232,13 @@ class ApiIntegrationTest {
         assertEquals(HttpStatusCode.BadRequest, resp.status)
     }
 
-    // ---------------- Cookie config (must never echo the value) ----------------
+    // ---------------- Cookie config (must never echo the value; never writable in open mode) ----------------
 
     @Test
-    fun `cookie config endpoints never expose the cookie value`() = withServer {
+    fun `cookie config endpoints never expose the cookie value`() = withServer(apiKey = "secret") {
         val set = client.post("/api/config/youtube-cookie") {
             contentType(ContentType.Application.Json)
+            header("X-Wearsic-Key", "secret")
             setBody("""{"cookie":"SID=REDACTED; HSID=REDACTED"}""")
         }
         assertEquals(HttpStatusCode.OK, set.status)
@@ -245,7 +246,20 @@ class ApiIntegrationTest {
         assertTrue(body.contains("\"hasCookie\":true"), body)
         assertTrue(!body.contains("SID"), "cookie value must never be echoed: $body")
 
-        val status = client.get("/api/config/youtube-cookie").bodyAsText()
+        val status = client.get("/api/config/youtube-cookie") { header("X-Wearsic-Key", "secret") }.bodyAsText()
         assertTrue(!status.contains("SID"), "cookie value must never be echoed: $status")
+    }
+
+    @Test
+    fun `cookie config is refused on an open (keyless) server`() = withServer {
+        // SECURITY: the YouTube cookie is account credential material — an
+        // open server (no WEARSIC_API_KEY, everything anonymous by design)
+        // must never let any device write (or even check) it.
+        val post = client.post("/api/config/youtube-cookie") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"cookie":"SID=REDACTED"}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, post.status)
+        assertEquals(HttpStatusCode.Forbidden, client.get("/api/config/youtube-cookie").status)
     }
 }

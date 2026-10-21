@@ -126,8 +126,14 @@ class MetadataSearchOrchestrator(
 
     private var prefetchJob: Job? = null
 
-    @Volatile
-    private var foregroundPlaybackDemand = false
+    // Count of in-flight foreground playback requests, NOT a boolean: with two
+    // overlapping playback requests (taps on consecutive queue items), the
+    // first request's finally previously cleared the shared flag while the
+    // second was still starting, and the background prefetch warm resumed
+    // heavy extraction I/O during that request's startup window — the exact
+    // contention this mechanism exists to prevent.
+    private val foregroundPlaybackDemand =
+        java.util.concurrent.atomic.AtomicInteger(0)
 
     /**
      * Top-first, event-driven warmup. There is deliberately no fixed delay:
@@ -148,7 +154,7 @@ class MetadataSearchOrchestrator(
         prefetchJob?.cancel()
         prefetchJob = backgroundScope.launch {
             for (track in tracks) {
-                if (!isActive || foregroundPlaybackDemand) break
+                if (!isActive || foregroundPlaybackDemand.get() > 0) break
                 try {
                     val target = youtube.streamTarget(track.videoId)
                     if (target != null) warmUpstream?.invoke(track.videoId, target.url)
@@ -162,11 +168,11 @@ class MetadataSearchOrchestrator(
     }
 
     suspend fun <T> withForegroundPlayback(block: suspend () -> T): T {
-        foregroundPlaybackDemand = true
+        foregroundPlaybackDemand.incrementAndGet()
         return try {
             block()
         } finally {
-            foregroundPlaybackDemand = false
+            foregroundPlaybackDemand.decrementAndGet()
         }
     }
 

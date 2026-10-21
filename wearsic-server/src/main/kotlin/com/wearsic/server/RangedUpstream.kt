@@ -69,9 +69,24 @@ internal class UpstreamTruncatedException(
     val atByte: Long,
     cause: Throwable? = null,
 ) : java.io.IOException("upstream truncated un-recoverably at byte $atByte", cause)
-internal fun parseRangeHeader(header: String?): Pair<Long, Long?> {
+internal fun parseRangeHeader(header: String?, availableTotal: Long? = null): Pair<Long, Long?> {
     if (header.isNullOrBlank()) return 0L to null
-    val m = Regex("bytes=(\\d+)-(\\d*)").find(header.trim()) ?: return 0L to null
+    val trimmed = header.trim()
+    val m = Regex("bytes=(\\d+)-(\\d*)").find(trimmed)
+    if (m == null) {
+        // RFC 7233 suffix form: "bytes=-N" = the LAST N bytes. Resolvable
+        // only with a known total; callers without one keep the historical
+        // (0, null) whole-file behavior until they re-parse with a total
+        // (AudioProxy does exactly that after the length probe).
+        Regex("bytes=-(\\d+)").find(trimmed)?.let { suffix ->
+            val n = suffix.groupValues[1].toLongOrNull() ?: return 0L to null
+            val total = availableTotal
+            if (total == null || total <= 0L || n <= 0L) return 0L to null
+            val start = (total - n).coerceIn(0L, total - 1L)
+            return start to (total - 1L).coerceAtLeast(start)
+        }
+        return 0L to null
+    }
     val start = m.groupValues[1].toLongOrNull() ?: 0L
     val end = m.groupValues[2].takeIf { it.isNotEmpty() }?.toLongOrNull()
     return start to end

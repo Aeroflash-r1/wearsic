@@ -225,7 +225,14 @@ fun main() {
 
     // Self-healing: canary watchdog + engine auto-update pipeline.
     val canary = ExtractionCanary(probe = { gateway.canaryProbe() })
-    val engineUpdater = EngineUpdater(proxyClient, stateDir)
+    // The updater gets streamClient, NOT proxyClient: update packages are
+    // ~30 MB zip downloads over the slow phone/hotspot/funnel links the
+    // self-heal exists for, and proxyClient's whole-call 20s request timeout
+    // aborted every real download mid-transfer (the same trap that
+    // previously killed song streams). streamClient has NO whole-request
+    // budget — its 60s socket-inactivity watchdog still fails fast on truly
+    // dead links while slow-but-alive transfers complete.
+    val engineUpdater = EngineUpdater(streamClient, stateDir)
     val selfHeal = SelfHealOrchestrator(
         healthMeter = healthMeter,
         canary = canary,
@@ -440,13 +447,17 @@ fun Application.module(
                     // Primary contract is X-Wearsic-Key. Also accept a
                     // standard Bearer token so generic HTTP clients and media
                     // stacks can authenticate without custom-header support.
+                    // RFC 7235 makes the auth-scheme case-insensitive
+                    // ("bearer" and "Bearer" both valid); strip it
+                    // case-insensitively — a strict removePrefix rejected
+                    // legal lowercase schemes with 401.
                     // Never log or echo the credential.
                     val provided = call.request.headers["X-Wearsic-Key"]
                         ?.trim()
                         ?.takeIf { it.isNotEmpty() }
                         ?: call.request.headers["Authorization"]
                             ?.trim()
-                            ?.removePrefix("Bearer ")
+                            ?.removePrefixIfBearer()
                             ?.trim()
                             ?.takeIf { it.isNotEmpty() }
                     val providedBytes = provided?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
@@ -552,9 +563,23 @@ fun Application.module(
                 // origin.remoteHost — request.host() is the SERVER's Host
                 // header (same for everyone), which collapsed all open-mode
                 // callers into one global bucket.
-                val clientKey = call.request.headers["X-Wearsic-Key"]
-                    ?: call.request.origin.remoteHost
-                    ?: "unknown"
+                // SECURITY: the header is only used as the bucket key AFTER it
+                // is verified against the server secret (constant-time). In
+                // open mode any LAN device could otherwise rotate the header
+                // and mint a fresh bucket per request, defeating the 30/min
+                // throttle that exists precisely to keep an unauthenticated
+                // server from becoming a free YouTube proxy.
+                val headerKey = call.request.headers["X-Wearsic-Key"]
+                val clientKey = if (apiKey != null && headerKey != null &&
+                    MessageDigest.isEqual(
+                        headerKey.toByteArray(Charsets.UTF_8),
+                        apiKey.toByteArray(Charsets.UTF_8)
+                    )
+                ) {
+                    headerKey
+                } else {
+                    call.request.origin.remoteHost ?: "unknown"
+                }
                 if (!streamLimiter.tryAcquire(clientKey)) {
                     call.respond(
                         HttpStatusCode.ServiceUnavailable,
@@ -585,9 +610,20 @@ fun Application.module(
             // song over Tailscale Funnel before noticing the client left).
             get("/prewarm/{videoId}") {
                 val requestedId = call.parameters["videoId"]!!
-                val clientKey = call.request.headers["X-Wearsic-Key"]
-                    ?: call.request.origin.remoteHost
-                    ?: "unknown"
+                // Same verified-key bucket rule as /stream (see comment there):
+                // header is trusted as a bucket key only after it matches the
+                // configured secret; otherwise bucket by real peer address.
+                val headerKey = call.request.headers["X-Wearsic-Key"]
+                val clientKey = if (apiKey != null && headerKey != null &&
+                    MessageDigest.isEqual(
+                        headerKey.toByteArray(Charsets.UTF_8),
+                        apiKey.toByteArray(Charsets.UTF_8)
+                    )
+                ) {
+                    headerKey
+                } else {
+                    call.request.origin.remoteHost ?: "unknown"
+                }
                 if (!prewarmLimiter.tryAcquire(clientKey)) {
                     call.respond(
                         HttpStatusCode.ServiceUnavailable,
@@ -712,16 +748,56 @@ fun Application.module(
             }
 
             // ---- YouTube cookie runtime config (bot-challenge workaround) ----
+            // SECURITY: the YouTube cookie is an account credential. It must
+            // never be writable (or discoverable) on an OPEN server — with no
+            // WEARSIC_API_KEY the auth interceptor below does nothing, so
+            // without this gate any device on the LAN (or the internet, via a
+            // Cloudflare-front-door proxy) could point the engine at an
+            // arbitrary YouTube session. Favorites/playlists stay open in
+            // open mode BY DESIGN (user choice, personal data only); this
+            // endpoint is always key-gated.
             get("/config/youtube-cookie") {
+                if (apiKey == null) {
+                    call.respond(
+                        HttpStatusCode.Forbidden,
+                        ErrorResponse(
+                            "YouTube-cookie configuration requires WEARSIC_API_KEY to be set — " +
+                                "refusing open-mode access"
+                        )
+                    )
+                    return@get
+                }
                 call.respond(YoutubeCookieStatus(hasCookie = YoutubeSession.hasCookie()))
             }
             post("/config/youtube-cookie") {
+                if (apiKey == null) {
+                    call.respond(
+                        HttpStatusCode.Forbidden,
+                        ErrorResponse(
+                            "YouTube-cookie configuration requires WEARSIC_API_KEY to be set — " +
+                                "refusing open-mode access"
+                        )
+                    )
+                    return@post
+                }
                 val req = call.receive<YoutubeCookieRequest>()
                 YoutubeSession.cookie = req.cookie
                 call.respond(YoutubeCookieStatus(hasCookie = YoutubeSession.hasCookie()))
             }
         }
     }
+}
+
+/**
+ * RFC 7235: the authentication scheme is case-insensitive, so "bearer X",
+ * "BearER X" etc. are all valid. Drops the scheme prefix when present.
+ */
+private fun String.removePrefixIfBearer(): String {
+    val idx = indexOf(' ')
+    if (idx < 0) return this
+    val scheme = substring(0, idx)
+    if (!scheme.equals("Bearer", ignoreCase = true)) return this
+    return substring(idx + 1).trim()
 }
 
 /** Maps request-parsing failures to the (400, message) pair. */

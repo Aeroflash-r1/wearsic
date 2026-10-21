@@ -36,6 +36,11 @@ class WearsicDownloadRepository(
         return downloadDao.getDownloadById(trackId)
     }
 
+    /** Every row, any state — for bulk operations that re-check each row. */
+    suspend fun getAllDownloadEntities(): List<WearsicDownloadEntity> {
+        return downloadDao.getAllDownloads()
+    }
+
     suspend fun getDownloadedTrack(trackId: String): Track? {
         val entity = getDownloadEntity(trackId) ?: return null
         if (entity.downloadState == DownloadState.COMPLETED.name) {

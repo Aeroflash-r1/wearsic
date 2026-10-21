@@ -71,6 +71,7 @@ import kotlinx.coroutines.delay
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
@@ -264,7 +265,7 @@ fun SettingsScreen(
                                 },
                                 CircleShape
                             )
-                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 6.dp)
                             .testTag("settings_server_url_container"),
                         contentAlignment = Alignment.CenterStart
                     ) {
@@ -400,7 +401,7 @@ fun SettingsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicVibrantLavender)
                                 .wearsicClickable { testConnectionNow() }
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                                .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("settings_test_connection"),
                             contentAlignment = Alignment.Center
                         ) {
@@ -428,7 +429,7 @@ fun SettingsScreen(
                                 .clip(CircleShape)
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicVibrantLavender, CircleShape)
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                                .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("settings_test_connection_testing"),
                             contentAlignment = Alignment.Center
                         ) {
@@ -451,7 +452,7 @@ fun SettingsScreen(
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicSuccess, CircleShape)
                                 .wearsicClickable { testConnectionNow() }
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                                .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("settings_test_connection_success"),
                             contentAlignment = Alignment.Center
                         ) {
@@ -480,7 +481,7 @@ fun SettingsScreen(
                                 .background(WearsicSurface)
                                 .border(1.dp, WearsicError, CircleShape)
                                 .wearsicClickable { testConnectionNow() }
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                                .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("settings_test_connection_error"),
                             contentAlignment = Alignment.Center
                         ) {
@@ -678,7 +679,7 @@ fun SettingsScreen(
                                 showClearDownloadsConfirm = false
                                 downloadsClearedMessage = "Downloads Cleared"
                             }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                             .testTag("confirm_clear_downloads"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -755,11 +756,11 @@ private fun SettingsPillItem(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
             .background(WearsicSurfaceRaised)
-            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(20.dp))
+            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
             .wearsicClickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
             .testTag(testTag)
     ) {
         Row(

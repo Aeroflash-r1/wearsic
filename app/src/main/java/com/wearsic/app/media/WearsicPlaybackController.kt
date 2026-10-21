@@ -44,6 +44,15 @@ class WearsicPlaybackController(
     private var mediaController: MediaController? = null
     private var positionUpdateJob: Job? = null
     private var pendingPlay: Pair<List<Track>, Int>? = null
+
+    /**
+     * Tile taps (toggle/next/prev) that arrived while the controller was
+     * still connecting. Flushed on connect like [pendingPlay] — without this
+     * a tile tap during a cold start was silently dropped: the nav host
+     * consumes the held intent 1.5s after first frame, but the connection
+     * can legally take up to INITIAL_CONNECTION_TIMEOUT_MS.
+     */
+    private val pendingTileOps = ArrayDeque<String>()
     private var reconnectAttempts = 0
     private var playbackRetryAttempts = 0
     private var lastPreviousTapTimeMs = 0L
@@ -81,6 +90,9 @@ class WearsicPlaybackController(
          * waiting forever on it hung the app on the splash screen.
          */
         private const val INITIAL_CONNECTION_TIMEOUT_MS = 15_000L
+
+        /** Buffer cap for tile taps that arrive while still connecting. */
+        private const val MAX_PENDING_TILE_OPS = 4
     }
 
     /**
@@ -191,6 +203,33 @@ class WearsicPlaybackController(
     }
 
     /**
+     * Session-level callbacks live on a separate [MediaController.Listener]:
+     * [MediaController.Builder.setListener] is the ONLY way to receive
+     * onDisconnected, and MediaController.Listener does not carry the Player
+     * callbacks (those stay on the Player.Listener above).
+     */
+    private val controllerListener = object : MediaController.Listener {
+        /**
+         * The service can release/recreate its MediaSession at any time
+         * (recreateSession on unexpected activation failures). The dead
+         * controller's callbacks simply stop and the UI froze on the last
+         * state until now: onDisconnected resets and re-connects to the NEW
+         * session instead of stranding the player screen forever.
+         */
+        override fun onDisconnected(controller: MediaController) {
+            controller.removeListener(playerListener)
+            if (mediaController === controller) {
+                mediaController = null
+                // Treat as a fresh connection cycle, not an exhausted one:
+                // the service is expected to come right back.
+                reconnectAttempts = 0
+                _uiState.update { it.copy(isBuffering = true, playbackError = null) }
+                scheduleReconnect()
+            }
+        }
+    }
+
+    /**
      * HTTP-aware error text. A 503/401/403 from /api/stream means YouTube is
      * bot-challenging the server — retrying won't help, but a login cookie
      * usually does. Say THAT instead of a raw error code.
@@ -252,7 +291,9 @@ class WearsicPlaybackController(
             )
 
             StartupDiagnostics.log(context, "controller-connecting")
-            val future = MediaController.Builder(context, sessionToken).buildAsync()
+            val future = MediaController.Builder(context, sessionToken)
+                .setListener(controllerListener)
+                .buildAsync()
             controllerFuture = future
 
             // Watchdog: if this future never completes (a real Media3
@@ -292,6 +333,15 @@ class WearsicPlaybackController(
                             pendingPlay = null
                             playTracks(tracks, startIndex)
                         }
+                        // Replay tile taps that arrived before the connection
+                        // was live (same reason as pendingPlay above; each op
+                        // runs against the now-connected controller).
+                        val drainedOps = synchronized(pendingTileOps) {
+                            val drained = pendingTileOps.toList()
+                            pendingTileOps.clear()
+                            drained
+                        }
+                        drainedOps.forEach { runTileOp(it) }
                         initialConnectionKnown.complete(true)
                     } catch (e: Exception) {
                         _uiState.update { it.copy(playbackError = "Could not connect to media service") }
@@ -599,6 +649,44 @@ class WearsicPlaybackController(
         }
     }
 
+    // ============================================================================
+    // Tile actions
+    // ============================================================================
+
+    /**
+     * Tile tap entrypoint. Runs immediately against a live controller;
+     * otherwise the op is buffered and replayed when [connect] completes
+     * (mirroring [pendingPlay]'s flush) instead of vanishing into a silent
+     * no-op. A queued double-toggle collapses into one (two toggles cancel
+     * each other out and would undo the user's intent).
+     */
+    fun handleTileAction(action: String) {
+        if (action !in listOf("toggle", "next", "prev")) {
+            // Unknown actions are a wiring bug worth seeing in the logs,
+            // not a silent return.
+            android.util.Log.w("WearsicPlayback", "Unknown tile action: $action")
+            return
+        }
+        if (mediaController != null) {
+            runTileOp(action)
+            return
+        }
+        synchronized(pendingTileOps) {
+            if (action == "toggle" && pendingTileOps.contains("toggle")) return
+            if (pendingTileOps.size >= MAX_PENDING_TILE_OPS) return
+            pendingTileOps.addLast(action)
+        }
+        connect()
+    }
+
+    private fun runTileOp(action: String) {
+        when (action) {
+            "toggle" -> togglePlayPause()
+            "next" -> skipToNext()
+            "prev" -> skipToPrevious()
+        }
+    }
+
     fun skipToNext() {
         mediaController?.let { controller ->
             if (controller.hasNextMediaItem()) {
@@ -777,9 +865,13 @@ class WearsicPlaybackController(
         try {
             scope.cancel()
         } catch (_: Exception) {}
-        mediaController?.removeListener(playerListener)
-        mediaController?.release()
+        val releasing = mediaController
+        // Null the field BEFORE release: release() may deliver onDisconnected,
+        // and the handler must not see it as "our live controller" and kick a
+        // reconnect for a teardown we intentionally performed.
         mediaController = null
+        releasing?.removeListener(playerListener)
+        releasing?.release()
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controllerFuture = null
     }

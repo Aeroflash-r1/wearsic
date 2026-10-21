@@ -10,5 +10,5 @@ package com.wearsic.server
  */
 object ServerVersion {
     // VERSION:<do not remove this marker, build.gradle.kts parses it>
-    const val VERSION: String = "1.9.7"
+    const val VERSION: String = "1.9.8"
 }

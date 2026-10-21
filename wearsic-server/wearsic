@@ -3561,18 +3561,23 @@ cf_permanent_health() {  # permanent url
 #
 # 1. DNS. cloudflared is a static Go binary; on Android there is no readable
 #    /etc/resolv.conf for it, so its resolver silently falls back to the
-#    loopback nameservers (127.0.0.1:53 / [::1]:53) and every lookup failed
-#    with "connection refused" — the tunnel never even got started and the
-#    supervisor sat in "tunnel exited; restarting" forever. When running
-#    inside Termux we bind-mount Termux's own resolv.conf (real nameservers,
-#    installed with the app) over /etc/resolv.conf for the tunnel process
-#    only. WEARSIC_CF_DNS=bare opts out.
-# 2. Transport. Without --protocol, cloudflared prefers QUIC; mobile
+#    loopback nameservers (127.0.0.1:53 / [::1]:53), which answer "connection
+#    refused", so every tunnel request died with
+#      "lookup api.trycloudflare.com on [::1]:53: read: connection refused".
+# 2. Trust. The same /etc invisibility removed the CA bundle: cloudflared
+#    verifies TLS against /etc/ssl/certs/ca-certificates.crt, which does not
+#    exist on Android, so every TLS request failed with
+#      "x509: certificate signed by unknown authority".
+#    proot (already part of the Termux install) bind-mounts the app's own
+#    resolv.conf and CA bundle over those /etc paths for the tunnel process
+#    only. WEARSIC_CF_DNS=bare opts out (for probe environments that fake a
+#    proper /etc).
+# 3. Transport. Without --protocol, cloudflared prefers QUIC; mobile
 #    networks that block UDP then kill the tunnel in a restart loop. http2
 #    rides ordinary TCP and works on every carrier, at no practical cost
 #    for the requests this engine serves.
 cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
-  local p="$1" tlog="$2" prefix resolv
+  local p="$1" tlog="$2" prefix resolv tls_pem bindings
   prefix="${TERMUX_PREFIX:-/data/data/com.termux/files/usr}"
   resolv="$prefix/etc/resolv.conf"
   if [ -n "$DEST" ] \
@@ -3580,7 +3585,18 @@ cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
       && [ "${WEARSIC_CF_DNS:-}" != "bare" ] \
       && [ -x "$prefix/bin/proot" ] \
       && grep -qi 'nameserver' "$resolv" 2>/dev/null; then
-    "$prefix/bin/proot" -b "$resolv:/etc/resolv.conf" \
+    bindings=("-b" "$resolv:/etc/resolv.conf")
+    # The CA bundle: Termux ships it as ssl/cert.pem (older layout) or
+    # tls/cert.pem (newer). Bind whichever exists — Go reads exactly
+    # /etc/ssl/certs/ca-certificates.crt.
+    tls_pem=""
+    for cand in "$prefix/etc/ssl/cert.pem" "$prefix/etc/tls/cert.pem"; do
+      if [ -f "$cand" ]; then tls_pem="$cand"; break; fi
+    done
+    if [ -n "$tls_pem" ]; then
+      bindings+=("-b" "$tls_pem:/etc/ssl/certs/ca-certificates.crt")
+    fi
+    "${bindings[@]}" "$prefix/bin/proot" \
       "$cfbin" tunnel --no-autoupdate --protocol http2 \
       --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
   else

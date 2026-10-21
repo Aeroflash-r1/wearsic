@@ -32,7 +32,7 @@ trap 'rm -rf "$STAGE"' EXIT
 # Everything the server needs to run, in the exact layout run-termux.sh and
 # the `wearsic` CLI expect: bin/ + lib/ + launcher + CLI + env template.
 cp -r "$SRC/bin" "$SRC/lib" "$STAGE/"
-cp "$HERE/run-termux.sh" "$HERE/wearsic" "$HERE/.env.example" "$STAGE/"
+cp "$HERE/run-termux.sh" "$HERE/wearsic" "$HERE/wearsic-cloudflare-worker.js" "$HERE/.env.example" "$STAGE/"
 
 # Licence files travel with the binary. The server itself is GPL-3.0-only, so
 # the GPL text is the LICENSE in this directory; the Apache-2.0 text is renamed
@@ -102,7 +102,8 @@ install_bundle() {
   rm -rf "$stage" && mkdir -p "$stage"
   tail -n +"$line" "$0" | base64 -d | tar xz -C "$stage" || { rm -rf "$stage"; die "payload extraction failed"; }
   { [ -f "$stage/bin/wearsic-server" ] && [ -n "$(ls -A "$stage/lib" 2>/dev/null)" ] \
-      && [ -f "$stage/run-termux.sh" ] && [ -f "$stage/LICENSE" ] \
+      && [ -f "$stage/run-termux.sh" ] && [ -f "$stage/wearsic-cloudflare-worker.js" ] \
+      && [ -f "$stage/LICENSE" ] \
       && [ -f "$stage/LICENSE.apache-2.0" ] && [ -f "$stage/NOTICE" ]; } \
     || { rm -rf "$stage"; die "bundle payload is incomplete — nothing was changed"; }
 
@@ -116,7 +117,7 @@ install_bundle() {
   fi
   mv "$DEST/bin.new" "$DEST/bin" && mv "$DEST/lib.new" "$DEST/lib" \
     || die "swap failed midway — run the installer again to recover"
-  for f in run-termux.sh wearsic .env.example LICENSE LICENSE.apache-2.0 NOTICE; do
+  for f in run-termux.sh wearsic wearsic-cloudflare-worker.js .env.example LICENSE LICENSE.apache-2.0 NOTICE; do
     [ -f "$stage/$f" ] && cp "$stage/$f" "$DEST/$f"
   done
   rm -rf "$stage"

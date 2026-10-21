@@ -33,6 +33,7 @@ import io.ktor.server.request.uri
 import io.ktor.server.response.ApplicationSendPipeline
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -65,6 +66,28 @@ private val bootLog = LoggerFactory.getLogger("boot")
 //   (6s > 5s), so a user can never be served their own pre-mutation list.
 private const val CONTENT_CACHE_CONTROL = "private, max-age=300"
 private const val USER_STATE_CACHE_CONTROL = "private, max-age=5"
+
+/** Size of the deterministic front-door Range probe body (64 KiB). */
+private const val FRONT_DOOR_PROBE_BYTES = 64 * 1024
+
+/**
+ * Strict single-range parser for the front-door probe (`bytes=N-M`).
+ * Returns null for anything unsupported; the caller distinguishes "no Range
+ * header" (200 + full body) from "bad Range" (416).
+ */
+private fun parseProbeRange(header: String?, size: Int): Pair<Int, Int>? {
+    if (header.isNullOrBlank()) return null
+    val m = Regex("^bytes=(\\d+)-(\\d*)$").find(header.trim()) ?: return null
+    val start = m.groupValues[1].toLongOrNull()?.takeIf { it < size }?.toInt() ?: return null
+    val rawEnd = m.groupValues[2]
+    val end = if (rawEnd.isEmpty()) {
+        size - 1
+    } else {
+        rawEnd.toLongOrNull()?.coerceAtMost(size - 1L)?.toInt() ?: return null
+    }
+    if (end < start) return null
+    return start to end
+}
 
 /** First site-local IPv4 address, for the startup banner. null when offline. */
 private fun lanAddress(): String? = runCatching {
@@ -466,6 +489,39 @@ fun Application.module(
                             }
                         }
                     }
+                }
+            }
+
+            // Front-door self-test. `wearsic cloudflare verify` fetches this
+            // THROUGH the permanent workers.dev address, so one request
+            // proves the pieces that decide whether playback survives the
+            // proxy: the API key reaches the engine, Range is forwarded,
+            // the engine answers 206 + Content-Range, and the body arrives
+            // intact. It is deterministic and needs no YouTube extraction.
+            // 64 KiB is enough to be a real stream and small enough to be
+            // instant. No user data, no secrets.
+            get("/frontdoor/probe") {
+                val size = FRONT_DOOR_PROBE_BYTES
+                call.response.header(HttpHeaders.CacheControl, "no-store")
+                val payload = ByteArray(size) { ((it * 31 + 7) and 0xFF).toByte() }
+                val range = call.request.header(HttpHeaders.Range)
+                val parsed = parseProbeRange(range, size)
+                if (range != null && parsed == null) {
+                    call.response.header(HttpHeaders.ContentRange, "bytes */$size")
+                    call.respond(HttpStatusCode.RequestedRangeNotSatisfiable)
+                    return@get
+                }
+                call.response.header(HttpHeaders.AcceptRanges, "bytes")
+                if (parsed == null) {
+                    call.respondBytes(payload, ContentType.Application.OctetStream)
+                } else {
+                    val (start, end) = parsed
+                    call.response.header(HttpHeaders.ContentRange, "bytes $start-$end/$size")
+                    call.respondBytes(
+                        payload.copyOfRange(start, end + 1),
+                        ContentType.Application.OctetStream,
+                        HttpStatusCode.PartialContent,
+                    )
                 }
             }
 

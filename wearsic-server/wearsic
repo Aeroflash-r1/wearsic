@@ -242,7 +242,7 @@ dim()  { msg_line "" "$*" "$C_DIM" 0; }
 ok()   { msg_line "${C_OK}✓${C_RESET} " "$*" "" 0; }
 warn() { msg_line "${C_WARN}!${C_RESET} " "$*" "" 0; }
 err()  { msg_line "${C_ERR}✗${C_RESET} " "$*" "" 1; }
-die()  { err "$*"; exit 1; }
+die()  { shim_clear_live; shim_cursor_show; err "$*"; exit 1; }
 
 # Chip/pill — a filled badge like a phone app's status chip. $1 = state
 # (ok|warn|err|cyan|off), $2 = label (defaults to the state name). Plain
@@ -401,6 +401,415 @@ spinner_stop() {
   SPIN_MSG=""
 }
 
+
+# The cursor and the temp status file are restored even when the script dies
+# halfway through an animation (a failed download, Ctrl+C, an unexpected
+# error). `wearsic update` sets its own EXIT trap later and repeats both.
+trap 'shim_clear_live; shim_cursor_show; shim_cleanup; rm -rf "${UPDATE_WORK:-}"' EXIT
+# Ctrl+C (and a polite TERM) must never leave a hidden cursor behind.
+trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 130' INT
+trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 143' TERM
+# ── WSHIM-CORE-BEGIN ───────────────────────────────────────────────────────
+# Shimmer: a soft highlight band travels left → right across the text.
+#
+# Every character is blended between the base gray and the highlight gray by
+# its distance from the band, so the effect reads as a wave of light rather
+# than a blinking highlight. The band leaves the text on the right and
+# re-enters on the left, so the loop is seamless.
+#
+#   base      #8A8A85  (138, 138, 133)
+#   highlight #C9C9C3  (201, 201, 195)
+#
+# One pass takes ~1.7s; every frame is redrawn in place every ~90ms. On a
+# 256-colour terminal the blend is approximated with the gray ramp
+# (245 → 253). NO_COLOR, a non-TTY stdout and TERM=dumb turn it off, and the
+# cursor is always restored (normal exit, error, or Ctrl+C).
+#
+# This block is byte-identical in `wearsic` and `install.sh`: the installer is
+# a standalone bootstrap script that cannot source the CLI.
+# tests/shimmer-test.sh fails when the two copies drift apart.
+SHIM_BASE_R=138; SHIM_BASE_G=138; SHIM_BASE_B=133
+SHIM_HI_R=201;   SHIM_HI_G=201;   SHIM_HI_B=195
+SHIM_256_BASE=245; SHIM_256_HI=253
+SHIM_FRAME_S=0.09
+SHIM_LOOP_FRAMES=19
+SHIM_BAND_PCT=30
+SHIM_ESC="$(printf '\033')"
+SHIM_DEPTH=0
+SHIM_CURSOR_HIDDEN=0
+SHIM_LIVE_ACTIVE=0
+SHIM_PROGRESS_HOOK=""
+SHIM_LIVE_TEXT=""
+SHIM_STATUS_FILE=""
+SHIM_STAGE_NAME=""
+SHIM_STAGE_DETAIL=""
+
+# The shimmer palette is deliberately gray and self-contained: the file's own
+# theme (green/cyan/lavender) stays out of the animated area so the wave
+# reads as light, not as colour.
+shim_palette() {
+  SHIM_DIM="${SHIM_ESC}[2m"
+  SHIM_OK="${SHIM_ESC}[38;5;120m"
+  SHIM_WARN="${SHIM_ESC}[38;5;179m"
+  SHIM_ERR="${SHIM_ESC}[38;5;203m"
+  SHIM_RESET="${SHIM_ESC}[0m"
+}
+
+# 0 = off, 24 = truecolor, 256 = the gray ramp.
+shim_depth() {
+  [ "${TTY_OUT:-0}" = "1" ] || { printf '0'; return 0; }
+  [ -z "${NO_COLOR:-}" ] || { printf '0'; return 0; }
+  case "${WEARSIC_COLOR:-auto}" in never) printf '0'; return 0 ;; esac
+  case "${TERM:-}" in dumb) printf '0'; return 0 ;; esac
+  case "${WEARSIC_COLOR_DEPTH:-auto}" in
+    0) printf '0'; return 0 ;;
+    24) printf '24'; return 0 ;;
+    256) printf '256'; return 0 ;;
+  esac
+  case "${COLORTERM:-}" in truecolor|24bit) printf '24'; return 0 ;; esac
+  # Termux's terminal is a truecolor terminal even though TERM says 256.
+  case "${PREFIX:-}" in */com.termux/*) printf '24'; return 0 ;; esac
+  [ -n "${TERMUX_VERSION:-}" ] && { printf '24'; return 0; }
+  case "${TERM:-}" in *truecolor*|*direct*) printf '24'; return 0 ;; esac
+  case "${TERM:-}" in *256color*) printf '256'; return 0 ;; esac
+  if command -v tput >/dev/null 2>&1; then
+    local n
+    n="$(tput colors 2>/dev/null || echo 0)"
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    [ "$n" -ge 256 ] && { printf '256'; return 0; }
+  fi
+  printf '0'
+}
+
+shim_init() {
+  shim_palette
+  SHIM_DEPTH="$(shim_depth)"
+}
+
+# Smooth falloff: 100 at the band centre → 0 at the band edge.
+shim_intensity() { # $1 = distance, $2 = half-width (0..100 out)
+  local d="$1" half="$2" x=0
+  [ "$half" -le 0 ] && { printf '0'; return 0; }
+  [ "$d" -ge "$half" ] && { printf '0'; return 0; }
+  x=$(( (half - d) * 100 / half ))
+  printf '%s' $(( x * x * (300 - 2 * x) / 10000 ))
+}
+
+# Blend 0..100 between the base gray and the highlight gray.
+shim_blend_rgb() { # $1 = 0..100 → "r g b"
+  local t="$1"
+  printf '%s %s %s' \
+    $(( SHIM_BASE_R + (SHIM_HI_R - SHIM_BASE_R) * t / 100 )) \
+    $(( SHIM_BASE_G + (SHIM_HI_G - SHIM_BASE_G) * t / 100 )) \
+    $(( SHIM_BASE_B + (SHIM_HI_B - SHIM_BASE_B) * t / 100 ))
+}
+
+# The same blend on the 256-colour gray ramp (245 ≈ #8A8A85, 253 ≈ #C9C9C3).
+shim_blend_256() { # $1 = 0..100 → palette index
+  printf '%s' $(( SHIM_256_BASE + (SHIM_256_HI - SHIM_256_BASE) * $1 / 100 ))
+}
+
+# Render $1 with the band centred at $2 (half-width $3). The blend maths is
+# inlined here on purpose: a command substitution per character would fork
+# ~60 processes per frame and the animation would stutter.
+shim_render() { # $1 = text, $2 = centre, $3 = half-width
+  local text="$1" centre="$2" half="$3" i=0 n=${#1} ch d t r g b out=""
+  if [ "$SHIM_DEPTH" != "24" ] && [ "$SHIM_DEPTH" != "256" ]; then
+    printf '%s' "$text"
+    return 0
+  fi
+  while [ "$i" -lt "$n" ]; do
+    ch="${text:$i:1}"
+    d=$(( i - centre )); [ "$d" -lt 0 ] && d=$(( -d ))
+    if [ "$d" -ge "$half" ]; then
+      t=0
+    else
+      t=$(( (half - d) * 100 / half ))
+      t=$(( t * t * (300 - 2 * t) / 10000 ))
+    fi
+    if [ "$SHIM_DEPTH" = "24" ]; then
+      r=$(( SHIM_BASE_R + (SHIM_HI_R - SHIM_BASE_R) * t / 100 ))
+      g=$(( SHIM_BASE_G + (SHIM_HI_G - SHIM_BASE_G) * t / 100 ))
+      b=$(( SHIM_BASE_B + (SHIM_HI_B - SHIM_BASE_B) * t / 100 ))
+      out="${out}${SHIM_ESC}[38;2;${r};${g};${b}m${ch}"
+    else
+      out="${out}${SHIM_ESC}[38;5;$(( SHIM_256_BASE + (SHIM_256_HI - SHIM_256_BASE) * t / 100 ))m${ch}"
+    fi
+    i=$(( i + 1 ))
+  done
+  printf '%s%s' "$out" "$SHIM_RESET"
+}
+
+shim_width() { # room for the live line
+  local w="${COLS:-${COLUMNS:-80}}"
+  case "$w" in ''|*[!0-9]*) w=80 ;; esac
+  [ "$w" -lt 24 ] && w=24
+  printf '%s' $(( w - 4 ))
+}
+
+# Draw the live line, replacing whatever is on the current line.
+shim_draw_live() { # $1 = frame index
+  local frame="$1" text="$SHIM_LIVE_TEXT" n half centre maxw
+  [ "$SHIM_DEPTH" = "0" ] && return 0
+  [ "$TTY_OUT" = "1" ] || return 0
+  n=${#text}
+  [ "$n" -le 0 ] && return 0
+  maxw="$(shim_width)"
+  if [ "$n" -gt "$maxw" ]; then
+    text="${text:0:$(( maxw - 1 ))}…"
+    n=${#text}
+  fi
+  half=$(( n * SHIM_BAND_PCT / 100 / 2 ))
+  [ "$half" -lt 3 ] && half=3
+  centre=$(( -half + (n + 2 * half) * frame / SHIM_LOOP_FRAMES ))
+  printf '\r%s[K' "$SHIM_ESC"
+  shim_render "$text" "$centre" "$half"
+  SHIM_LIVE_ACTIVE=1
+}
+
+# Erase the live line (only if one is on screen).
+shim_clear_live() {
+  [ "${SHIM_LIVE_ACTIVE:-0}" = "1" ] || return 0
+  SHIM_LIVE_ACTIVE=0
+  [ "$TTY_OUT" = "1" ] || return 0
+  printf '\r%s[K' "$SHIM_ESC"
+}
+
+shim_cursor_hide() {
+  [ "$TTY_OUT" = "1" ] || return 0
+  [ "$SHIM_CURSOR_HIDDEN" = "1" ] && return 0
+  printf '%s[?25l' "$SHIM_ESC"
+  SHIM_CURSOR_HIDDEN=1
+}
+
+shim_cursor_show() {
+  [ "$SHIM_CURSOR_HIDDEN" = "1" ] || return 0
+  printf '%s[?25h' "$SHIM_ESC"
+  SHIM_CURSOR_HIDDEN=0
+}
+
+# Update the live text from a file (the worker writes progress there).
+shim_status_file() {
+  if [ -z "$SHIM_STATUS_FILE" ]; then
+    SHIM_STATUS_FILE="$(mktemp "${TMPDIR:-/tmp}/wearsic-shim-status.XXXXXX" 2>/dev/null)" || SHIM_STATUS_FILE=""
+  fi
+  printf '%s' "$SHIM_STATUS_FILE"
+}
+
+shim_status() { # $1 = text
+  local f
+  f="$(shim_status_file)"
+  [ -n "$f" ] || return 0
+  printf '%s\n' "$1" > "$f" 2>/dev/null || true
+}
+
+shim_cleanup() {
+  [ -n "$SHIM_STATUS_FILE" ] && rm -f "$SHIM_STATUS_FILE" 2>/dev/null
+  SHIM_STATUS_FILE=""
+}
+
+# 12.4M / 900K — small, quiet byte formatting for the live line.
+shim_bytes() { # $1 = bytes
+  local b="${1:-0}"
+  case "$b" in ''|*[!0-9]*) b=0 ;; esac
+  if [ "$b" -ge 1048576 ]; then awk "BEGIN{printf \"%.1fM\", $b/1048576}";
+  elif [ "$b" -ge 1024 ]; then awk "BEGIN{printf \"%.0fK\", $b/1024}";
+  else printf '%sB' "$b"; fi
+}
+
+# Animate until the job ($1) exits. A progress hook ($SHIM_PROGRESS_HOOK) is
+# called before every frame, so a download can report its real percentage.
+shim_animate() { # $1 = pid
+  local pid="$1" frame=0 t=""
+  shim_cursor_hide
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ -n "$SHIM_PROGRESS_HOOK" ]; then
+      "$SHIM_PROGRESS_HOOK" >/dev/null 2>&1 || true
+    fi
+    if [ -n "$SHIM_STATUS_FILE" ] && [ -s "$SHIM_STATUS_FILE" ]; then
+      t="$(cat "$SHIM_STATUS_FILE" 2>/dev/null || true)"
+      [ -n "$t" ] && SHIM_LIVE_TEXT="$t"
+    fi
+    shim_draw_live "$frame"
+    sleep "$SHIM_FRAME_S"
+    frame=$(( (frame + 1) % SHIM_LOOP_FRAMES ))
+  done
+  shim_cursor_show
+}
+
+# Wait for a condition while the live line shimmers.
+# $1 = label, $2 = timeout in seconds, $3 = shell test command
+shim_wait() { # label limit test-command
+  local label="$1" limit="$2" test="$3" i=0 max step
+  case "$limit" in ''|*[!0-9]*) limit=30 ;; esac
+  if [ "$SHIM_DEPTH" = "0" ] || [ "$TTY_OUT" != "1" ]; then
+    # No animation: poll once a second, exactly like the old spinner.
+    max="$limit"; step=1
+  else
+    max=$(( limit * 10 )); step=0
+  fi
+  SHIM_LIVE_TEXT="$label"
+  shim_cursor_hide
+  while [ "$i" -lt "$max" ]; do
+    shim_draw_live $(( i % SHIM_LOOP_FRAMES ))
+    if eval "$test" >/dev/null 2>&1; then
+      shim_clear_live
+      shim_cursor_show
+      return 0
+    fi
+    if [ "$step" = "0" ]; then sleep "$SHIM_FRAME_S"; else sleep 1; fi
+    i=$(( i + 1 ))
+  done
+  shim_clear_live
+  shim_cursor_show
+  return 1
+}
+
+# The tail of a captured log — used when a command fails, so a failure is
+# never silently swallowed.
+shim_log_tail() { # $1 = log file, $2 = number of lines
+  local f="$1" n="${2:-10}"
+  [ -s "$f" ] || return 0
+  printf '  %s%s%s\n' "$SHIM_DIM" "last $n lines:" "$SHIM_RESET" >&2
+  tail -n "$n" "$f" 2>/dev/null | sed 's/^/  /' >&2
+}
+
+# Run a command with the live line shimmering. The output is captured, not
+# sprayed over the terminal; on failure the tail is surfaced.
+# Usage: shim_run "<live text>" <cmd> [args...]
+shim_run() { # $1 = live text, rest = command
+  local text="$1"; shift
+  local log rc=0
+  log="$(mktemp "${TMPDIR:-/tmp}/wearsic-shim.XXXXXX" 2>/dev/null)" || log="/dev/null"
+  SHIM_LIVE_TEXT="$text"
+  if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
+    "$@" >"$log" 2>&1 &
+    local pid=$!
+    shim_animate "$pid"
+    wait "$pid"; rc=$?
+    shim_clear_live
+  else
+    "$@" >"$log" 2>&1
+    rc=$?
+  fi
+  [ "$rc" = "0" ] || shim_log_tail "$log" 12
+  [ "$log" = "/dev/null" ] || rm -f "$log" 2>/dev/null
+  return "$rc"
+}
+
+# Download helpers: the caller starts the transfer, the animation loop asks
+# for progress, and the caller waits for the result. The transfer itself is
+# quiet — only the size is polled, so the terminal shows one clean line.
+SHIM_FETCH_OUT=""; SHIM_FETCH_PREFIX=""; SHIM_FETCH_TOTAL=""; SHIM_FETCH_PID=""
+
+shim_fetch_start() { # $1 = url, $2 = out file, $3 = live text prefix
+  SHIM_FETCH_OUT="$2"; SHIM_FETCH_PREFIX="$3"
+  SHIM_FETCH_TOTAL="$(curl -fsSIL --max-time 15 "$1" 2>/dev/null \
+    | grep -i '^content-length:' | tail -1 | tr -d '\r' | awk '{print $2}')"
+  case "$SHIM_FETCH_TOTAL" in ''|*[!0-9]*) SHIM_FETCH_TOTAL="" ;; esac
+  curl -fL --retry 3 --retry-delay 2 -o "$2" "$1" >/dev/null 2>&1 &
+  SHIM_FETCH_PID=$!
+}
+
+# The animation hook: report the real percentage of the running download.
+shim_fetch_progress() {
+  local have=0 pct=0
+  [ -n "$SHIM_FETCH_PID" ] || return 0
+  if [ -e "$SHIM_FETCH_OUT" ]; then have="$(wc -c < "$SHIM_FETCH_OUT" 2>/dev/null || echo 0)"; fi
+  case "$have" in ''|*[!0-9]*) have=0 ;; esac
+  if [ -n "$SHIM_FETCH_TOTAL" ] && [ "$SHIM_FETCH_TOTAL" -gt 0 ]; then
+    pct=$(( have * 100 / SHIM_FETCH_TOTAL )); [ "$pct" -gt 100 ] && pct=100
+    shim_status "$SHIM_FETCH_PREFIX  ${pct}% · $(shim_bytes "$have") / $(shim_bytes "$SHIM_FETCH_TOTAL")"
+  else
+    shim_status "$SHIM_FETCH_PREFIX  downloading…"
+  fi
+}
+
+shim_fetch_wait() {
+  local rc=0
+  [ -n "$SHIM_FETCH_PID" ] || return 1
+  wait "$SHIM_FETCH_PID"; rc=$?
+  SHIM_FETCH_PID=""
+  return "$rc"
+}
+
+# ── stage machine ─────────────────────────────────────────────────────────
+# One quiet line per stage. The ACTIVE stage shimmers in place; a finished
+# stage collapses into a single line that is printed exactly once.
+shim_stage_begin() { # $1 = stage name, $2 = detail (optional)
+  SHIM_STAGE_NAME="$1"
+  SHIM_STAGE_DETAIL="${2:-}"
+  SHIM_LIVE_TEXT="$1"
+  [ -n "$SHIM_STAGE_DETAIL" ] && SHIM_LIVE_TEXT="$1  $SHIM_STAGE_DETAIL"
+  [ "$SHIM_DEPTH" = "0" ] && return 0
+  shim_cursor_hide
+  shim_draw_live 0
+}
+
+shim_stage_status() { # $1 = detail
+  SHIM_STAGE_DETAIL="$1"
+  SHIM_LIVE_TEXT="$SHIM_STAGE_NAME"
+  [ -n "$SHIM_STAGE_DETAIL" ] && SHIM_LIVE_TEXT="$SHIM_STAGE_NAME  $SHIM_STAGE_DETAIL"
+}
+
+# The stage line without the wave — drawn between two animation segments so
+# the line never blinks out of existence.
+shim_stage_plain() {
+  [ "$SHIM_DEPTH" = "0" ] && return 0
+  [ "$TTY_OUT" = "1" ] || return 0
+  printf '\r%s[K  %s%s%s' "$SHIM_ESC" "$SHIM_DIM" "$SHIM_LIVE_TEXT" "$SHIM_RESET"
+  SHIM_LIVE_ACTIVE=1
+}
+
+shim_stage_end() { # $1 = ok|fail, $2 = detail (optional)
+  local kind="$1" detail="${2:-$SHIM_STAGE_DETAIL}"
+  if [ "$SHIM_DEPTH" != "0" ]; then
+    shim_clear_live
+    shim_cursor_show
+  fi
+  if [ "$kind" = "ok" ]; then
+    printf '  %s✓%s %s%s%s' "$SHIM_OK" "$SHIM_RESET" "$SHIM_DIM" "$SHIM_STAGE_NAME" "$SHIM_RESET"
+  else
+    printf '  %s✗%s %s%s%s' "$SHIM_ERR" "$SHIM_RESET" "$SHIM_DIM" "$SHIM_STAGE_NAME" "$SHIM_RESET"
+  fi
+  if [ -n "$detail" ]; then
+    printf '  %s%s%s' "$SHIM_DIM" "$detail" "$SHIM_RESET"
+  fi
+  printf '\n'
+  SHIM_STAGE_NAME=""; SHIM_STAGE_DETAIL=""
+}
+
+# A whole stage in one call: shimmer the name while the command works, then
+# print the single result line. The command's output is captured.
+shim_stage_run() { # $1 = stage name, $2 = detail, rest = command
+  local name="$1" detail="$2"; shift 2
+  local log rc=0
+  log="$(mktemp "${TMPDIR:-/tmp}/wearsic-shim.XXXXXX" 2>/dev/null)" || log="/dev/null"
+  shim_stage_begin "$name" "$detail"
+  if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
+    "$@" >"$log" 2>&1 &
+    local pid=$!
+    shim_animate "$pid"
+    wait "$pid"; rc=$?
+    shim_clear_live
+  else
+    "$@" >"$log" 2>&1
+    rc=$?
+  fi
+  if [ "$rc" = "0" ]; then
+    shim_stage_end ok "$detail"
+  else
+    shim_stage_end fail "$detail"
+    shim_log_tail "$log" 12
+  fi
+  [ "$log" = "/dev/null" ] || rm -f "$log" 2>/dev/null
+  return "$rc"
+}
+
+# The animation is opt-in per terminal: a real TTY with colour support gets
+# the shimmer, everything else (pipes, CI logs, NO_COLOR) stays plain.
+shim_init
+# ── WSHIM-CORE-END ─────────────────────────────────────────────────────────
 human_bytes() { # $1 = bytes -> 12.4M
   local b="${1:-0}"
   case "$b" in ''|*[!0-9]*) b=0 ;; esac
@@ -655,8 +1064,15 @@ http_get() { # $1 = url, $2 = timeout seconds (default 5)
 # awk index() finds the FIRST match, so a top-level key wins over a nested
 # one with the same name (e.g. top-level "status":"ok" vs update.status).
 # Empty output = the field is missing (or null).
-json_tail() { # text right after the first "key":
-  printf '%s' "$1" | awk -v k="\"$2\":" '{ n = index($0, k); if (n > 0) print substr($0, n + length(k)) }'
+json_tail() { # text right after the first "key": (compact or pretty JSON)
+  printf '%s' "$1" | awk -v k="\"$2\"" '{
+    n = index($0, k); if (n == 0) next
+    rest = substr($0, n + length(k))
+    # Cloudflare live API pretty-prints: "key": value. Health/state JSON
+    # is compact: "key":value. Accept both, with or without spaces.
+    sub(/^[ \t]*:[ \t]*/, "", rest)
+    print rest
+  }'
 }
 jstr() {
   json_tail "$1" "$2" | awk '{
@@ -796,7 +1212,11 @@ file_hash() {
 }
 api_key() { env_value WEARSIC_API_KEY; }
 
-# --- process helpers (pgrep when available, ps fallback) --------------
+# --- process helpers (direct /proc scan; no pgrep/ps dependency) -------
+canonical_path() {  # resolve symlinked parents (e.g. /data/user/0 -> /data/data)
+  readlink -f "$1" 2>/dev/null || printf '%s' "$1"
+}
+
 pids_for() {  # $1 = literal string to find in process command lines
   # Direct /proc scan — no pgrep/ps dependency, identical on Termux,
   # Alpine/busybox (whose pgrep -f misbehaves) and CI. Literal match
@@ -817,7 +1237,14 @@ pids_for() {  # $1 = literal string to find in process command lines
   done
 }
 
-supervisor_running() { [ -n "$(pids_for "$RUN")" ]; }
+# Both the launcher and the engine can be reached through a symlinked home
+# on Android (`/data/user/0` -> `/data/data`). The JVM records the REAL path
+# in its classpath, so matching only the un-resolved $DEST made `stop`,
+# `status` and `doctor` blind to their own process. Try both spellings.
+supervisor_pids() {
+  { pids_for "$RUN"; pids_for "$(canonical_path "$RUN")"; } | sort -u
+}
+supervisor_running() { [ -n "$(supervisor_pids)" ]; }
 
 # THIS install's engine process(es). Matching only the main class was a
 # landmine: with two wearsic installs on one device (e.g. a test copy),
@@ -825,7 +1252,8 @@ supervisor_running() { [ -n "$(pids_for "$RUN")" ]; }
 # line carries the install path (classpath + launcher script), so require
 # the main class AND $DEST.
 server_pids() {
-  local self="$$" sub="${BASHPID:-$$}" d pid cmdline
+  local self="$$" sub="${BASHPID:-$$}" d pid cmdline dest_real
+  dest_real="$(canonical_path "$DEST")"
   for d in /proc/[0-9]*; do
     pid="${d#/proc/}"
     [ "$pid" = "$self" ] && continue
@@ -836,7 +1264,7 @@ server_pids() {
       *) continue ;;
     esac
     case "$cmdline" in
-      *"$DEST"*) printf '%s\n' "$pid" ;;
+      *"$DEST"*|*"$dest_real"*) printf '%s\n' "$pid" ;;
     esac
   done
 }
@@ -1038,7 +1466,7 @@ cmd_start() {
   if supervisor_running; then
     note "supervisor is running — waiting for the server…"
   else
-    note "starting (keep WiFi on; unrestricted battery for Termux helps)…"
+    dim "starting (keep Wi-Fi on; unrestricted battery for Termux helps)…"
     # bash explicitly so the launcher starts on any system (its shebang
     # points at the Termux bash path); identical behavior on Termux.
     # setsid detaches the supervisor into its own session, so it survives the
@@ -1050,20 +1478,14 @@ cmd_start() {
       ( cd "$DEST" && nohup bash "$RUN" >/dev/null 2>&1 < /dev/null & )
     fi
   fi
-  # Wait up to ~30s for /health (the supervisor installs ffmpeg on
-  # first start, which can take a while).
-  local i
-  spinner_start "waiting for the server"
-  for i in $(seq 1 30); do
-    health_ok && break
-    sleep 1
-  done
-  if health_ok; then
-    spinner_stop 0 "server is up — the self-healing supervisor is watching it"
+  # Wait for /health while the live line shimmers (the supervisor installs
+  # ffmpeg on the first start, which can take a while on a phone).
+  if shim_wait "Start  waiting for the server" 90 "health_ok"; then
+    ok "server is up — the self-healing supervisor is watching it"
     printf '\n'
     show_pairing
   else
-    spinner_stop 1 "server did not answer within 30s"
+    err "the server did not answer in time"
     dim "check the logs: wearsic logs"
     return 1
   fi
@@ -1073,20 +1495,20 @@ cmd_stop() {
   installed
   brand "stop"
   local pids pid i
-  pids="$(pids_for "$RUN"; server_pids)"
+  pids="$(supervisor_pids; server_pids)"
   [ -n "$pids" ] || { note "server is not running."; return 0; }
   note "stopping…"
   # Stop the supervisor first: its trap kills the JVM — but the trap only
   # runs after its current (up to 30s) sleep ends. So poll for REAL exit and
   # escalate to kill -9, otherwise a "stopped" supervisor lingers and the
   # next start is refused by its singleton guard.
-  for pid in $(pids_for "$RUN"); do kill "$pid" 2>/dev/null; done
+  for pid in $(supervisor_pids); do kill "$pid" 2>/dev/null; done
   i=0
-  while [ "$i" -lt 8 ] && [ -n "$(pids_for "$RUN")" ]; do
+  while [ "$i" -lt 8 ] && [ -n "$(supervisor_pids)" ]; do
     sleep 1
     i=$((i + 1))
   done
-  for pid in $(pids_for "$RUN"); do kill -9 "$pid" 2>/dev/null; done
+  for pid in $(supervisor_pids); do kill -9 "$pid" 2>/dev/null; done
   # Then the JVM itself (graceful, then force), in case the supervisor was
   # already dead and left it behind.
   pids="$(server_pids)"
@@ -1097,13 +1519,13 @@ cmd_stop() {
   # Wait until the port actually goes quiet: graceful shutdown drains
   # in-flight streams for seconds, during which /health still answers —
   # without this wait `status` right after `stop` wrongly reports healthy.
-  spinner_start "waiting for the port to go quiet"
+  shim_wait "Stop  waiting for the port to go quiet" 20 "! health_ok" || true
   i=0
   while [ "$i" -lt 20 ] && health_ok; do
     sleep 1
     i=$((i + 1))
   done
-  spinner_stop 0 "stopped"
+  ok "stopped"
 }
 
 cmd_restart() { cmd_stop; cmd_start; }
@@ -1577,13 +1999,25 @@ cmd_funnel() {
 #
 # The Worker source lives next to this script (wearsic-cloudflare-worker.js)
 # so it can be reviewed, and it is uploaded verbatim — nothing is generated
-# at runtime that you cannot read first.
+# at runtime that you cannot read first. There is NO "Hello World" fallback:
+# if the real Worker source is missing, setup stops.
 #
-# Credentials come from the environment or .env:
-#   CLOUDFLARE_API_TOKEN   (required) — needs "Workers Scripts: Edit"
-#   CLOUDFLARE_ACCOUNT_ID  (required)
-#   CLOUDFLARE_SUBDOMAIN   (optional) — your workers.dev subdomain
-#   CLOUDFLARE_WORKER      (optional) — worker name, default "wearsic"
+# AUTHORIZATION
+# -------------
+# Cloudflare credentials are resolved in this order:
+#   1. CLOUDFLARE_API_TOKEN in the environment or .env
+#   2. the official `wrangler login` OAuth session (if wrangler is installed)
+#   3. `wearsic cloudflare login`, which either runs wrangler's browser/device
+#      OAuth flow or prompts (hidden input) for a scoped API token and saves
+#      it to .env with mode 0600.
+# No credential is ever printed, embedded in a URL, or committed.
+#
+# Optional credentials:
+#   CLOUDFLARE_ACCOUNT_ID     (auto-detected when the token can list accounts)
+#   CLOUDFLARE_ACCOUNT_NAME   (pick by name when the token sees several)
+#   CLOUDFLARE_SUBDOMAIN      (workers.dev subdomain; created on first use)
+#   CLOUDFLARE_WORKER         (worker name, default "wearsic")
+#   CLOUDFLARED_PATH          (use a specific cloudflared binary)
 #
 # Like every other public-exposure path here, an API key is REQUIRED: the
 # permanent URL is world-readable, and without a key the engine would be
@@ -1591,126 +2025,603 @@ cmd_funnel() {
 
 CF_WORKER_SRC_NAME="wearsic-cloudflare-worker.js"
 CF_COMPAT_DATE="2025-08-06"
+CF_API_BASE="https://api.cloudflare.com/client/v4"
+CF_RETRY_BASE="${WEARSIC_CF_RETRY_BASE:-2}"
+CF_RETRY_CAP="${WEARSIC_CF_RETRY_CAP:-60}"
+CF_RETRY_MAX="${WEARSIC_CF_RETRY_MAX:-6}"
+CF_PROBE_PATH="/api/frontdoor/probe"
+CF_PROBE_SIZE=65536
 
-cf_state_file() { echo "$DEST/wearsic-state/cloudflare.json"; }
-cf_log_file()   { echo "$DEST/wearsic-state/cloudflare.log"; }
+cf_state_dir()   { printf '%s/wearsic-state' "$DEST"; }
+cf_state_file()  { printf '%s/cloudflare.json' "$(cf_state_dir)"; }
+cf_log_file()    { printf '%s/cloudflare.log' "$(cf_state_dir)"; }
+cf_tunnel_log()  { printf '%s/cloudflare-tunnel.log' "$(cf_state_dir)"; }
+cf_lock_dir()    { printf '%s/cloudflare.lock' "$(cf_state_dir)"; }
 
+cf_log() {
+  local f; f="$(cf_log_file)"
+  mkdir -p "$(dirname "$f")" 2>/dev/null
+  printf '[wearsic %s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$f"
+}
+
+# Compact JSON string escaping: state and logs must always parse.
+cf_json_escape() {
+  printf '%s' "${1:-}" | tr '\n\r\t' '   ' | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+cf_state_get() {  # $1 = field (string values)
+  local f; f="$(cf_state_file)"
+  [ -f "$f" ] || return 1
+  jstr "$(cat "$f")" "$1" | head -1
+}
+
+cf_state_get_num() {  # $1 = field (numeric values)
+  local f; f="$(cf_state_file)"
+  [ -f "$f" ] || return 1
+  jnum "$(cat "$f")" "$1" | head -1
+}
+
+# Write the state atomically. `origin` is the hostname the tunnel handed out;
+# `deployed_origin` is the LAST origin Cloudflare actually accepted. Keeping
+# them separate is what lets `status` tell "the tunnel moved, the Worker has
+# not caught up yet" apart from "the Worker is live".
+cf_state_write() {  # status subdomain url origin deployed_origin last_error [account]
+  local st="$1" sub="$2" url="$3" origin="$4" deployed="$5" err="$6" acc="${7:-}"
+  local f tmp now prev_origin prev_at
+  f="$(cf_state_file)"
+  mkdir -p "$(dirname "$f")"
+  now="$(date +%s)"
+  prev_origin="$(cf_state_get deployed_origin 2>/dev/null || true)"
+  prev_at="$(cf_state_get_num deployed_at 2>/dev/null || true)"
+  case "$prev_at" in ''|*[!0-9]*) prev_at=0 ;; esac
+  if [ -n "$deployed" ] && [ "$deployed" != "$prev_origin" ]; then
+    prev_at="$now"
+  fi
+  tmp="$f.tmp.$$"
+  printf '{"status":"%s","worker":"%s","subdomain":"%s","url":"%s","origin":"%s","deployed_origin":"%s","port":"%s","account":"%s","updated_at":%s,"deployed_at":%s,"last_error":"%s"}\n' \
+    "$(cf_json_escape "$st")" \
+    "$(cf_worker_name 2>/dev/null || printf '')" \
+    "$(cf_json_escape "$sub")" \
+    "$(cf_json_escape "$url")" \
+    "$(cf_json_escape "$origin")" \
+    "$(cf_json_escape "$deployed")" \
+    "$(port)" \
+    "$(cf_json_escape "$acc")" \
+    "$now" "$prev_at" \
+    "$(cf_json_escape "$err")" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$f"
+  chmod 600 "$f" 2>/dev/null || true
+}
+
+cf_state_clear() { rm -f "$(cf_state_file)" 2>/dev/null || true; }
+
+# The supervisor is done when it reached a final state: "live" (the tunnel
+# answers and Cloudflare accepted the Worker) or "error" (it gave up and
+# recorded why). Anything else is still in progress.
+cf_state_settled() {
+  case "$(cf_state_get status 2>/dev/null || true)" in
+    live|error) return 0 ;;
+  esac
+  return 1
+}
+
+# Rewrite only the status/error of an existing state file (used by `stop`).
+cf_state_set_status() {  # status [last_error]
+  local st="$1" err="${2:-}" sub url origin deployed acc
+  sub="$(cf_state_get subdomain || true)"
+  url="$(cf_state_get url || true)"
+  origin="$(cf_state_get origin || true)"
+  deployed="$(cf_state_get deployed_origin || true)"
+  acc="$(cf_state_get account || true)"
+  [ -n "$url" ] || return 0
+  cf_state_write "$st" "$sub" "$url" "$origin" "$deployed" "$err" "$acc"
+}
+
+# --- .env writing (secrets are never put in argv) ---------------------------
+cf_env_set() {  # key value
+  local key="$1" value="$2" f="$ENV_FILE" tmp vf
+  case "$key" in *[!A-Z0-9_]*) err "Internal error: invalid .env key"; return 1 ;; esac
+  case "$value" in *$'\n'*|*$'\r'*) err "Refusing a multi-line value for $key"; return 1 ;; esac
+  mkdir -p "$(dirname "$f")"
+  [ -f "$f" ] || : > "$f"
+  chmod 600 "$f" 2>/dev/null || true
+  vf="$(mktemp "${f}.value.XXXXXX")" || return 1
+  printf '%s\n' "$value" > "$vf"
+  chmod 600 "$vf" 2>/dev/null || true
+  tmp="$(mktemp "${f}.tmp.XXXXXX")" || { rm -f "$vf"; return 1; }
+  awk -v k="$key" -v vf="$vf" '
+    BEGIN { getline v < vf; close(vf); done = 0 }
+    $0 ~ "^" k "=" { print k "=" v; done = 1; next }
+    { print }
+    END { if (!done) print k "=" v }
+  ' "$f" > "$tmp" || { rm -f "$tmp" "$vf"; return 1; }
+  rm -f "$vf"
+  mv -f "$tmp" "$f"
+  chmod 600 "$f" 2>/dev/null || true
+}
+
+cf_env_unset() {  # key
+  local key="$1" f="$ENV_FILE" tmp
+  [ -f "$f" ] || return 0
+  tmp="$(mktemp "${f}.tmp.XXXXXX")" || return 1
+  awk -v k="$key" '$0 !~ "^" k "="' "$f" > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$f"
+  chmod 600 "$f" 2>/dev/null || true
+}
+
+# --- Credentials ------------------------------------------------------------
 # A credential from the process environment, else from .env.
 cf_credential() {  # $1 = key name
   local v
   v="$(printenv "$1" 2>/dev/null || true)"
-  [ -n "$v" ] && { printf '%s' "$v"; return; }
+  [ -n "$v" ] && { printf '%s' "$v"; return 0; }
   env_value "$1"
 }
 
-cf_token()    { cf_credential CLOUDFLARE_API_TOKEN; }
-cf_account()  { cf_credential CLOUDFLARE_ACCOUNT_ID; }
+cf_token_from_env() { cf_credential CLOUDFLARE_API_TOKEN; }
+cf_account_env()   { cf_credential CLOUDFLARE_ACCOUNT_ID; }
 
+cf_wrangler_available() { command -v wrangler >/dev/null 2>&1; }
+
+# Run a command with a wall-clock bound when `timeout` exists (Termux has it).
+cf_run_timeout() {
+  local t="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$t" "$@"
+  else
+    "$@"
+  fi
+}
+
+# wrangler owns the refresh of its own OAuth token; asking it every time is
+# deliberate so a long-running supervisor never holds an expired token.
+cf_token_from_wrangler() {
+  cf_wrangler_available || return 1
+  local out t
+  out="$(cf_run_timeout 30 wrangler auth token --json 2>/dev/null)" || return 1
+  t="$(printf '%s' "$out" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  if [ -z "$t" ]; then
+    # Older wrangler versions print the raw token.
+    t="$(printf '%s' "$out" | tr -d '\r\n')"
+  fi
+  case "$t" in
+    ''|*' '*) return 1 ;;
+    *'"'*) return 1 ;;
+  esac
+  printf '%s' "$t"
+}
+
+cf_token() {
+  local t
+  t="$(cf_token_from_env)"
+  [ -n "$t" ] && { printf '%s' "$t"; return 0; }
+  t="$(cf_token_from_wrangler 2>/dev/null || true)"
+  [ -n "$t" ] && { printf '%s' "$t"; return 0; }
+  return 1
+}
+
+cf_token_source() {
+  if [ -n "$(cf_token_from_env)" ]; then
+    printf 'API token (.env or environment)'
+  elif [ -n "$(cf_token_from_wrangler 2>/dev/null || true)" ]; then
+    printf 'wrangler OAuth session'
+  else
+    printf 'none'
+  fi
+}
+
+cf_account() {
+  local a
+  a="$(cf_account_env)"
+  [ -n "$a" ] || a="$(cf_state_get account 2>/dev/null || true)"
+  printf '%s' "$a"
+}
+
+# --- Cloudflare API ---------------------------------------------------------
+# Every call goes through here so error bodies are never discarded (the old
+# `curl -f` threw away Cloudflare's message and left the user guessing).
+# Sets: CF_HTTP_STATUS, CF_API_BODY.
+cf_api() {  # $1 = method, $2 = /client/v4-relative path, $3 = optional JSON body
+  local method="$1" path="$2" body="${3:-}"
+  local tok
+  tok="$(cf_token)"
+  CF_HTTP_STATUS=0
+  CF_API_BODY='{"success":false,"errors":[{"code":0,"message":"No Cloudflare API token configured"}]}'
+  [ -n "$tok" ] || return 1
+  local args=(-sS --max-time 30 -X "$method"
+              -H "Authorization: Bearer $tok"
+              -H "Accept: application/json")
+  [ -n "$body" ] && args+=(-H "Content-Type: application/json" --data-binary "$body")
+  local out status
+  out="$(curl "${args[@]}" -w $'\n%{http_code}' "$CF_API_BASE$path" 2>&1)" || {
+    CF_API_BODY="$out"
+    CF_HTTP_STATUS=0
+    return 1
+  }
+  status="${out##*$'\n'}"
+  CF_API_BODY="${out%$'\n'*}"
+  case "$status" in
+    ''|*[!0-9]*) CF_HTTP_STATUS=0; return 1 ;;
+  esac
+  CF_HTTP_STATUS="$status"
+  [ "$status" -ge 200 ] && [ "$status" -lt 300 ]
+}
+
+cf_api_ok() {
+  [ "${CF_HTTP_STATUS:-0}" -ge 200 ] 2>/dev/null \
+    && [ "${CF_HTTP_STATUS:-0}" -lt 300 ] 2>/dev/null \
+    && printf '%s' "${CF_API_BODY:-}" \
+       | grep -Eq '"success"[[:space:]]*:[[:space:]]*true'
+}
+
+cf_api_message() {
+  printf '%s' "${1:-}" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+}
+
+cf_api_code() {
+  printf '%s' "${1:-}" | sed -n 's/.*"code"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1
+}
+
+# Explain a failed call in terms a user can act on. Never prints the token.
+cf_api_explain() {  # $1 = what was being attempted
+  local ctx="$1" msg code
+  msg="$(cf_api_message "$CF_API_BODY")"
+  code="$(cf_api_code "$CF_API_BODY")"
+  err "$ctx${msg:+: $msg}${code:+ (Cloudflare error $code)}"
+  case "${CF_HTTP_STATUS:-0}" in
+    401)
+      err "The Cloudflare token is invalid or expired. Re-authorize: wearsic cloudflare login"
+      ;;
+    403)
+      err "The token is missing a permission. It needs Workers Scripts:Edit and Account Settings:Read."
+      ;;
+    404)
+      err "Cloudflare could not find that account or Worker. Check CLOUDFLARE_ACCOUNT_ID."
+      ;;
+    429)
+      err "Cloudflare rate-limited the request; it will be retried with backoff."
+      ;;
+    0)
+      err "Could not reach api.cloudflare.com (DNS or network). Check the connection and try again."
+      ;;
+  esac
+  case "$code" in
+    10000|10001|9109)
+      err "Cloudflare rejected the credential itself (authentication error)."
+      err "Re-authorize: wearsic cloudflare login"
+      ;;
+    10007)
+      err "The credential is valid but not allowed to perform this operation (permission error)."
+      ;;
+  esac
+  return 1
+}
+
+cf_api_call() {  # method path [body] [context]
+  local ctx="${4:-Cloudflare API request failed}"
+  cf_api "$1" "$2" "${3:-}"
+  cf_api_ok && return 0
+  cf_api_explain "$ctx"
+  return 1
+}
+
+# --- Accounts ---------------------------------------------------------------
+cf_parse_accounts() {  # JSON on stdin -> "id|name" lines
+  tr '{' '\n' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{32\}\)".*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1|\2/p'
+}
+
+cf_api_accounts() {
+  cf_api GET "/accounts?per_page=50" || return 1
+  cf_api_ok || return 1
+  printf '%s' "$CF_API_BODY" | cf_parse_accounts
+}
+
+cf_wrangler_accounts() {
+  cf_wrangler_available || return 1
+  local out
+  out="$(cf_run_timeout 30 wrangler whoami --json 2>/dev/null)" || return 1
+  printf '%s' "$out" | cf_parse_accounts
+}
+
+cf_ensure_account() {
+  local acc list n want choice
+  acc="$(cf_account_env)"
+  if [ -n "$acc" ]; then
+    case "$acc" in
+      *[!0-9a-f]*)
+        err "CLOUDFLARE_ACCOUNT_ID must be 32 hexadecimal characters"
+        return 1
+        ;;
+    esac
+    [ "${#acc}" -eq 32 ] || { err "CLOUDFLARE_ACCOUNT_ID must be 32 hexadecimal characters"; return 1; }
+    printf '%s' "$acc"
+    return 0
+  fi
+
+  list="$(cf_api_accounts 2>/dev/null || true)"
+  [ -n "$list" ] || list="$(cf_wrangler_accounts 2>/dev/null || true)"
+  if [ -z "$list" ]; then
+    cf_api_explain "Could not list Cloudflare accounts"
+    err "Set CLOUDFLARE_ACCOUNT_ID (32-char hex) or give the token Account Settings:Read."
+    return 1
+  fi
+  n="$(printf '%s\n' "$list" | wc -l | tr -d ' ')"
+  if [ "$n" -eq 1 ]; then
+    acc="${list%%|*}"
+  else
+    want="$(cf_credential CLOUDFLARE_ACCOUNT_NAME)"
+    if [ -n "$want" ]; then
+      acc="$(printf '%s\n' "$list" | awk -F'|' -v n="$want" '$2 == n { print $1; exit }')"
+    fi
+    if [ -z "$acc" ] && [ -t 0 ] && [ -t 1 ]; then
+      say "This token can see $n Cloudflare accounts:"
+      printf '%s\n' "$list" | awk -F'|' '{ printf "  %d) %s (%s)\n", NR, $2, $1 }'
+      printf 'Choose account [1-%s]: ' "$n"
+      read -r choice
+      case "$choice" in
+        ''|*[!0-9]*) return 1 ;;
+      esac
+      if [ "$choice" -ge 1 ] && [ "$choice" -le "$n" ]; then
+        acc="$(printf '%s\n' "$list" | sed -n "${choice}p" | cut -d'|' -f1)"
+      fi
+    fi
+    if [ -z "$acc" ]; then
+      err "Multiple Cloudflare accounts. Set CLOUDFLARE_ACCOUNT_ID to one of:"
+      printf '%s\n' "$list" | sed 's/^/  /' >&2
+      return 1
+    fi
+  fi
+  cf_env_set CLOUDFLARE_ACCOUNT_ID "$acc"
+  printf '%s' "$acc"
+}
+
+# --- workers.dev subdomain --------------------------------------------------
+cf_subdomain() {  # $1 = account id
+  cf_api GET "/accounts/$1/workers/subdomain" || return 1
+  cf_api_ok || return 1
+  jstr "$CF_API_BODY" subdomain | head -1
+}
+
+cf_rand4() {
+  local s
+  s="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | dd bs=1 count=4 2>/dev/null)"
+  [ -n "$s" ] || s="$(printf '%04x' "$((RANDOM % 65536))" | cut -c1-4)"
+  printf '%s' "$s"
+}
+
+# Read the account's subdomain; create it only when the account has none.
+# Idempotent: a rerun never overwrites an existing subdomain.
+#
+# The saved value is a fallback, not the source of truth: if the API read
+# fails (a transient network error, or a token that lost Account Settings
+# read permission), keep using the URL that worked before instead of
+# trying to create a new subdomain or failing setup. A GET that succeeds and
+# returns no subdomain still takes the create path.
+cf_ensure_subdomain() {  # $1 = account id
+  local acc="$1" want sub cand candidates
+  want="$(cf_credential CLOUDFLARE_SUBDOMAIN)"
+  if [ -n "$want" ]; then
+    case "$want" in
+      *[!a-z0-9-]*) err "CLOUDFLARE_SUBDOMAIN must be lowercase letters, digits or dashes"; return 1 ;;
+    esac
+    case "$want" in
+      -*|*-) err "CLOUDFLARE_SUBDOMAIN must not start or end with a dash"; return 1 ;;
+    esac
+    [ "${#want}" -le 63 ] || { err "CLOUDFLARE_SUBDOMAIN must be 63 characters or fewer"; return 1; }
+  fi
+
+  cf_api GET "/accounts/$acc/workers/subdomain"
+  if cf_api_ok; then
+    sub="$(jstr "$CF_API_BODY" subdomain | head -1)"
+    if [ -n "$sub" ]; then
+      # Persist the authoritative value too, so a later run can keep the
+      # URL stable even if the token loses the Account Settings permission.
+      cf_env_set CLOUDFLARE_SUBDOMAIN "$sub"
+      printf '%s' "$sub"
+      return 0
+    fi
+  elif [ -n "$want" ]; then
+    cf_log "workers.dev lookup failed; reusing saved subdomain '$want'"
+    printf '%s' "$want"
+    return 0
+  else
+    cf_api_explain "Could not read the workers.dev subdomain"
+    return 1
+  fi
+
+  candidates="${want:-wearsic wearsic-$(cf_rand4)}"
+  for cand in $candidates; do
+    say "No workers.dev subdomain yet — creating '$cand'…" >&2
+    cf_api PUT "/accounts/$acc/workers/subdomain" "{\"subdomain\":\"$cand\"}"
+    if cf_api_ok; then
+      # The PUT names the subdomain, so it is usable even if the follow-up
+      # GET fails. Prefer Cloudflare's returned value when it is available.
+      sub="$(cf_subdomain "$acc" 2>/dev/null || true)"
+      [ -n "$sub" ] || sub="$cand"
+      cf_env_set CLOUDFLARE_SUBDOMAIN "$sub"
+      printf '%s' "$sub"
+      return 0
+    fi
+    case "${CF_HTTP_STATUS:-0}" in
+      401|403) cf_api_explain "Could not create the workers.dev subdomain"; return 1 ;;
+    esac
+    cf_api_explain "Could not create the workers.dev subdomain '$cand'"
+  done
+  err "Choose a different name:  CLOUDFLARE_SUBDOMAIN=<name> wearsic cloudflare"
+  return 1
+}
+
+# --- Worker identity and source --------------------------------------------
 cf_worker_name() {
-  local w; w="$(cf_credential CLOUDFLARE_WORKER)"
+  local w
+  w="$(cf_credential CLOUDFLARE_WORKER)"
   [ -n "$w" ] || w="wearsic"
   # The workers.dev hostname IS the worker name, so it must be a valid DNS
   # label: letters, digits and dashes, no leading/trailing dash, <=63 chars.
   case "$w" in
-    *[!a-zA-Z0-9-]*) die "CLOUDFLARE_WORKER must be letters, digits or dashes only (it becomes a DNS label)" ;;
+    *[!a-zA-Z0-9-]*) CF_LAST_ERROR="CLOUDFLARE_WORKER must be letters, digits or dashes only (it becomes a DNS label)"; return 1 ;;
   esac
-  [ "${#w}" -le 63 ] || die "CLOUDFLARE_WORKER must be 63 characters or fewer"
+  [ "${#w}" -le 63 ] || { CF_LAST_ERROR="CLOUDFLARE_WORKER must be 63 characters or fewer"; return 1; }
   case "$w" in
-    -*|*-) die "CLOUDFLARE_WORKER must not start or end with a dash" ;;
+    -*|*-) CF_LAST_ERROR="CLOUDFLARE_WORKER must not start or end with a dash"; return 1 ;;
   esac
   printf '%s' "$w"
 }
 
-# --- Cloudflare API ---------------------------------------------------------
-# $1 = method, $2 = path (already /client/v4-relative), $3 = optional JSON body
-cf_api() {
-  local method="$1" path="$2" body="${3:-}"
-  local tok; tok="$(cf_token)"
-  local args=(-fsS -X "$method" -H "Authorization: Bearer $tok")
-  [ -n "$body" ] && args+=(-H "Content-Type: application/json" -d "$body")
-  curl "${args[@]}" "https://api.cloudflare.com/client/v4$path" 2>/dev/null
-}
-
-# The account's workers.dev subdomain. Cloudflare assigns one per account
-# ("<name>.workers.dev"); every Worker then gets
-# "<worker-name>.<subdomain>.workers.dev".
-cf_subdomain() {
-  local acc; acc="$(cf_account)"
-  [ -n "$acc" ] || return 1
-  local json
-  json="$(cf_api GET "/accounts/$acc/workers/subdomain")" || return 1
-  jstr "$json" subdomain | head -1
-}
-
-# Create the workers.dev subdomain if the account has none yet. Cloudflare
-# requires this to exist before any worker.dev route can be served.
-cf_ensure_subdomain() {
-  local sub; sub="$(cf_subdomain || true)"
-  if [ -n "$sub" ]; then printf '%s' "$sub"; return 0; fi
-
-  local acc; acc="$(cf_account)"
-  local want; want="$(cf_credential CLOUDFOMAIN_SUBDOMAIN)"
-  [ -n "$want" ] || want="$(cf_credential CLOUDFLARE_SUBDOMAIN)"
-  [ -n "$want" ] || want="wearsic"
-  case "$want" in
-    *[!a-z0-9-]*) die "The workers.dev subdomain must be lowercase letters, digits or dashes" ;;
-  esac
-
-  say "No workers.dev subdomain yet — creating '$want'…"
-  local out
-  out="$(cf_api PUT "/accounts/$acc/workers/subdomain" "{\"subdomain\":\"$want\"}")"
-  if ! printf '%s' "$out" | grep -q '"success":true'; then
-    say "Could not create the workers.dev subdomain."
-    printf '%s\n' "$out" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  → \1/p' | head -3
-    die "Fix it in the dashboard: Workers & Pages → your account → workers.dev subdomain"
-  fi
-  sub="$(cf_subdomain || true)"
-  [ -n "$sub" ] || die "The subdomain was created but Cloudflare did not report it back"
-  printf '%s' "$sub"
-}
-
-# Where the Worker source lives. In a repo checkout it sits next to this
-# script; the packaged install puts it in the install directory (the CLI
-# itself lives on $PATH, so $CLI_DIR is not reliable there).
 cf_worker_src() {
   local c
+  c="$(cf_credential CLOUDFLARE_WORKER_SRC)"
+  if [ -n "$c" ]; then
+    [ -f "$c" ] && { printf '%s' "$c"; return 0; }
+    return 1
+  fi
   for c in "$DEST/$CF_WORKER_SRC_NAME" "$CLI_DIR/$CF_WORKER_SRC_NAME"; do
     [ -f "$c" ] && { printf '%s' "$c"; return 0; }
   done
   return 1
 }
 
-# Upload the Worker, pointing it at $1 (the current tunnel origin).
-# The multipart upload implicitly creates a version AND a deployment, so the
-# new origin is live the moment this returns.
+cf_permanent_url() {  # $1 = subdomain
+  local w
+  w="$(cf_worker_name)" || return 1
+  printf 'https://%s.%s.workers.dev' "$w" "$1"
+}
+
+cf_origin_valid() {
+  printf '%s' "$1" | grep -Eq '^https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.trycloudflare\.com$'
+}
+
+# A Worker uploaded through the API is private by default: its workers.dev
+# route exists but is disabled, so the permanent URL returns Cloudflare 404 /
+# error 1042 even though the script deployed. Turn the route on explicitly.
+# POST is idempotent; preview URLs are not needed (and are not the permanent
+# address), so keep them off.
+cf_enable_workers_dev() {  # $1 = account id, $2 = worker name
+  local acc="$1" worker="$2"
+  cf_api POST "/accounts/$acc/workers/scripts/$worker/subdomain" \
+    '{"enabled":true,"previews_enabled":false}' || return 1
+  cf_api_ok || return 1
+  printf '%s' "${CF_API_BODY:-}" \
+    | grep -Eq '"enabled"[[:space:]]*:[[:space:]]*true'
+}
+
+# --- Worker deployment with bounded exponential backoff + jitter ------------
+# Returns: 0 success, 1 retryable failure, 2 permanent failure.
 cf_deploy_worker() {  # $1 = origin url
   local origin="$1"
-  local acc; acc="$(cf_account)"
-  local worker; worker="$(cf_worker_name)"
-  local src; src="$(cf_worker_src || true)"
-  [ -n "$src" ] || die "Worker source not found ($CF_WORKER_SRC_NAME) — reinstall with install.sh"
+  CF_DEPLOY_RETRYABLE=1
+  CF_DEPLOY_ERROR=""
+  if ! cf_origin_valid "$origin"; then
+    CF_DEPLOY_RETRYABLE=0
+    CF_DEPLOY_ERROR="Refusing to deploy: '$origin' is not a trycloudflare.com origin"
+    err "$CF_DEPLOY_ERROR"
+    return 2
+  fi
+  local acc worker src
+  acc="$(cf_account)"
+  if [ -z "$acc" ]; then
+    CF_DEPLOY_RETRYABLE=0
+    CF_DEPLOY_ERROR="CLOUDFLARE_ACCOUNT_ID is not known"
+    err "$CF_DEPLOY_ERROR"
+    return 2
+  fi
+  worker="$(cf_worker_name)" || {
+    CF_DEPLOY_RETRYABLE=0
+    CF_DEPLOY_ERROR="${CF_LAST_ERROR:-invalid CLOUDFLARE_WORKER}"
+    err "$CF_DEPLOY_ERROR"
+    return 2
+  }
+  src="$(cf_worker_src)" || {
+    CF_DEPLOY_RETRYABLE=0
+    CF_DEPLOY_ERROR="Worker source not found ($CF_WORKER_SRC_NAME) — reinstall with install.sh"
+    err "$CF_DEPLOY_ERROR"
+    return 2
+  }
 
-  local meta
+  local meta out status
   meta="$(printf '{"main_module":"%s","compatibility_date":"%s","bindings":[{"type":"plain_text","name":"ORIGIN","text":"%s"}]}' \
         "$CF_WORKER_SRC_NAME" "$CF_COMPAT_DATE" "$origin")"
 
-  local out
-  out="$(curl -fsS -X PUT \
+  out="$(curl -sS --max-time 120 -X PUT \
       -H "Authorization: Bearer $(cf_token)" \
       -F "metadata=$meta;type=application/json" \
       -F "$CF_WORKER_SRC_NAME=@$src;filename=$CF_WORKER_SRC_NAME;type=application/javascript+module" \
-      "https://api.cloudflare.com/client/v4/accounts/$acc/workers/scripts/$worker" 2>&1)" || {
-    printf '%s\n' "$out" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  → \1/p' | head -3
-    die "Worker upload failed (see the message above)"
+      -w $'\n%{http_code}' \
+      "$CF_API_BASE/accounts/$acc/workers/scripts/$worker" 2>&1)" || {
+    CF_HTTP_STATUS=0
+    CF_API_BODY="$out"
+    CF_DEPLOY_ERROR="Worker upload failed (network)"
+    cf_api_explain "Worker upload failed"
+    return 1
   }
-  printf '%s' "$out" | grep -q '"success":true' || {
-    printf '%s\n' "$out" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  → \1/p' | head -3
-    die "Worker upload was rejected by Cloudflare"
-  }
+  status="${out##*$'\n'}"
+  CF_API_BODY="${out%$'\n'*}"
+  case "$status" in
+    ''|*[!0-9]*) CF_HTTP_STATUS=0; CF_DEPLOY_ERROR="Worker upload failed (no HTTP status)"; cf_api_explain "Worker upload failed"; return 1 ;;
+  esac
+  CF_HTTP_STATUS="$status"
+  if [ "$status" -ge 200 ] && [ "$status" -lt 300 ] \
+      && printf '%s' "$CF_API_BODY" \
+         | grep -Eq '"success"[[:space:]]*:[[:space:]]*true'; then
+    if cf_enable_workers_dev "$acc" "$worker"; then
+      return 0
+    fi
+    # The script uploaded, but its public route is still off. A 401/403 is
+    # permanent; a 404 can be propagation right after the first upload, so
+    # let the bounded retry loop handle it.
+    case "${CF_HTTP_STATUS:-0}" in
+      400|401|403) CF_DEPLOY_RETRYABLE=0 ;;
+      *)           CF_DEPLOY_RETRYABLE=1 ;;
+    esac
+    CF_DEPLOY_ERROR="$(cf_api_message "$CF_API_BODY")"
+    [ -n "$CF_DEPLOY_ERROR" ] \
+      || CF_DEPLOY_ERROR="Could not enable the workers.dev URL (HTTP ${CF_HTTP_STATUS:-?})"
+    cf_api_explain "Could not enable the workers.dev URL"
+    return 1
+  fi
+  # A 4xx (except 429) means retrying cannot help: bad token, missing
+  # permission, bad Worker name. Say so and let the supervisor stop instead
+  # of looping forever.
+  case "$status" in
+    429) CF_DEPLOY_RETRYABLE=1 ;;
+    4??) CF_DEPLOY_RETRYABLE=0 ;;
+    *)   CF_DEPLOY_RETRYABLE=1 ;;
+  esac
+  CF_DEPLOY_ERROR="$(cf_api_message "$CF_API_BODY")"
+  [ -n "$CF_DEPLOY_ERROR" ] || CF_DEPLOY_ERROR="Worker upload failed (HTTP $status)"
+  cf_api_explain "Worker upload failed"
+  return 1
 }
 
-cf_permanent_url() {  # $1 = subdomain
-  printf 'https://%s.%s.workers.dev' "$(cf_worker_name)" "$1"
+# Bounded exponential backoff with jitter. Attempt N waits at most
+# base*2^(N-1), capped at CF_RETRY_CAP; the random half-range prevents two
+# phones from retrying in lockstep after a Cloudflare outage.
+cf_retry_delay() {  # $1 = attempt number (1-based) -> seconds
+  local attempt="$1" base="$CF_RETRY_BASE" cap="$CF_RETRY_CAP" d
+  case "$base" in ''|*[!0-9]*) base=2 ;; esac
+  case "$cap" in ''|*[!0-9]*) cap=60 ;; esac
+  case "$attempt" in ''|*[!0-9]*) attempt=1 ;; esac
+  d=$(( base * (1 << (attempt - 1)) ))
+  [ "$d" -gt "$cap" ] && d="$cap"
+  [ "$d" -lt 1 ] && { printf '0'; return 0; }
+  printf '%s' "$(( d / 2 + RANDOM % (d / 2 + 1) ))"
+}
+
+cf_deploy_worker_retry() {  # $1 = origin, $2 = max attempts
+  local origin="$1" max="${2:-$CF_RETRY_MAX}" attempt=1 delay rc
+  case "$max" in ''|*[!0-9]*) max=6 ;; esac
+  while :; do
+    cf_deploy_worker "$origin"
+    rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    [ "${CF_DEPLOY_RETRYABLE:-1}" = "0" ] && return 2
+    [ "$attempt" -ge "$max" ] && return 1
+    delay="$(cf_retry_delay "$attempt")"
+    cf_log "Worker deploy attempt $attempt/$max failed; retrying in ${delay}s"
+    printf '  deploy attempt %s/%s failed; retrying in %ss\n' "$attempt" "$max" "$delay" >&2
+    sleep "$delay"
+    attempt=$(( attempt + 1 ))
+  done
 }
 
 # --- Tunnel hostname capture ------------------------------------------------
@@ -1723,10 +2634,12 @@ cf_permanent_url() {  # $1 = subdomain
 # metrics endpoint carries the bare hostname in a label. Both are accepted
 # and normalised to an https:// origin here, so callers never have to care.
 #
-# The LAST match wins, not the first: the log grows as cloudflared
-# re-announces, and a tunnel that reconnects with a NEW hostname appends it
-# at the end. Taking the first match would pin the supervisor to the
-# original hostname forever and the permanent URL would silently go stale.
+# The LAST match wins, not the first: cloudflared re-announces after a
+# reconnect, and a tunnel that reconnects with a NEW hostname appends it at
+# the end. Taking the first match would pin the supervisor to a dead
+# hostname forever. The supervisor also truncates the per-tunnel log before
+# every start, so a hostname from a PREVIOUS tunnel can never be mistaken
+# for the current one.
 cf_hostname_from_text() {  # $1 = text
   local h
   h="$(printf '%s' "$1" | sed -n 's|.*\(https\{0,1\}://[a-z0-9-]\{1,63\}\.trycloudflare\.com\).*|\1|p' | tail -1)"
@@ -1764,26 +2677,117 @@ cf_normalize_origin() {  # $1 = hostname or url
   esac
 }
 
-# --- State ------------------------------------------------------------------
-# Written COMPACT, like every other state file the CLI reads (jstr expects
-# the value to start immediately after the key, with no leading whitespace).
-cf_state_write() {  # $1 = subdomain, $2 = origin, $3 = permanent url
-  local f; f="$(cf_state_file)"
-  mkdir -p "$(dirname "$f")"
-  printf '{"worker":"%s","subdomain":"%s","origin":"%s","url":"%s","port":"%s","updated_at":%s}\n' \
-    "$(cf_worker_name)" "$1" "$2" "$3" "$(port)" "$(date +%s)" > "$f"
+# --- cloudflared ------------------------------------------------------------
+cf_cloudflared_bin() {
+  local c
+  c="${CLOUDFLARED_PATH:-}"
+  if [ -n "$c" ] && [ -x "$c" ]; then printf '%s' "$c"; return 0; fi
+  c="$(command -v cloudflared 2>/dev/null || true)"
+  if [ -n "$c" ] && [ -x "$c" ]; then printf '%s' "$c"; return 0; fi
+  if [ -x "$DEST/bin/cloudflared" ]; then printf '%s' "$DEST/bin/cloudflared"; return 0; fi
+  return 1
 }
 
-cf_state_get() {  # $1 = field
-  local f; f="$(cf_state_file)"
-  [ -f "$f" ] || return 1
-  jstr "$(cat "$f")" "$1" | head -1
+cf_ensure_cloudflared() {
+  local bin
+  bin="$(cf_cloudflared_bin)" && { printf '%s' "$bin"; return 0; }
+  # The automatic download is the Linux/Android release. On other hosts the
+  # user must provide a native cloudflared (or install it in PATH).
+  case "$(uname -s 2>/dev/null || printf '')" in
+    Linux|Android) ;;
+    *) err "Automatic cloudflared installation supports Linux/Termux only — install cloudflared and set CLOUDFLARED_PATH"; return 1 ;;
+  esac
+  local arch
+  case "$(uname -m)" in
+    aarch64|arm64)  arch="arm64" ;;
+    x86_64|amd64)   arch="amd64" ;;
+    armv7l|armv8l|arm) arch="arm" ;;
+    i386|i686)      arch="386" ;;
+    *) err "No cloudflared build for $(uname -m) — install it manually or set CLOUDFLARED_PATH"; return 1 ;;
+  esac
+  bin="$DEST/bin/cloudflared"
+  mkdir -p "$DEST/bin"
+  local tmp="$bin.tmp.$$"
+  # The whole block prints to stderr: this function's stdout is the binary
+  # path the caller captures.
+  {
+    shim_stage_begin "Cloudflare" "installing cloudflared ($arch)"
+    shim_fetch_start \
+      "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$arch" \
+      "$tmp" "Cloudflare  installing cloudflared"
+    SHIM_PROGRESS_HOOK=shim_fetch_progress
+    shim_animate "$SHIM_FETCH_PID"
+    if ! shim_fetch_wait; then
+      SHIM_PROGRESS_HOOK=""
+      shim_stage_end fail "the cloudflared download failed"
+      rm -f "$tmp"
+      err "cloudflared download failed — check the connection or install it manually"
+      return 1
+    fi
+    SHIM_PROGRESS_HOOK=""
+    shim_stage_end ok "cloudflared ($arch)"
+  } >&2
+  local magic
+  magic="$(head -c 4 "$tmp" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  if [ "$magic" != "7f454c46" ]; then
+    rm -f "$tmp"
+    err "cloudflared download is not a Linux executable (got '$magic') — nothing was installed"
+    return 1
+  fi
+  chmod +x "$tmp"
+  # A binary for the right CPU can still be unusable on Android if it is not
+  # compatible with the device's libc. Fail here with an actionable message
+  # instead of starting a supervisor that can never read a tunnel hostname.
+  if ! "$tmp" --version >/dev/null 2>&1; then
+    rm -f "$tmp"
+    err "cloudflared downloaded but cannot run on this device — install a compatible build and set CLOUDFLARED_PATH"
+    return 1
+  fi
+  sha256sum "$tmp" > "$(cf_state_dir)/cloudflared.sha256" 2>/dev/null || true
+  mv -f "$tmp" "$bin"
+  printf '%s' "$bin"
+}
+
+# --- Backoff helpers --------------------------------------------------------
+cf_sleep_backoff() {  # seconds reason
+  local d="$1" why="${2:-retry}" jitter
+  case "$d" in ''|*[!0-9]*) d=1 ;; esac
+  [ "$d" -lt 1 ] && d=1
+  jitter=$(( d / 2 + RANDOM % ( d / 2 + 1 ) ))
+  cf_log "$why: waiting ${jitter}s before retrying"
+  sleep "$jitter"
+}
+
+# --- Single-instance lock ---------------------------------------------------
+cf_lock_acquire() {
+  local d pid
+  d="$(cf_lock_dir)"
+  mkdir -p "$(dirname "$d")"
+  if mkdir "$d" 2>/dev/null; then
+    printf '%s\n' "$$" > "$d/pid"
+    return 0
+  fi
+  pid="$(cat "$d/pid" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+  rm -rf "$d"
+  mkdir "$d" 2>/dev/null || return 1
+  printf '%s\n' "$$" > "$d/pid"
+  return 0
+}
+
+cf_lock_release() {
+  local d pid
+  d="$(cf_lock_dir)"
+  pid="$(cat "$d/pid" 2>/dev/null || true)"
+  [ "$pid" = "$$" ] && rm -rf "$d" 2>/dev/null || true
 }
 
 cf_pids() {  # pids of THIS install's cloudflare supervisor
-  # The supervisor is matched by BOTH the dispatch keyword and the install
-  # directory, so two independent wearsic installs on one machine (or a
-  # leftover from a previous run) never shadow each other.
+  # Match BOTH the dispatch keyword and the install directory, so two
+  # independent wearsic installs on one machine (or a leftover from a
+  # previous run) never shadow each other.
   local self="${BASHPID:-$$}" d pid cmdline
   for d in /proc/[0-9]*; do
     pid="${d#/proc/}"
@@ -1796,35 +2800,131 @@ cf_pids() {  # pids of THIS install's cloudflare supervisor
   done
 }
 
+# --- Reachability probes ----------------------------------------------------
+cf_http_code() {  # url [timeout]
+  curl -sS -o /dev/null -w '%{http_code}' --max-time "${2:-15}" "$1" 2>/dev/null || true
+}
+
+# A Quick Tunnel can hand out a hostname before its edge route is serving.
+# Deploying then would "succeed" while every playback request 502s.
+cf_origin_ready() {  # origin [tries]
+  local origin="$1" tries="${2:-15}" i code
+  case "$tries" in ''|*[!0-9]*) tries=15 ;; esac
+  for i in $(seq 1 "$tries"); do
+    code="$(cf_http_code "$origin/health" 8)"
+    [ "$code" = "200" ] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+cf_permanent_health() {  # permanent url
+  [ "$(cf_http_code "$1/health" 15)" = "200" ]
+}
+
 # --- The supervisor ---------------------------------------------------------
 # Runs the tunnel, points the Worker at it, and re-points the Worker every
 # time the tunnel hands out a new random hostname. Restarts the tunnel if it
 # dies. Runs detached; the CLI starts it and reads the state file.
-cf_supervise() {  # $1 = engine port
-  local p="$1"
-  local log; log="$(cf_log_file)"
+#
+# Recovery rules:
+#   · a per-tunnel log is truncated before each start, so a stale hostname
+#     from the previous tunnel is never deployed;
+#   · the origin must answer /health through the tunnel BEFORE deployment;
+#   · deploy retries use bounded exponential backoff with jitter;
+#   · a fatal 4xx (bad token/permission) stops the supervisor instead of
+#     looping forever, and the state file records the reason;
+#   · while healthy, the permanent URL is probed every minute; a failure
+#     re-deploys the Worker to the same origin (recovers from an edge/DNS
+#     blip or a Worker script that was overwritten).
+cf_supervise() {  # $1 = engine port, $2 = install directory
+  local p="${1:-$(port)}"
+  if [ -n "${2:-}" ]; then
+    DEST="$2"
+    ENV_FILE="$DEST/.env"
+    LOG="$DEST/wearsic-server.log"
+  fi
+  local log tlog
+  log="$(cf_log_file)"
+  tlog="$(cf_tunnel_log)"
   mkdir -p "$(dirname "$log")"
+  chmod 700 "$(dirname "$log")" 2>/dev/null || true
   : > "$log"
+  : > "$tlog"
 
-  local tunnel_pid="" origin="" sub="" perm=""
+  if ! cf_lock_acquire; then
+    cf_log "another supervisor already holds the lock; exiting"
+    return 0
+  fi
 
-  while true; do
-    # 1. Start the tunnel.
-    cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:$p" >> "$log" 2>&1 &
+  local tunnel_pid="" origin="" deployed="" sub="" perm="" acc="" cfbin=""
+  local restart_delay=1 started_at=0 rc=0
+
+  cf_supervise_cleanup() {
+    if [ -n "${tunnel_pid:-}" ]; then
+      kill "$tunnel_pid" 2>/dev/null || true
+      wait "$tunnel_pid" 2>/dev/null || true
+    fi
+    cf_lock_release
+  }
+  trap 'cf_supervise_cleanup' EXIT
+  # INT/TERM must actually END the supervisor. Running only the cleanup
+  # handler would return to the loop and start a fresh tunnel seconds later.
+  trap 'cf_supervise_cleanup; exit 0' INT TERM HUP
+
+  if ! cf_worker_name >/dev/null; then
+    cf_log "ERROR: ${CF_LAST_ERROR:-invalid CLOUDFLARE_WORKER}"
+    cf_state_write error "" "" "" "" "${CF_LAST_ERROR:-invalid CLOUDFLARE_WORKER}"
+    return 1
+  fi
+  if ! cf_worker_src >/dev/null; then
+    cf_log "ERROR: Worker source $CF_WORKER_SRC_NAME not found"
+    cf_state_write error "" "" "" "" "Worker source not found ($CF_WORKER_SRC_NAME) — reinstall with install.sh"
+    return 1
+  fi
+  if ! cfbin="$(cf_ensure_cloudflared)"; then
+    cf_log "ERROR: cloudflared is not available"
+    cf_state_write error "" "" "" "" "cloudflared is not installed and could not be downloaded"
+    return 1
+  fi
+  if ! acc="$(cf_ensure_account)"; then
+    local why="${CF_LAST_ERROR:-Could not determine the Cloudflare account}"
+    cf_log "ERROR: $why"
+    cf_state_write error "" "" "" "" "$why"
+    return 1
+  fi
+  if ! sub="$(cf_ensure_subdomain "$acc")"; then
+    cf_log "ERROR: no workers.dev subdomain"
+    cf_state_write error "" "" "" "" "Could not provision a workers.dev subdomain (see log)"
+    return 1
+  fi
+  if ! perm="$(cf_permanent_url "$sub")"; then
+    cf_log "ERROR: invalid Worker name"
+    cf_state_write error "$sub" "" "" "" "${CF_LAST_ERROR:-invalid CLOUDFLARE_WORKER}"
+    return 1
+  fi
+  cf_log "worker=$perm account=$acc subdomain=$sub"
+
+  while :; do
+    started_at="$(date +%s)"
+    : > "$tlog"
+    "$cfbin" tunnel --no-autoupdate --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
     tunnel_pid=$!
-    echo "[wearsic $(date '+%H:%M:%S')] tunnel started (pid $tunnel_pid)" >> "$log"
+    cf_log "tunnel started (pid $tunnel_pid)"
+    cf_state_write starting "$sub" "$perm" "" "$deployed" "waiting for the tunnel hostname" "$acc"
 
-    # 2. Wait for the random hostname. cloudflared prints it to stderr; the
-    #    metrics endpoint is the fallback.
+    # 1. Wait for the random hostname. The log is authoritative; the
+    #    metrics endpoint is the fallback for builds that log differently.
     origin=""
-    local i port
-    for i in $(seq 1 60); do
-      origin="$(cf_hostname_from_log "$log")"
-      [ -n "$origin" ] && break
-      for port in 20241 20242 20243 20244 20245; do
-        origin="$(cf_hostname_from_metrics "$port")"
-        [ -n "$origin" ] && break
-      done
+    local i mport
+    for i in $(seq 1 90); do
+      origin="$(cf_hostname_from_log "$tlog")"
+      if [ -z "$origin" ]; then
+        for mport in 20241 20242 20243 20244 20245; do
+          origin="$(cf_hostname_from_metrics "$mport")"
+          [ -n "$origin" ] && break
+        done
+      fi
       [ -n "$origin" ] && break
       kill -0 "$tunnel_pid" 2>/dev/null || break
       sleep 1
@@ -1832,75 +2932,777 @@ cf_supervise() {  # $1 = engine port
     origin="$(cf_normalize_origin "$origin")"
 
     if [ -z "$origin" ]; then
-      echo "[wearsic $(date '+%H:%M:%S')] ERROR: could not read the tunnel hostname" >> "$log"
-      # The tunnel may still be coming up; give it a moment, then retry.
-      sleep 5
-      kill "$tunnel_pid" 2>/dev/null
+      cf_log "ERROR: could not read the tunnel hostname"
+      cf_state_write error "$sub" "$perm" "" "$deployed" "Could not read the tunnel hostname from cloudflared" "$acc"
+      kill "$tunnel_pid" 2>/dev/null || true
+      wait "$tunnel_pid" 2>/dev/null || true
+      cf_sleep_backoff "$restart_delay" "tunnel start"
+      restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
+      continue
+    fi
+    cf_log "tunnel hostname: $origin"
+
+    # 2. Do not deploy a hostname that is not serving yet. This is the
+    #    difference between "uploaded" and "actually reachable".
+    if ! cf_origin_ready "$origin"; then
+      cf_log "ERROR: tunnel $origin did not serve /health"
+      cf_state_write error "$sub" "$perm" "$origin" "$deployed" "The tunnel is up but the engine did not answer through it" "$acc"
+      kill "$tunnel_pid" 2>/dev/null || true
+      wait "$tunnel_pid" 2>/dev/null || true
+      cf_sleep_backoff "$restart_delay" "tunnel readiness"
+      restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
       continue
     fi
 
-    # 3. Point the Worker at it.
-    sub="$(cf_ensure_subdomain 2>>"$log")" || {
-      echo "[wearsic $(date '+%H:%M:%S')] ERROR: no workers.dev subdomain" >> "$log"
-      sleep 15
-      kill "$tunnel_pid" 2>/dev/null
-      continue
-    }
-    perm="$(cf_permanent_url "$sub")"
-
-    if cf_deploy_worker "$origin" >>"$log" 2>&1; then
-      echo "[wearsic $(date '+%H:%M:%S')] worker -> $origin" >> "$log"
-      cf_state_write "$sub" "$origin" "$perm"
+    # 3. Point the Worker at it, with retries.
+    if cf_deploy_worker_retry "$origin"; then
+      deployed="$origin"
+      cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
+      cf_log "worker -> $origin"
     else
-      echo "[wearsic $(date '+%H:%M:%S')] ERROR: worker upload failed" >> "$log"
+      rc=$?
+      cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment failed (see log)}" "$acc"
+      cf_log "ERROR: worker upload failed (rc=$rc): ${CF_DEPLOY_ERROR:-unknown}"
+      if [ "$rc" -eq 2 ]; then
+        cf_log "deployment failed permanently; supervisor exiting"
+        cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
+        kill "$tunnel_pid" 2>/dev/null || true
+        wait "$tunnel_pid" 2>/dev/null || true
+        return 1
+      fi
     fi
 
-    # 4. Watch for a new hostname. cloudflared only changes it when the
-    #    tunnel reconnects, so this is rare — but when it happens the
-    #    permanent URL must follow it, which is the whole point.
+    # 4. Watch for a new hostname, and for the permanent URL going dead.
+    #    Start the clock now: a just-deployed Worker needs a moment to
+    #    propagate, and a health check at second 5 would re-deploy in vain.
+    local last_check
+    last_check="$(date +%s)"
     while kill -0 "$tunnel_pid" 2>/dev/null; do
-      sleep 10
+      sleep 5
       local new
-      new="$(cf_hostname_from_log "$log")"
+      new="$(cf_hostname_from_log "$tlog")"
       new="$(cf_normalize_origin "$new")"
       if [ -n "$new" ] && [ "$new" != "$origin" ]; then
-        echo "[wearsic $(date '+%H:%M:%S')] tunnel changed -> $new" >> "$log"
+        cf_log "tunnel changed: $origin -> $new"
         origin="$new"
-        if cf_deploy_worker "$origin" >>"$log" 2>&1; then
-          echo "[wearsic $(date '+%H:%M:%S')] worker re-pointed -> $origin" >> "$log"
-          cf_state_write "$sub" "$origin" "$perm"
+        if cf_origin_ready "$origin" 10; then
+          if cf_deploy_worker_retry "$origin"; then
+            deployed="$origin"
+            cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
+            cf_log "worker re-pointed -> $origin"
+          else
+            rc=$?
+            cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-re-point failed}" "$acc"
+            cf_log "ERROR: re-point failed: ${CF_DEPLOY_ERROR:-unknown}"
+            if [ "$rc" -eq 2 ]; then
+              cf_log "re-point failed permanently; supervisor exiting"
+              cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
+              kill "$tunnel_pid" 2>/dev/null || true
+              wait "$tunnel_pid" 2>/dev/null || true
+              return 1
+            fi
+          fi
         else
-          echo "[wearsic $(date '+%H:%M:%S')] ERROR: re-point failed" >> "$log"
+          cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "The new tunnel hostname is not serving yet" "$acc"
+          cf_log "ERROR: new tunnel $origin is not serving"
+        fi
+        last_check=0
+      fi
+      local now
+      now="$(date +%s)"
+      if [ $(( now - last_check )) -ge 60 ]; then
+        last_check="$now"
+        if [ -z "$deployed" ] || [ "$deployed" != "$origin" ]; then
+          # The earlier deploy exhausted its retries (or the tunnel moved
+          # while it was down). Never leave the state degraded forever:
+          # keep retrying on the same bounded backoff. Re-check readiness:
+          # a hostname that is not serving must not be reported as live.
+          if ! cf_origin_ready "$origin" 10; then
+            cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "The tunnel hostname is not serving yet" "$acc"
+            cf_log "retry skipped: $origin is not serving /health"
+          else
+            cf_log "retrying Worker deployment to $origin"
+            if cf_deploy_worker_retry "$origin"; then
+              deployed="$origin"
+              cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
+              cf_log "worker -> $origin (recovered)"
+            else
+              rc=$?
+              cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment failed (see log)}" "$acc"
+              if [ "$rc" -eq 2 ]; then
+                cf_log "deployment failed permanently; supervisor exiting"
+                cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
+                kill "$tunnel_pid" 2>/dev/null || true
+                wait "$tunnel_pid" 2>/dev/null || true
+                return 1
+              fi
+            fi
+          fi
+        elif ! cf_permanent_health "$perm"; then
+          cf_log "permanent URL check failed — re-deploying the Worker"
+          if cf_deploy_worker_retry "$origin"; then
+            cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
+            cf_log "worker re-deployed after a failed health check"
+          else
+            rc=$?
+            cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-health check failed}" "$acc"
+            if [ "$rc" -eq 2 ]; then
+              cf_log "re-deploy after health check failed permanently; supervisor exiting"
+              cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
+              kill "$tunnel_pid" 2>/dev/null || true
+              wait "$tunnel_pid" 2>/dev/null || true
+              return 1
+            fi
+          fi
         fi
       fi
     done
 
-    echo "[wearsic $(date '+%H:%M:%S')] tunnel exited — restarting" >> "$log"
-    sleep 3
+    cf_log "tunnel exited — restarting"
+    wait "$tunnel_pid" 2>/dev/null || true
+    cf_state_write starting "$sub" "$perm" "$origin" "$deployed" "tunnel exited; restarting" "$acc"
+    if [ $(( $(date +%s) - started_at )) -ge 60 ]; then
+      restart_delay=1
+    fi
+    cf_sleep_backoff "$restart_delay" "tunnel restart"
+    restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
   done
 }
 
+# --- Verification -----------------------------------------------------------
+cf_verify() {  # $1 = permanent url, $2 = optional video id for a playback probe
+  local url="$1" playback="${2:-${WEARSIC_CF_PLAYBACK_ID:-}}" key rc=0
+  key="$(api_key)"
+  if [ -z "$key" ]; then
+    err "An API key is required to verify the public URL: wearsic api-key <your-key>"
+    return 1
+  fi
+  local tmp
+  tmp="$(mktemp -d)" || { err "Could not create a temporary directory"; return 1; }
+
+  say "Verifying through the permanent URL…"
+
+  # 1. The public liveness endpoint: Worker + tunnel + engine.
+  local code
+  code="$(curl -sS -o "$tmp/health" -w '%{http_code}' --max-time 20 "$url/health" 2>/dev/null || true)"
+  if [ "$code" = "200" ] && grep -q '"status":"ok"' "$tmp/health" 2>/dev/null; then
+    ok "health       200 OK through $url"
+  else
+    err "health       expected 200 + {\"status\":\"ok\"} from $url/health, got ${code:-no response}"
+    rc=1
+  fi
+
+  # 2. Authentication must survive the proxy. Without a key the engine must
+  #    answer 401; with the key it must answer 200.
+  if [ -n "$key" ]; then
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$url$CF_PROBE_PATH" 2>/dev/null || true)"
+    if [ "$code" = "401" ]; then
+      ok "auth         the engine rejects requests without the API key (401)"
+    else
+      err "auth         expected 401 without a key, got ${code:-no response}"
+      rc=1
+    fi
+  fi
+
+  # 3. Range + 206 + body integrity. This is the audio-critical path.
+  if [ -n "$key" ]; then
+    code="$(curl -sS --max-time 30 \
+        -H "X-Wearsic-Key: $key" \
+        -H "Range: bytes=10-19" \
+        -D "$tmp/range.hdr" -o "$tmp/range.body" \
+        -w '%{http_code}' "$url$CF_PROBE_PATH" 2>/dev/null || true)"
+    local crange len b0 b9
+    crange="$(grep -i '^content-range:' "$tmp/range.hdr" 2>/dev/null | head -1 | tr -d '\r')"
+    len="$(wc -c < "$tmp/range.body" 2>/dev/null | tr -d ' ')"
+    b0="$(od -An -tu1 -j0 -N1 "$tmp/range.body" 2>/dev/null | tr -d ' ')"
+    b9="$(od -An -tu1 -j9 -N1 "$tmp/range.body" 2>/dev/null | tr -d ' ')"
+    # Probe bytes are (i*31+7) & 0xff: 61 at i=10, 84 at i=19.
+    if [ "$code" = "206" ] \
+        && printf '%s' "$crange" | grep -qi "content-range: bytes 10-19/$CF_PROBE_SIZE" \
+        && [ "$len" = "10" ] && [ "$b0" = "61" ] && [ "$b9" = "84" ]; then
+      ok "streaming    206 Partial Content, Content-Range preserved, 10 bytes intact"
+    else
+      err "streaming    expected 206 bytes 10-19/$CF_PROBE_SIZE and 10 intact bytes"
+      err "             got HTTP ${code:-none} '${crange}' length=${len:-?}"
+      rc=1
+    fi
+  fi
+
+  # 4. Optional real playback probe. Kept opt-in: extracting a YouTube track
+  #    depends on the extractor and the network, so it is not a setup check.
+  if [ -n "$playback" ] && [ -n "$key" ]; then
+    code="$(curl -sS --max-time 60 \
+        -H "X-Wearsic-Key: $key" \
+        -H "Range: bytes=0-1023" \
+        -D "$tmp/play.hdr" -o "$tmp/play.body" \
+        -w '%{http_code}' "$url/api/stream/$playback" 2>/dev/null || true)"
+    local ct plen
+    ct="$(grep -i '^content-type:' "$tmp/play.hdr" 2>/dev/null | head -1 | tr -d '\r')"
+    plen="$(wc -c < "$tmp/play.body" 2>/dev/null | tr -d ' ')"
+    if { [ "$code" = "206" ] || [ "$code" = "200" ]; } && [ "${plen:-0}" -gt 0 ]; then
+      ok "playback     track $playback returned HTTP $code, $plen bytes${ct:+ ($ct)}"
+    else
+      err "playback     track $playback failed (HTTP ${code:-none}, ${plen:-0} bytes)${ct:+ — $ct}"
+      rc=1
+    fi
+  elif [ -z "$playback" ]; then
+    dim "playback     skipped — set WEARSIC_CF_PLAYBACK_ID=<videoId> to probe a real track"
+  fi
+
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+# --- Authorization ----------------------------------------------------------
+cf_open_url() {
+  local u="$1"
+  if command -v termux-open-url >/dev/null 2>&1 && termux-open-url "$u" >/dev/null 2>&1; then return 0; fi
+  if command -v xdg-open >/dev/null 2>&1 && xdg-open "$u" >/dev/null 2>&1; then return 0; fi
+  if command -v open >/dev/null 2>&1 && open "$u" >/dev/null 2>&1; then return 0; fi
+  return 1
+}
+
+cf_http_status_text() { printf 'HTTP %s' "${CF_HTTP_STATUS:-0}"; }
+
+cf_auth_check() {  # [$1 = account id]
+  local acc="${1:-$(cf_account)}"
+  [ -n "$(cf_token)" ] || { err "No Cloudflare credential found"; return 1; }
+  if [ -n "$acc" ]; then
+    cf_api GET "/accounts/$acc/workers/subdomain"
+    case "${CF_HTTP_STATUS:-0}" in
+      2??) return 0 ;;
+      401|403) cf_api_explain "Cloudflare rejected the credential"; return 1 ;;
+      *) cf_api_explain "Cloudflare API check failed"; return 1 ;;
+    esac
+  fi
+  cf_api GET "/accounts?per_page=50"
+  case "${CF_HTTP_STATUS:-0}" in
+    2??) return 0 ;;
+    *) cf_api_explain "Cloudflare rejected the credential"; return 1 ;;
+  esac
+}
+
+cf_auth_check_with_token() {  # token (used before saving it)
+  local tok="$1" old="${CLOUDFLARE_API_TOKEN:-}" had=0 rc
+  [ -n "$old" ] && had=1
+  export CLOUDFLARE_API_TOKEN="$tok"
+  cf_auth_check
+  rc=$?
+  if [ "$had" -eq 1 ]; then export CLOUDFLARE_API_TOKEN="$old"; else unset CLOUDFLARE_API_TOKEN; fi
+  return "$rc"
+}
+
+cf_prompt_token() {
+  [ -t 0 ] || {
+    err "No terminal for the token prompt. Use: CLOUDFLARE_API_TOKEN=... wearsic cloudflare"
+    return 1
+  }
+  say ""
+  say "Create a scoped Cloudflare API token (free account):"
+  say "  https://dash.cloudflare.com/profile/api-tokens"
+  say "  Template: Edit Cloudflare Workers"
+  say "  Needs: Workers Scripts:Edit and Account Settings:Read"
+  if cf_open_url "https://dash.cloudflare.com/profile/api-tokens"; then
+    dim "  (opened in your browser)"
+  else
+    dim "  (open the URL above on any device, then paste the token here)"
+  fi
+  local tries=0 tok
+  while [ "$tries" -lt 3 ]; do
+    tries=$(( tries + 1 ))
+    printf 'Paste the API token (hidden): '
+    IFS= read -rs tok || { printf '\n'; return 1; }
+    printf '\n'
+    tok="$(printf '%s' "$tok" | tr -d '[:space:]')"
+    if [ -z "$tok" ]; then warn "No token entered."; continue; fi
+    if cf_auth_check_with_token "$tok"; then
+      cf_env_set CLOUDFLARE_API_TOKEN "$tok"
+      ok "Token verified and saved to $ENV_FILE (mode 600)"
+      return 0
+    fi
+    warn "That token was not accepted ($(cf_http_status_text)). Try again."
+  done
+  err "Could not authorize Cloudflare after 3 attempts."
+  return 1
+}
+
+cf_maybe_install_wrangler() {
+  cf_wrangler_available && return 0
+  [ -t 0 ] || return 0
+  command -v npm >/dev/null 2>&1 || return 0
+  say ""
+  say "Browser login is the easiest option, but wrangler is not installed."
+  printf 'Install wrangler now? [Y/n] '
+  local answer=""
+  IFS= read -r answer || answer=""
+  case "$answer" in
+    ""|y|Y|yes|YES) ;;
+    *) return 0 ;;
+  esac
+  say "Installing wrangler (one time)…"
+  if cf_run_timeout 600 npm install -g wrangler >/dev/null 2>&1; then
+    if cf_wrangler_available; then
+      ok "wrangler installed"
+      return 0
+    fi
+  fi
+  warn "Could not install wrangler — you can paste an API token instead."
+  return 0
+}
+
+cf_login_summary() {
+  local acc sub
+  say "Credential     $(cf_token_source)"
+  acc="$(cf_account_env)"
+  if [ -n "$acc" ]; then
+    say "Account        $acc"
+  else
+    say "Account        detected on start (or set CLOUDFLARE_ACCOUNT_ID)"
+  fi
+  sub="$(cf_credential CLOUDFLARE_SUBDOMAIN)"
+  [ -n "$sub" ] && say "workers.dev     $sub"
+  return 0
+}
+
+cf_login() {
+  local mode="${1:-auto}" tok=""
+  installed
+  case "$mode" in
+    auto|"") mode="auto" ;;
+    --wrangler|wrangler) mode="wrangler" ;;
+    --token-stdin|token-stdin) mode="stdin" ;;
+    *) die "Unknown login option: $mode (try --wrangler or --token-stdin)" ;;
+  esac
+
+  if [ "$mode" = "auto" ] && [ -n "$(cf_token_from_env)" ]; then
+    if cf_auth_check; then
+      ok "Already authorized"
+      cf_login_summary
+      return 0
+    fi
+    warn "The saved Cloudflare token was rejected — authorizing again."
+  fi
+
+  [ "$mode" = "auto" ] && cf_maybe_install_wrangler
+
+  if [ "$mode" = "wrangler" ] || { [ "$mode" = "auto" ] && cf_wrangler_available && [ -t 0 ]; }; then
+    if ! cf_wrangler_available; then
+      err "wrangler is not installed. Install it with: npm install -g wrangler"
+      [ "$mode" = "wrangler" ] && return 1
+    else
+      say "Opening Cloudflare's official OAuth login (wrangler)…"
+      local ok=0
+      if cf_run_timeout 10 wrangler login --help 2>/dev/null | grep -q -- '--device'; then
+        # Device flow: no localhost callback, so it works on Termux/remote
+        # machines. The user approves on any browser.
+        cf_run_timeout 600 wrangler login --device && ok=1
+      else
+        cf_run_timeout 900 wrangler login && ok=1
+      fi
+      if [ "$ok" -eq 1 ] && tok="$(cf_token_from_wrangler)" && [ -n "$tok" ]; then
+        if cf_auth_check_with_token "$tok"; then
+          # A stale CLOUDFLARE_API_TOKEN takes precedence over wrangler in
+          # cf_token(), which would silently keep using the rejected token.
+          # Drop the saved copy now; an exported one is unset for this run.
+          local env_token
+          env_token="$(printenv CLOUDFLARE_API_TOKEN 2>/dev/null || true)"
+          if [ -n "$(cf_token_from_env)" ]; then
+            cf_env_unset CLOUDFLARE_API_TOKEN
+            unset CLOUDFLARE_API_TOKEN
+            say "Using the wrangler session; removed the saved API token from $ENV_FILE."
+          fi
+          if [ -n "$env_token" ]; then
+            warn "CLOUDFLARE_API_TOKEN is exported in this shell; unset it there too so wrangler is used next time."
+          fi
+          ok "Authorized through wrangler (its OAuth token refreshes itself)."
+          cf_login_summary
+          return 0
+        fi
+      fi
+      err "wrangler login did not produce a usable credential."
+      [ "$mode" = "wrangler" ] && return 1
+    fi
+  fi
+
+  if [ "$mode" = "stdin" ] || { [ "$mode" = "auto" ] && [ -t 0 ]; }; then
+    cf_prompt_token || return 1
+    return 0
+  fi
+  err "No Cloudflare credentials. Set CLOUDFLARE_API_TOKEN or run: wearsic cloudflare login"
+  return 1
+}
+
+cf_ensure_auth() {
+  local tok
+  tok="$(cf_token)"
+  if [ -n "$tok" ] && cf_auth_check; then return 0; fi
+  say ""
+  say "Cloudflare authorization is required (free account, no domain)."
+  if cf_wrangler_available && [ -t 0 ]; then
+    say "  Browser authorization is available because wrangler is installed:"
+    say "    wearsic cloudflare login --wrangler"
+  fi
+  say "  Or create an API token (Workers Scripts:Edit + Account Settings:Read):"
+  say "    https://dash.cloudflare.com/profile/api-tokens"
+  if [ -t 0 ] && [ -t 1 ]; then
+    say "  I'll prompt for it now."
+    say ""
+    cf_login || return 1
+    return 0
+  fi
+  say "  Then save it with:  wearsic cloudflare login --token-stdin"
+  say ""
+  err "No usable Cloudflare credential (non-interactive shell)."
+  return 1
+}
+
+cf_logout() {
+  installed
+  if [ -n "$(env_value CLOUDFLARE_API_TOKEN)" ]; then
+    cf_env_unset CLOUDFLARE_API_TOKEN
+    ok "Removed CLOUDFLARE_API_TOKEN from $ENV_FILE"
+    say "Revoke it now: https://dash.cloudflare.com/profile/api-tokens"
+  else
+    say "No API token is stored in $ENV_FILE"
+  fi
+  if [ -n "$(printenv CLOUDFLARE_API_TOKEN 2>/dev/null || true)" ]; then
+    warn "CLOUDFLARE_API_TOKEN is exported in this shell and is still active; unset it to log out completely."
+  fi
+  if cf_wrangler_available; then
+    say "If you authorized with wrangler, revoke that session with: wrangler logout"
+  fi
+  say "The Worker and its permanent URL are left deployed; delete it in the dashboard if you want it gone."
+  return 0
+}
+
+# --- Beginner-friendly preflight -------------------------------------------
+# A public URL is useless without a key, but making the user stop and run
+# another command is exactly the kind of setup friction that loses people.
+# Generate a strong key ONLY when there is no saved key, and tell the user
+# where to find it at the end. An existing key is never replaced.
+cf_generate_api_key() {
+  local k=""
+  if command -v openssl >/dev/null 2>&1; then
+    k="$(openssl rand -hex 24 2>/dev/null || true)"
+  fi
+  if [ -z "$k" ]; then
+    k="$(LC_ALL=C tr -dc 'a-f0-9' < /dev/urandom 2>/dev/null \
+      | dd bs=1 count=48 2>/dev/null)"
+  fi
+  case "$k" in
+    ''|*[!a-f0-9]*) return 1 ;;
+  esac
+  [ "${#k}" -eq 48 ] || return 1
+  printf '%s' "$k"
+}
+
+ensure_api_key() {
+  local k
+  k="$(api_key)"
+  [ -n "$k" ] && return 0
+  k="$(cf_generate_api_key)" || {
+    die "No API key is set and one could not be generated. Set one: wearsic api-key <your-key>"
+  }
+  if ! write_env_key "$k"; then
+    die "Could not save the new API key to $ENV_FILE"
+  fi
+  chmod 600 "$ENV_FILE" 2>/dev/null || true
+  CF_API_KEY_CREATED=1
+  ok "Created a private API key for the watch"
+  dim "It will be shown when the URL is ready."
+}
+
+# Start the engine when needed instead of making "start the server first" a
+# prerequisite. This is deliberately a small version of cmd_start: no
+# pairing dump here; the Cloudflare setup ends with the URL + key together.
+ensure_engine() {
+  local i
+
+  if health_ok && [ "${CF_API_KEY_CREATED:-0}" != "1" ]; then
+    ok "Wearsic server is running"
+    return 0
+  fi
+
+  if health_ok && [ "${CF_API_KEY_CREATED:-0}" = "1" ]; then
+    say "Restarting Wearsic to apply the new API key…"
+    cmd_stop >/dev/null 2>&1 || true
+    # Do not start a second engine or claim the key is active while the old
+    # process is still winding down. A successful setup must use the new key.
+    for i in $(seq 1 15); do
+      { health_ok || supervisor_running; } || break
+      sleep 1
+    done
+    if health_ok || supervisor_running; then
+      err "Wearsic did not stop cleanly while applying the new API key."
+      say "Restart it, then retry: wearsic restart && wearsic cloudflare"
+      return 1
+    fi
+  fi
+
+  if ! health_ok; then
+    if supervisor_running; then
+      say "Waiting for the Wearsic server to finish starting…"
+    else
+      say "Starting the Wearsic server…"
+      if command -v setsid >/dev/null 2>&1; then
+        ( cd "$DEST" && setsid nohup bash "$RUN" >/dev/null 2>&1 </dev/null & )
+      else
+        ( cd "$DEST" && nohup bash "$RUN" >/dev/null 2>&1 </dev/null & )
+      fi
+    fi
+    for i in $(seq 1 60); do
+      health_ok && break
+      sleep 1
+    done
+  fi
+
+  if ! health_ok; then
+    err "The Wearsic server did not start."
+    say "Check its log: wearsic logs"
+    return 1
+  fi
+  ok "Wearsic server is running"
+}
+
+# The final card is the whole point: both values the watch needs, together,
+# on a screen that looks like onboarding instead of a server log.
+cf_watch_box() {  # $1 = permanent URL
+  local url="$1" key
+  key="$(api_key)"
+  box_begin "ready for your watch" ok
+  box_line ""
+  box_line "   ${C_DIM}Server URL${C_RESET}"
+  box_line "   ${C_ACC}${url}${C_RESET}"
+  box_line ""
+  box_line "   ${C_DIM}API key${C_RESET}"
+  if [ -n "$key" ]; then
+    box_line "   ${C_ACC}${key}${C_RESET}"
+  else
+    box_line "   ${C_WARN}not set — run: wearsic api-key <your-key>${C_RESET}"
+  fi
+  box_line ""
+  box_hr
+  box_line "   ${C_DIM}Wearsic app › Settings — enter both values.${C_RESET}"
+  box_line "   ${C_DIM}The URL stays the same when the tunnel restarts.${C_RESET}"
+  box_end
+}
+
 # --- Commands ---------------------------------------------------------------
+cf_start() {
+  local no_verify=0
+  case "${1:-}" in
+    "") : ;;
+    --no-verify) no_verify=1 ;;
+    *) die "Unknown option for 'wearsic cloudflare start': $1 (try --no-verify)" ;;
+  esac
+
+  installed
+  if ! cf_worker_name >/dev/null; then
+    die "${CF_LAST_ERROR:-invalid CLOUDFLARE_WORKER}"
+  fi
+  local src
+  if ! src="$(cf_worker_src)"; then
+    die "Worker source not found ($CF_WORKER_SRC_NAME) — reinstall the server with install.sh (or set CLOUDFLARE_WORKER_SRC)"
+  fi
+
+  # The permanent URL is public. Make the one-command path work even on a
+  # fresh install: create a key only if none exists and start the engine if
+  # it is not already running. Never overwrite an existing key.
+  CF_API_KEY_CREATED=0
+  ensure_api_key || return 1
+  ensure_engine || return 1
+
+  cf_ensure_auth || return 1
+  local acc sub perm cfbin
+  acc="$(cf_ensure_account)" || return 1
+  sub="$(cf_ensure_subdomain "$acc")" || return 1
+  perm="$(cf_permanent_url "$sub")" || die "${CF_LAST_ERROR:-invalid permanent URL}"
+  cfbin="$(cf_ensure_cloudflared)" || return 1
+  export PATH="$(dirname "$cfbin"):$PATH"
+
+  if [ -n "$(cf_pids)" ]; then
+    say "Already running — permanent URL:"
+    say "  $perm"
+    if [ "$no_verify" -eq 1 ]; then
+      cf_watch_box "$perm"
+      return 0
+    fi
+    if cf_verify "$perm"; then
+      say ""
+      cf_watch_box "$perm"
+      return 0
+    fi
+    return 1
+  fi
+
+  cf_state_clear
+  cf_state_write starting "$sub" "$perm" "" "" "starting" "$acc"
+
+  say "Starting the Cloudflare tunnel + the permanent Worker front door…"
+  local cli="$CLI_DIR/wearsic"
+  local child_env=(env "WEARSIC_DIR=$DEST")
+  if command -v setsid >/dev/null 2>&1; then
+    ( cd "$DEST" && "${child_env[@]}" setsid nohup bash "$cli" __cf_supervise "$(port)" "$DEST" >/dev/null 2>&1 </dev/null & )
+  else
+    ( cd "$DEST" && "${child_env[@]}" nohup bash "$cli" __cf_supervise "$(port)" "$DEST" >/dev/null 2>&1 </dev/null & )
+  fi
+
+  # Wait for a REAL "live" state: the state file is written only after the
+  # tunnel answers /health and Cloudflare accepts the Worker upload. A stale
+  # URL from a previous run can therefore never be reported as success.
+  local st err
+  shim_wait "Cloudflare  waiting for the tunnel + the Worker front door" 240 cf_state_settled
+  st="$(cf_state_get status || true)"
+  if [ "$st" != "live" ]; then
+    err="$(cf_state_get last_error || true)"
+    say ""
+    say "The front door did not come up."
+    [ -n "$err" ] && say "  $err"
+    tail -20 "$(cf_log_file)" 2>/dev/null | sed 's/^/  /'
+    die "Cloudflare setup failed (the supervisor may still be retrying — check: wearsic cloudflare status)"
+  fi
+
+  say ""
+  say "  PERMANENT URL   $perm"
+  say "  current tunnel  $(cf_state_get origin || echo '?')"
+
+  if [ "$no_verify" -eq 1 ]; then
+    say ""
+    cf_watch_box "$perm"
+    return 0
+  fi
+  say ""
+  if cf_verify "$perm"; then
+    say ""
+    cf_watch_box "$perm"
+    return 0
+  fi
+  say ""
+  say "The URL is deployed, but end-to-end verification failed."
+  say "The supervisor keeps retrying; check: wearsic cloudflare status"
+  return 1
+}
+
+cf_cloudflare_status() {
+  local u status origin deployed err health_code auth_code
+  u="$(cf_state_get url || true)"
+  if [ -z "$u" ]; then
+    say "Not running — start it:  wearsic cloudflare"
+    return 1
+  fi
+  status="$(cf_state_get status || true)"
+  origin="$(cf_state_get origin || true)"
+  deployed="$(cf_state_get deployed_origin || true)"
+  err="$(cf_state_get last_error || true)"
+
+  say "Permanent URL  $u"
+  say "Status         ${status:-unknown}"
+  [ -n "$origin" ] && say "Tunnel origin  $origin"
+  [ -n "$deployed" ] && say "Deployed to    $deployed"
+  if [ -n "$origin" ] && [ -n "$deployed" ] && [ "$origin" != "$deployed" ]; then
+    warn "The Worker still points at the previous tunnel; the supervisor is retrying."
+  fi
+  [ -n "$err" ] && say "Last error     $err"
+  if [ -n "$(cf_pids)" ]; then
+    say "Supervisor     running"
+  else
+    say "Supervisor     NOT running"
+    case "$status" in
+      stopped) : ;;
+      *) say "               the URL is dead until: wearsic cloudflare" ;;
+    esac
+  fi
+
+  health_code="$(cf_http_code "$u/health" 15)"
+  if [ "$health_code" = "200" ]; then
+    say "Health         200 OK through the permanent URL"
+  else
+    say "Health         no response (${health_code:-none}) through the permanent URL"
+  fi
+
+  auth_code=""
+  if [ -n "$(api_key)" ]; then
+    auth_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+        -H "X-Wearsic-Key: $(api_key)" "$u$CF_PROBE_PATH" 2>/dev/null || true)"
+    case "$auth_code" in
+      200) say "Auth           API key accepted through the permanent URL" ;;
+      401) say "Auth           API key REJECTED through the permanent URL" ;;
+      *)   say "Auth           no answer (${auth_code:-none}) through the permanent URL" ;;
+    esac
+  else
+    say "Auth           not configured — a public URL requires an API key"
+  fi
+
+  # Exit 0 only for a genuinely healthy front door: live state, the
+  # supervisor still watching it, and successful auth. A stale state file or
+  # an orphaned tunnel must never look like success.
+  [ "$status" = "live" ] && [ "$health_code" = "200" ] && [ -n "$(cf_pids)" ] || return 1
+  [ -n "$auth_code" ] && [ "$auth_code" = "200" ] || return 1
+  return 0
+}
+
+cf_show_logs() {
+  installed
+  local f; f="$(cf_log_file)"
+  [ -f "$f" ] || { say "No log yet — start it: wearsic cloudflare"; return 1; }
+  case "${1:-}" in
+    -f|--follow) tail -n 40 -f "$f" ;;
+    *) tail -n 40 "$f" ;;
+  esac | sed -E 's/(Bearer )[A-Za-z0-9._-]+/\1<redacted>/g; s/(CLOUDFLARE_API_TOKEN=)[^[:space:]]+/\1<redacted>/g; s/(X-Wearsic-Key: )[^[:space:]]+/\1<redacted>/g'
+}
+
+cf_cloudflare_stop() {
+  local pids; pids="$(cf_pids)"
+  if [ -z "$pids" ]; then
+    cf_state_set_status stopped
+    say "Not running."
+    return 0
+  fi
+  say "Stopping…"
+  local pid i
+  for pid in $pids; do
+    # The supervisor's EXIT trap kills its own cloudflared. Signal the
+    # supervisor first so an unrelated cloudflared tunnel is never touched.
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  for i in $(seq 1 15); do
+    [ -z "$(cf_pids)" ] && break
+    sleep 1
+  done
+  for pid in $pids; do
+    pkill -KILL -P "$pid" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+  cf_lock_release
+  cf_state_set_status stopped
+  say "Stopped. The Worker and its permanent URL remain deployed on Cloudflare."
+}
 
 cmd_cloudflare() {
   local sub_cmd="start"
   case "${1:-}" in
-    start|status|stop|url) sub_cmd="$1"; shift ;;
+    start|status|stop|url|login|logout|logs|verify) sub_cmd="$1"; shift ;;
     "") : ;;
     -h|--help) sub_cmd="help" ;;
-    *) die "Unknown option for 'wearsic cloudflare': $1 (try: wearsic cloudflare [start|status|stop|url])" ;;
+    *) die "Unknown option for 'wearsic cloudflare': $1 (try: wearsic cloudflare [start|status|verify|url|logs|login|logout|stop])" ;;
   esac
 
   case "$sub_cmd" in
     help)
       say "wearsic cloudflare — a PERMANENT public URL, free, no domain needed."
       say ""
-      say "  start    start the tunnel + the Worker front door (default)"
-      say "  status   show the permanent URL and whether it is live"
-      say "  stop     stop the tunnel and the Worker front door"
-      say "  url      print just the permanent URL"
+      say "  start      one-command setup (default): start the engine, create a"
+      say "             key only if needed, authorize, deploy, verify, show the"
+      say "             permanent URL + API key together"
+      say "  status     permanent URL, supervisor state, live health + auth check"
+      say "  verify     prove auth + Range/206 streaming through the permanent URL"
+      say "  url        print just the permanent URL (for scripting)"
+      say "  logs [-f]  recent supervisor activity (secrets redacted)"
+      say "  login      authorize Cloudflare (wrangler OAuth or a scoped API token)"
+      say "  logout     remove the saved API token (Worker stays deployed)"
+      say "  stop       stop the tunnel and supervisor (Worker stays deployed)"
       say ""
-      say "Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (env or .env)."
+      say "Needs a free Cloudflare account. Start:  wearsic cloudflare"
       return 0
       ;;
   esac
@@ -1908,148 +3710,37 @@ cmd_cloudflare() {
   installed
 
   case "$sub_cmd" in
-    status) cf_cloudflare_status; return 0 ;;
+    status) cf_cloudflare_status; return $? ;;
+    verify)
+      local u pid
+      u="$(cf_state_get url || true)"
+      [ -n "$u" ] || die "No permanent URL yet — start it: wearsic cloudflare"
+      pid="${1:-}"
+      case "$pid" in --playback) pid="${2:-}" ;; esac
+      cf_verify "$u" "$pid"
+      return $?
+      ;;
     url)
       local u; u="$(cf_state_get url || true)"
       [ -n "$u" ] || die "No permanent URL yet — start it: wearsic cloudflare"
       printf '%s\n' "$u"
       return 0
       ;;
+    logs) cf_show_logs "${1:-}"; return $? ;;
+    login) cf_login "${1:-auto}"; return $? ;;
+    logout) cf_logout; return 0 ;;
     stop) cf_cloudflare_stop; return 0 ;;
+    start) cf_start "${1:-}"; return $? ;;
   esac
-
-  # start -------------------------------------------------------------------
-  # The permanent URL is public. Same rule as every other public path here.
-  if [ -z "$(api_key)" ]; then
-    die "The permanent URL is public — set an API key first:  wearsic api-key <your-key>"
-  fi
-  if ! health_ok; then
-    die "Server is not running/healthy — start it first: wearsic start"
-  fi
-  [ -n "$(cf_token)" ] || die "CLOUDFLARE_API_TOKEN is not set (put it in $ENV_FILE or the environment)"
-  [ -n "$(cf_account)" ] || die "CLOUDFLARE_ACCOUNT_ID is not set (put it in $ENV_FILE or the environment)"
-
-  if [ -n "$(cf_pids)" ]; then
-    say "Already running — permanent URL:"
-    say "  $(cf_state_get url || echo '?')"
-    return 0
-  fi
-
-  # cloudflared: not in the Alpine repos, so use Cloudflare's own release
-  # binary for this architecture.
-  if ! command -v cloudflared >/dev/null 2>&1; then
-    local arch bin
-    case "$(uname -m)" in
-      aarch64|arm64) arch="arm64" ;;
-      x86_64|amd64)  arch="amd64" ;;
-      *) die "No cloudflared build for $(uname -m) — install it manually" ;;
-    esac
-    bin="$DEST/bin/cloudflared"
-    say "Installing cloudflared ($arch)…"
-    mkdir -p "$DEST/bin"
-    if ! curl -fsSL --max-time 300 \
-        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$arch" \
-        -o "$bin.tmp"; then
-      rm -f "$bin.tmp"
-      die "cloudflared download failed"
-    fi
-    # The official release is a signed binary; we only need it to be
-    # executable, and the sha256 is recorded in the state dir for reference.
-    sha256sum "$bin.tmp" > "$DEST/wearsic-state/cloudflared.sha256" 2>/dev/null || true
-    mv -f "$bin.tmp" "$bin"
-    chmod +x "$bin"
-    export PATH="$DEST/bin:$PATH"
-  fi
-
-  say "Starting the Cloudflare tunnel + the permanent Worker front door…"
-  # The install directory is passed to the supervisor as well as the port, so
-  # `wearsic cloudflare status` can tell THIS install's supervisor apart from
-  # any other one running on the machine.
-  if command -v setsid >/dev/null 2>&1; then
-    ( cd "$DEST" && setsid nohup bash "$CLI_DIR/wearsic" __cf_supervise "$(port)" "$DEST" >/dev/null 2>&1 </dev/null & )
-  else
-    ( cd "$DEST" && nohup bash "$CLI_DIR/wearsic" __cf_supervise "$(port)" "$DEST" >/dev/null 2>&1 </dev/null & )
-  fi
-
-  # Wait for the state file: it is written only after the Worker is live.
-  local i u=""
-  for i in $(seq 1 90); do
-    u="$(cf_state_get url || true)"
-    [ -n "$u" ] && break
-    sleep 1
-  done
-  if [ -z "$u" ]; then
-    say ""
-    say "The front door did not come up within 90s. The log has the reason:"
-    tail -12 "$(cf_log_file)" 2>/dev/null | sed 's/^/  /'
-    die "Cloudflare setup failed"
-  fi
-
-  say ""
-  say "  PERMANENT URL   $u"
-  say "  current tunnel  $(cf_state_get origin || echo '?')"
-  say ""
-  say "Point the watch at that URL (Wearsic app → Settings → Server URL)."
-  say "The address stays the same even if the tunnel restarts."
-  say ""
-  say "  wearsic cloudflare status   check it"
-  say "  wearsic cloudflare stop      shut it down"
-}
-
-cf_cloudflare_status() {
-  local u origin
-  u="$(cf_state_get url || true)"
-  if [ -z "$u" ]; then
-    say "Not running — start it:  wearsic cloudflare"
-    return 1
-  fi
-  say "Permanent URL  $u"
-  origin="$(cf_state_get origin || true)"
-  [ -n "$origin" ] && say "Tunnel origin  $origin"
-  if [ -n "$(cf_pids)" ]; then
-    say "Supervisor    running"
-  else
-    say "Supervisor    NOT running — the URL is dead:  wearsic cloudflare"
-  fi
-  # End-to-end check through the permanent URL, not just the local engine.
-  if curl -fsS --max-time 20 "$u/health" 2>/dev/null | grep -q '"status":"ok"'; then
-    say "Health        200 OK through the permanent URL"
-    return 0
-  fi
-  say "Health        no response through the permanent URL"
-  say "              (the Worker is up but the tunnel behind it is not)"
-  return 1
-}
-
-cf_cloudflare_stop() {
-  local pids; pids="$(cf_pids)"
-  if [ -z "$pids" ]; then
-    say "Not running."
-    return 0
-  fi
-  say "Stopping…"
-  for pid in $pids; do
-    # Kill the supervisor AND the cloudflared it started.
-    pkill -P "$pid" 2>/dev/null || true
-    kill "$pid" 2>/dev/null || true
-  done
-  local i
-  for i in $(seq 1 10); do
-    [ -z "$(cf_pids)" ] && break
-    sleep 1
-  done
-  for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
-  pkill -f 'cloudflared tunnel' 2>/dev/null || true
-  rm -f "$(cf_state_file)" 2>/dev/null || true
-  say "Stopped. The Worker still exists on Cloudflare (delete it in the dashboard if you want it gone)."
 }
 
 cmd_public() {
   installed
   # Public exposure without authentication is refused outright — same rule
-  # as `wearsic server funnel`. No key is ever invented or changed here.
+  # as `wearsic server funnel`. This menu never invents or changes a key;
+  # `wearsic cloudflare` can create one only when none exists.
   if [ -z "$(api_key)" ]; then
-    die "Public exposure REQUIRES an API key — the server would otherwise be open to the internet. Set one first (you choose the value):  wearsic server api key <your-key>"
+    die "Public exposure REQUIRES an API key — the server would otherwise be open to the internet. Set one first:  wearsic api-key <your-key>  (or run: wearsic cloudflare, which creates one if missing)"
   fi
   say "Public URL options (watch works on any network, no VPN app on the watch):"
   say ""
@@ -2062,9 +3753,12 @@ cmd_public() {
   say "   → https://wearsic.<sub>.workers.dev (same address every time)"
   say "   A Cloudflare Quick Tunnel is the front door; a Worker gives it a"
   say "   permanent address, so the watch never has to be re-paired."
-  say "   Needs CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID."
+  say "   Just run it: it starts the engine, creates a key only if needed,"
+  say "   prompts for authorization, deploys, and shows both watch values."
+  say "   Optional pre-auth: wearsic cloudflare login."
   say ""
-  say "A public URL MUST have an API key: wearsic server api key <your-key>"
+  say "A public URL MUST have an API key. Cloudflare setup can create one for"
+  say "you; or set your own: wearsic api-key <your-key>"
 }
 
 # ── crash-safe update ─────────────────────────────────────────────────────
@@ -2128,8 +3822,8 @@ cmd_update() {
   # `set -u` with "work: unbound variable" after every successful update.)
   UPDATE_WORK="$(mktemp -d)" || die "could not create a temp dir"
   work="$UPDATE_WORK"
-  # EXIT (not RETURN) so the temp dir is cleaned even when die() exits.
-  trap 'rm -rf "${UPDATE_WORK:-}"' EXIT
+  # The global EXIT trap (installed at startup) removes the staging dir —
+  # and restores the cursor — even when die() exits mid-update.
 
   say "${C_DIM}checking the latest release…${C_RESET}"
   local zip_url sha_url json tag
@@ -2162,47 +3856,57 @@ cmd_update() {
   zip="$work/update.zip"
   sha="$work/update.zip.sha256"
   local zname; zname="$(basename "$zip_url")"
-  download_bar "$zip_url" "$zip" "downloading $(elide_mid "$zname" $(( COLS - 14 )))" \
-    || die "download failed — nothing was changed"
-  [ -s "$zip" ] || die "downloaded file is empty — nothing was changed"
+  shim_stage_begin "Download" "$zname"
+  shim_fetch_start "$zip_url" "$zip" "Download  fetching $zname"
+  SHIM_PROGRESS_HOOK=shim_fetch_progress
+  shim_animate "$SHIM_FETCH_PID"
+  if ! shim_fetch_wait; then
+    SHIM_PROGRESS_HOOK=""
+    shim_stage_end fail "the download failed — nothing was changed"
+    die "download failed — nothing was changed"
+  fi
+  SHIM_PROGRESS_HOOK=""
+  if [ ! -s "$zip" ]; then
+    shim_stage_end fail "the downloaded file is empty"
+    die "downloaded file is empty — nothing was changed"
+  fi
+  shim_stage_end ok "$zname"
 
   # Authenticity: refuse to install any release without a published checksum.
-  spinner_start "fetching checksum"
+  shim_stage_begin "Verify" "checksum"
   if ! curl -fsSL --retry 2 -o "$sha" "$sha_url" 2>/dev/null || [ ! -s "$sha" ]; then
-    spinner_stop 1 "checksum"
+    shim_stage_end fail "no SHA-256 checksum"
     die "no SHA-256 checksum at $sha_url — refusing to install unverified code"
   fi
-  spinner_stop 0 "checksum"
   expected="$(awk '{print $1; exit}' "$sha" | tr 'A-F' 'a-f')"
-  spinner_start "verifying SHA-256"
   if command -v sha256sum >/dev/null 2>&1; then
     actual="$(sha256sum "$zip" | awk '{print $1}')"
   else
     actual="$(shasum -a 256 "$zip" | awk '{print $1}')"
   fi
   if [ "$expected" != "$actual" ]; then
-    spinner_stop 1 "SHA-256"
+    shim_stage_end fail "SHA-256 mismatch"
     die "SHA-256 MISMATCH — the download is corrupt or tampered. Nothing was changed."
   fi
-  spinner_stop 0 "SHA-256 verified"
+  shim_stage_end ok "SHA-256 verified"
 
   # Stage + validate BEFORE touching the active engine.
   stage="$work/stage"
   mkdir -p "$stage"
-  spinner_start "extracting update"
+  shim_stage_begin "Install" "extracting"
   if ! unzip -t "$zip" >/dev/null 2>&1; then
-    spinner_stop 1 "extracting update"
+    shim_stage_end fail "the downloaded file is not a valid ZIP"
     die "the downloaded file is not a valid ZIP — nothing was changed"
   fi
   if ! unzip -oq "$zip" -d "$stage"; then
-    spinner_stop 1 "extracting update"
+    shim_stage_end fail "could not extract the update"
     die "could not extract the update — nothing was changed"
   fi
-  spinner_stop 0 "extracted"
   src="$stage/wearsic-server"
   [ -d "$src" ] || src="$stage"
   [ -f "$src/bin/wearsic-server" ] && [ -n "$(ls -A "$src/lib" 2>/dev/null)" ] && [ -f "$src/run-termux.sh" ] \
-    || die "the update package is incomplete (bin/lib/run-termux.sh) — nothing was changed"
+    && [ -f "$src/wearsic-cloudflare-worker.js" ] \
+    || die "the update package is incomplete (bin/lib/run-termux.sh/worker) — nothing was changed"
   ok "update package validated"
 
   # Was it running? Update should end with the server back up if it was.
@@ -2212,7 +3916,7 @@ cmd_update() {
 
   # Crash-safe swap: prepare COMPLETE copies first, keep the old engine as
   # bin.prev/lib.prev until the new one passes its health check.
-  say "Installing the update…"
+  shim_stage_status "swapping the engine in"
   rm -rf "$DEST/bin.new" "$DEST/lib.new"
   cp -r "$src/bin" "$DEST/bin.new" && cp -r "$src/lib" "$DEST/lib.new" \
     || { rm -rf "$DEST/bin.new" "$DEST/lib.new"; die "could not stage the new engine (disk full?) — the current engine is untouched"; }
@@ -2228,7 +3932,7 @@ cmd_update() {
     [ -d "$DEST/lib.prev" ] && mv "$DEST/lib.prev" "$DEST/lib"
     die "the swap did not complete — the previous engine was restored"
   fi
-  for f in run-termux.sh .env.example README.md; do
+  for f in run-termux.sh .env.example README.md wearsic-cloudflare-worker.js; do
     [ -f "$src/$f" ] || continue
     if [ "$f" = "run-termux.sh" ]; then
       replace_file "$src/$f" "$DEST/$f"   # may be executing (supervisor)
@@ -2255,28 +3959,23 @@ cmd_update() {
     fi
   done
   [ -f "$src/wearsic" ] && replace_file "$src/wearsic" "$DEST/wearsic" && chmod +x "$DEST/wearsic" 2>/dev/null
-  ok "update installed (previous engine kept for rollback)"
+  shim_stage_end ok "engine installed (the previous one is kept for rollback)"
 
   # Bring it up and PROVE it is healthy; otherwise roll back.
   local timeout i
   timeout="${WEARSIC_UPDATE_TIMEOUT:-60}"
+  shim_stage_begin "Start" "the updated server"
   if [ "$was_running" = "1" ]; then
-    say "Starting the updated server…"
-    cmd_start >/dev/null 2>&1 || true
+    shim_stage_status "starting the updated server"
   else
-    say "Server was stopped — starting it briefly to validate the update…"
-    cmd_start >/dev/null 2>&1 || true
+    shim_stage_status "the server was stopped — starting it briefly to validate the update"
   fi
-  i=0
-  while [ "$i" -lt "$timeout" ]; do
-    health_ok && break
-    i=$((i + 1))
-    sleep 1
-  done
+  cmd_start >/dev/null 2>&1 || true
+  shim_wait "Start  waiting for the updated server" "$timeout" "health_ok" || true
 
   if health_ok && [ "$(file_hash "$DEST/bin/wearsic-server")" = "$new_hash" ]; then
     rm -rf "$DEST/bin.prev" "$DEST/lib.prev"
-    ok "update complete — server healthy on port $(port)"
+    shim_stage_end ok "server healthy on port $(port)"
     printf '\n'
     box_begin "✓ updated" ok
     box_line ""
@@ -2292,6 +3991,7 @@ cmd_update() {
   # Healthy but NOT the engine we installed: the supervisor's own
   # never-healthy rollback already restored the previous engine.
   if health_ok; then
+    shim_stage_end fail "the new engine failed to start"
     warn "the new engine failed to start — the previous engine was restored automatically"
     warn "update rolled back — the server is running the previous version"
     return 1
@@ -2301,6 +4001,7 @@ cmd_update() {
   # NOTE: the supervisor may have already rolled back by itself (its own
   # never-healthy rollback consumes bin.prev). Check BEFORE deleting
   # anything, so a restored good engine can never be destroyed here.
+  shim_stage_end fail "the updated server did not become healthy"
   warn "the updated server did not become healthy — rolling back…"
   cmd_stop >/dev/null 2>&1 || true
   if [ -d "$DEST/bin.prev" ]; then
@@ -2992,6 +4693,257 @@ cmd_doctor() {
   return 1
 }
 
+# ── setup: the one-command path for an existing install ───────────────────
+# Everything a fresh install needs, in a few quiet stages: the API key is
+# created when it is missing (an existing key is never replaced), the engine
+# is started when it is stopped, the health endpoint is verified, and the
+# watch values are shown together at the end.
+#
+#   wearsic setup [--update] [--cloudflare]
+cmd_setup() {
+  installed
+  local do_update=0 do_cf=0 key_state vstate code pcode
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --update) do_update=1; shift ;;
+      --cloudflare) do_cf=1; shift ;;
+      -h|--help) usage; return 0 ;;
+      *) die "Unknown option for 'wearsic setup': $1 (try --update or --cloudflare)" ;;
+    esac
+  done
+  brand "setup"
+
+  if [ "$do_update" = "1" ]; then
+    say "updating the engine…"
+    cmd_update || die "the update failed — the running engine is untouched"
+    say ""
+  fi
+
+  # Configure — the key is created only when there is none.
+  shim_stage_begin "Configure" "settings"
+  if [ -n "$(api_key)" ]; then
+    key_state="existing API key kept"
+  else
+    ensure_api_key >/dev/null || die "could not create an API key"
+    key_state="API key created"
+  fi
+  shim_stage_end ok "$key_state"
+
+  # Start — the supervisor brings the engine up and keeps it alive.
+  shim_stage_begin "Start" "server"
+  ensure_engine >/dev/null || { shim_stage_end fail "the server did not start"; die "the server did not start — check: wearsic logs"; }
+  shim_stage_end ok "listening on port $(port)"
+
+  # Verify — health AND the API key, because /health alone proves nothing.
+  shim_stage_begin "Verify" "health"
+  code="$(curl -s -o /dev/null -w '%{http_code}' -m 10 "http://127.0.0.1:$(port)/health" 2>/dev/null || echo 000)"
+  if [ "$code" != "200" ]; then
+    shim_stage_end fail "the engine did not answer /health"
+    die "the engine did not answer /health (got ${code:-no response}) — check: wearsic logs"
+  fi
+  vstate="health ok"
+  pcode="$(curl -s -o /dev/null -w '%{http_code}' -m 10 \
+    -H "X-Wearsic-Key: $(api_key)" -H 'Range: bytes=0-9' \
+    "http://127.0.0.1:$(port)$CF_PROBE_PATH" 2>/dev/null || echo 000)"
+  case "$pcode" in
+    200|206) vstate="health ok · api key accepted" ;;
+    401|403) shim_stage_end fail "the engine rejected the API key"; die "the engine rejected the API key — set a new one: wearsic api-key <new-key>" ;;
+    404)     vstate="health ok" ;;
+    *)       vstate="health ok" ;;
+  esac
+  shim_stage_end ok "$vstate"
+
+  # Ready — the watch values, together.
+  say ""
+  show_pairing
+  if [ "$do_cf" = "1" ]; then
+    say ""
+    cmd_cloudflare start
+  fi
+  return 0
+}
+
+# ── dashboard: the live view ──────────────────────────────────────────────
+# A compact picture of the running server: health, uptime, the LAN address,
+# the Cloudflare front door, the API/stream health and what the engine is
+# doing right now. The frame is redrawn IN PLACE (the terminal never fills
+# with repeated output) and the cursor is restored on Ctrl+C.
+DASH_LINES=0
+dashboard_draw() { # $1 = frame
+  local frame="$1" n line
+  n="$(printf '%s\n' "$frame" | wc -l | tr -d ' ')"
+  if [ "${DASH_LINES:-0}" -gt 0 ]; then
+    printf '%s[%dA' "$ESC" "$DASH_LINES"
+  fi
+  while IFS= read -r line; do
+    # The clear-line code is only needed on a terminal; piped output stays
+    # plain, one line per row.
+    if [ "$TTY_OUT" = "1" ]; then
+      printf '\r%s[K%s\n' "$ESC" "$line"
+    else
+      printf '%s\n' "$line"
+    fi
+  done <<EOF
+$frame
+EOF
+  DASH_LINES="$n"
+}
+
+# One dashboard row: label, value, optional state chip.
+dash_row() { # $1 = label, $2 = value, $3 = state (ok|warn|err|off|empty)
+  local label="$1" value="$2" state="${3:-}" chip="" plain w
+  plain="$(vis "$value")"
+  w=$(( COLS - 16 ))
+  [ "$w" -lt 12 ] && w=12
+  if [ ${#plain} -gt "$w" ]; then
+    value="$(elide_mid "$value" "$w")"
+  fi
+  case "$state" in
+    ok)   chip="$(pill ok ok)" ;;
+    warn) chip="$(pill warn watch)" ;;
+    err)  chip="$(pill err down)" ;;
+    off)  chip="$(pill off off)" ;;
+  esac
+  if [ -n "$chip" ]; then
+    printf '    %s%-10s%s  %s  %s\n' "$C_DIM" "$label" "$C_RESET" "$value" "$chip"
+  else
+    printf '    %s%-10s%s  %s\n' "$C_DIM" "$label" "$C_RESET" "$value"
+  fi
+}
+
+dashboard_frame() {
+  local P ver pid up lan cfurl cfst origin apiw act="" st="" chip="" v
+  P="$(port)"
+  ver=""; up=""
+  if health_ok; then
+    http_get "http://127.0.0.1:$P/health" 2
+    ver="$(jstr "$HTTP_BODY" version)"
+    pid="$(server_pids | head -1)"
+    [ -n "$pid" ] && up="$(proc_uptime "$pid")"
+    st="ok"; v="running"
+  else
+    st="err"; v="not answering"
+  fi
+  lan="$(server_url)"
+  cfurl="$(cf_state_get url 2>/dev/null || true)"
+  cfst="$(cf_state_get status 2>/dev/null || true)"
+  origin="$(cf_state_get origin 2>/dev/null || true)"
+
+  # The API/stream health: an authenticated Range request, locally.
+  local key code
+  key="$(api_key)"
+  if [ -n "$key" ]; then
+    code="$(curl -s -o /dev/null -w '%{http_code}' -m 8 \
+      -H "X-Wearsic-Key: $key" -H 'Range: bytes=0-9' \
+      "http://127.0.0.1:$P$CF_PROBE_PATH" 2>/dev/null || echo 000)"
+    case "$code" in
+      206) apiw="stream 206 ready" ;;
+      200) apiw="stream ok" ;;
+      401|403) apiw="the engine rejected the key" ;;
+      404) apiw="no probe endpoint" ;;
+      *) apiw="not answering" ;;
+    esac
+  else
+    apiw="no API key"
+  fi
+
+  # What is happening right now: the tunnel state first, then the engine log.
+  case "$cfst" in
+    live)    act="front door live" ;;
+    starting) act="front door starting" ;;
+    error)   act="front door degraded: $(cf_state_get last_error 2>/dev/null | cut -c1-40)" ;;
+    stopped) act="front door stopped" ;;
+  esac
+  if [ -z "$act" ] && [ -f "$LOG" ]; then
+    act="$(tail -1 "$LOG" 2>/dev/null | sed -E 's/^[0-9]{2}:[0-9]{2}:[0-9]{2} +//; s/^(INFO|WARN|ERROR) +//' | cut -c1-48)"
+  fi
+  [ -n "$act" ] || act="idle"
+
+  local head="  ${C_ACC}♪${C_RESET} ${C_BOLD}wearsic${C_RESET} ${C_DIM}·${C_RESET} ${C_BOLD}dashboard${C_RESET}"
+  local right
+  if [ "$st" = "ok" ]; then right="$(pill ok running)"; else right="$(pill err stopped)"; fi
+  local lp rp gap
+  lp="$(vis "$head")"; rp="$(vis "$right")"
+  local top="$head"
+  if [ $(( COLS - ${#lp} - ${#rp} )) -ge 2 ]; then
+    gap=$(( COLS - ${#lp} - ${#rp} ))
+    top="$head$(printf '%*s' "$gap" '')$right"
+  else
+    top="$head"
+  fi
+
+  local out="$top"
+  out="$out
+"
+  if [ "$st" = "ok" ]; then
+    out="$out$(dash_row "server" "v${ver:-?} · up ${up:-?} · port $P" "ok")
+"
+  else
+    out="$out$(dash_row "server" "not answering on port $P" "err")
+"
+  fi
+  if [ -n "$lan" ]; then
+    out="$out$(dash_row "lan" "$lan" "$st")
+"
+  else
+    out="$out$(dash_row "lan" "address not detected" "warn")
+"
+  fi
+  if [ -n "$cfurl" ]; then
+    case "$cfst" in
+      live)    out="$out$(dash_row "cloudflare" "$cfurl" "ok")
+" ;;
+      starting) out="$out$(dash_row "cloudflare" "$cfurl" "warn")
+" ;;
+      *)       out="$out$(dash_row "cloudflare" "$cfurl" "err")
+" ;;
+    esac
+    out="$out$(dash_row "tunnel" "${origin:-unknown}" "ok")
+"
+  else
+    out="$out$(dash_row "cloudflare" "not configured — wearsic cloudflare" "off")
+"
+  fi
+  out="$out$(dash_row "api" "$apiw" "")
+"
+  # An active state gets the same shimmer as the rest of the CLI.
+  local act_line
+  if [ "$cfst" = "starting" ] || [ "$st" != "ok" ]; then
+    act_line="$(shim_render "$act" $(( ${#act} / 2 )) $(( ${#act} * SHIM_BAND_PCT / 100 / 2 )))"
+  else
+    act_line="${C_DIM}${act}${C_RESET}"
+  fi
+  out="$out$(printf '    %s%-10s%s  %s\n' "$C_DIM" "activity" "$C_RESET" "$act_line")
+"
+  out="$out
+"
+  out="$out$(printf '    %swearsic start · stop · restart · logs · doctor · cloudflare%s\n' "$C_DIM" "$C_RESET")"
+  printf '%s' "$out"
+}
+
+cmd_dashboard() {
+  installed
+  local once=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --once) once=1; shift ;;
+      -h|--help) usage; return 0 ;;
+      *) die "Unknown option for 'wearsic dashboard': $1 (try --once)" ;;
+    esac
+  done
+  # Piped output gets one frame (a dashboard that loops would never end).
+  [ "$TTY_OUT" = "1" ] || once=1
+  trap 'shim_cursor_show; printf "\n"; exit 0' INT
+  while :; do
+    dashboard_draw "$(dashboard_frame)"
+    [ "$once" = "1" ] && break
+    sleep 2
+  done
+  trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 130' INT
+  printf '\n'
+  return 0
+}
+
 usage() {
   # Live status for the header: ONE fast local probe (1s cap) so bare
   # `wearsic` answers "is it running?" immediately — never a slow wait.
@@ -3035,8 +4987,10 @@ usage() {
   item "stop" "stop the server" "stop the server"
   item "restart" "stop, then start" "stop, then start"
   item "status" "running? healthy? version?" "is it running? healthy? which version? (exit 0/3/4)"
+  item "dashboard" "live view" "live dashboard: health, LAN, Cloudflare, API (Ctrl+C to exit)"
   item "logs" "follow live logs" "follow live logs (Ctrl+C to exit)"
   item "doctor" "full checkup (exit 0 = ready)" "full checkup — exit 0 means READY"
+  item "setup" "one-command setup" "set up everything: key, server, health, watch values"
 
   ICOL=16
   section "Watch pairing" cyan
@@ -3096,6 +5050,8 @@ case "${1:-}" in
         esac ;;
       api-key) shift 2; cmd_api_key "$@" ;;
       cookies) shift 2; cmd_cookies "$@" ;;
+      setup) shift 2; cmd_setup "$@" ;;
+      dashboard) shift 2; cmd_dashboard "$@" ;;
       funnel)  cmd_funnel ;;
       cloudflare) shift 2; cmd_cloudflare "$@" ;;
       public)  cmd_public ;;
@@ -3118,6 +5074,8 @@ case "${1:-}" in
   doctor)    cmd_doctor ;;
   api-key|apikey) shift; cmd_api_key "$@" ;;
   cookies)   shift; cmd_cookies "$@" ;;
+  setup)     shift; cmd_setup "$@" ;;
+  dashboard) shift; cmd_dashboard "$@" ;;
   funnel)    cmd_funnel ;;
   cloudflare) shift; cmd_cloudflare "$@" ;;
   public)    cmd_public ;;

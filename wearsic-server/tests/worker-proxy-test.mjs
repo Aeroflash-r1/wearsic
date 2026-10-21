@@ -161,6 +161,136 @@ async function call(request, { origin = "https://abc.trycloudflare.com", upstrea
   ok("reports a dead origin as a clean 502");
 }
 
+// ── end-to-end response headers are preserved ──────────────────────────────
+{
+  const { res } = await call(new Request("https://wearsic.testsub.workers.dev/api/stream/x"), {
+    upstream: new Response("0123456789", {
+      status: 206,
+      headers: {
+        "content-range": "bytes 0-9/1000",
+        "content-length": "10",
+        "accept-ranges": "bytes",
+        etag: '"abc123"',
+        "content-type": "audio/mpeg",
+      },
+    }),
+  });
+  assert.equal(res.status, 206);
+  assert.equal(res.headers.get("content-range"), "bytes 0-9/1000");
+  assert.equal(res.headers.get("content-length"), "10", "Content-Length is end-to-end, not hop-by-hop");
+  assert.equal(res.headers.get("accept-ranges"), "bytes");
+  assert.equal(res.headers.get("etag"), '"abc123"');
+  assert.equal(res.headers.get("content-type"), "audio/mpeg");
+  ok("preserves Content-Length, Content-Range, Accept-Ranges, ETag and Content-Type");
+}
+
+// ── a same-origin redirect stays on the permanent hostname ─────────────────
+{
+  const { res } = await call(new Request("https://wearsic.testsub.workers.dev/api/old"), {
+    upstream: new Response(null, {
+      status: 302,
+      headers: { location: "https://abc.trycloudflare.com/api/new?x=1" },
+    }),
+  });
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get("location"), "https://wearsic.testsub.workers.dev/api/new?x=1");
+  ok("rewrites a same-origin redirect to the permanent host (no tunnel leak)");
+}
+
+// ── a relative redirect is also rewritten ──────────────────────────────────
+{
+  const { res } = await call(new Request("https://wearsic.testsub.workers.dev/api/old"), {
+    upstream: new Response(null, { status: 307, headers: { location: "/api/new" } }),
+  });
+  assert.equal(res.status, 307);
+  assert.equal(res.headers.get("location"), "https://wearsic.testsub.workers.dev/api/new");
+  ok("rewrites a relative redirect to the permanent host");
+}
+
+// ── an external redirect is passed through untouched ───────────────────────
+{
+  const { res } = await call(new Request("https://wearsic.testsub.workers.dev/api/old"), {
+    upstream: new Response(null, {
+      status: 302,
+      headers: { location: "https://cdn.example.com/file" },
+    }),
+  });
+  assert.equal(res.headers.get("location"), "https://cdn.example.com/file");
+  ok("leaves an external redirect untouched");
+}
+
+// ── POST bodies stream through ─────────────────────────────────────────────
+{
+  const req = new Request("https://wearsic.testsub.workers.dev/api/favorites", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: '{"videoId":"abc"}',
+    duplex: "half",
+  });
+  const { seen } = await call(req);
+  assert.equal(seen.init.method, "POST");
+  const forwarded = await new Response(seen.init.body).text();
+  assert.equal(forwarded, '{"videoId":"abc"}');
+  ok("streams the request body to the origin");
+}
+
+// ── the real client IP is visible to the engine's rate limiter ──────────────
+{
+  const { seen } = await call(
+    new Request("https://wearsic.testsub.workers.dev/api/search?q=x", {
+      headers: { "CF-Connecting-IP": "203.0.113.9" },
+    })
+  );
+  assert.equal(seen.init.headers.get("x-forwarded-for"), "203.0.113.9");
+  assert.equal(seen.init.headers.get("x-forwarded-host"), "wearsic.testsub.workers.dev");
+  ok("forwards the real client IP and the permanent host");
+}
+
+// ── multiple Set-Cookie headers survive ────────────────────────────────────
+{
+  const h = new Headers();
+  h.append("set-cookie", "a=1; Path=/");
+  h.append("set-cookie", "b=2; Path=/");
+  const { res } = await call(new Request("https://wearsic.testsub.workers.dev/api/login"), {
+    upstream: new Response("ok", { headers: h }),
+  });
+  const cookies = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+  assert.equal(cookies.length, 2);
+  assert.ok(cookies.includes("a=1; Path=/"));
+  assert.ok(cookies.includes("b=2; Path=/"));
+  ok("preserves multiple Set-Cookie headers");
+}
+
+// ── bodyless statuses stay bodyless ────────────────────────────────────────
+{
+  const { res } = await call(new Request("https://wearsic.testsub.workers.dev/api/x"), {
+    upstream: new Response(null, { status: 204 }),
+  });
+  assert.equal(res.status, 204);
+  assert.equal(res.body, null);
+  ok("does not attach a body to a 204 response");
+}
+
+// ── a failure body never leaks the tunnel hostname or the error ─────────────
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("ECONNREFUSED https://abc.trycloudflare.com"); };
+  let res;
+  try {
+    res = await worker.fetch(new Request("https://wearsic.testsub.workers.dev/health"), {
+      ORIGIN: "https://abc.trycloudflare.com",
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  const text = await res.text();
+  assert.ok(!text.includes("trycloudflare.com"), "the public error must not reveal the tunnel hostname");
+  assert.ok(!text.includes("ECONNREFUSED"), "the public error must not reveal the runtime error");
+  const body = JSON.parse(text);
+  assert.ok(body.request_id, "a request id is included for support");
+  ok("failure bodies are opaque (no origin or stack trace)");
+}
+
 // ── the source really is the file we think it is ──────────────────────────
 {
   const src = readFileSync(WORKER, "utf8");

@@ -31,104 +31,431 @@ set -u
 REPO="${WEARSIC_REPO:-Aeroflash-r1/wearsic}"
 DEST="${WEARSIC_DIR:-$HOME/wearsic-server}"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+trap 'shim_clear_live; shim_cursor_show; shim_cleanup; rm -rf "$WORK"' EXIT
+# Ctrl+C (and a polite TERM) must never leave a hidden cursor behind.
+trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 130' INT
+trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 143' TERM
 
 # ── output helpers ──────────────────────────────────────────────────────────
 # Theme: quiet green. The tag stays dim (grep-able, not shouty); content
 # speaks in soft green (114) with bright (157) accents; titles get a
 # white→green gradient. Animations off when piped so logs stay clean.
-C_RESET='\033[0m'; C_BOLD='\033[1m'; C_PURPLE='\033[38;5;114m'
-C_GREEN='\033[1;32m'; C_YELLOW='\033[1;33m'; C_RED='\033[1;31m'; C_DIM='\033[2m'; C_CYAN='\033[38;5;157m'
-C_TAG='\033[2m'; C_ACC='\033[38;5;114m'
+# Real escape sequences (not backslash text): the same variables are used in
+# printf FORMAT strings and in plain text (box bodies), so they must be the
+# actual bytes.
+C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_PURPLE=$'\033[38;5;114m'
+C_GREEN=$'\033[1;32m'; C_YELLOW=$'\033[1;33m'; C_RED=$'\033[1;31m'; C_DIM=$'\033[2m'; C_CYAN=$'\033[38;5;157m'
+C_TAG=$'\033[2m'; C_ACC=$'\033[38;5;114m'
 
 TTY_OUT=0; [ -t 1 ] && TTY_OUT=1   # animations off when piped/logged
 
 say()  { printf "${C_TAG}[wearsic]${C_RESET} %s\n" "$*"; }
-step() { printf "\n${C_TAG}[wearsic]${C_RESET} %s\n" "$(grad_line "━━━ $* ━━━")"; }
 ok()   { printf "${C_TAG}[wearsic]${C_RESET}  ${C_GREEN}✓${C_RESET} %s\n" "$*"; }
 warn() { printf "${C_TAG}[wearsic]${C_RESET}  ${C_YELLOW}!${C_RESET} %s\n" "$*"; }
-die()  { printf "${C_TAG}[wearsic]${C_RESET} ${C_RED}✗ ERROR:${C_RESET} %s\n" "$*" >&2; exit 1; }
+die()  { shim_clear_live; shim_cursor_show; printf "${C_TAG}[wearsic]${C_RESET} ${C_RED}✗ ERROR:${C_RESET} %s\n" "$*" >&2; exit 1; }
 
-# White→green gradient for short titles (256-palette ramp, per character).
-grad_line() { # $1 = text
-  local text="$1" len i=0 out="" shade ch
-  len=${#text}
-  if [ "$len" -le 0 ]; then printf ''; return 0; fi
-  while [ "$i" -lt "$len" ]; do
-    # 255 (white) → 114 (soft green) across the string, quantized so
-    # terminals render it as a smooth ramp instead of mud.
-    if [ "$len" -le 1 ]; then shade=114;
-    else shade=$(( 255 - (255 - 114) * i / (len - 1) )); fi
-    if [ "$shade" -gt 200 ]; then shade=255
-    elif [ "$shade" -gt 170 ]; then shade=158
-    elif [ "$shade" -gt 145 ]; then shade=120
-    else shade=114; fi
-    ch="$(printf '%s' "$text" | cut -c$((i + 1)))"
-    out="${out}\033[38;5;${shade}m${ch}"
-    i=$((i + 1))
-  done
-  printf '%s\033[0m' "$out"
+
+# ── WSHIM-CORE-BEGIN ───────────────────────────────────────────────────────
+# Shimmer: a soft highlight band travels left → right across the text.
+#
+# Every character is blended between the base gray and the highlight gray by
+# its distance from the band, so the effect reads as a wave of light rather
+# than a blinking highlight. The band leaves the text on the right and
+# re-enters on the left, so the loop is seamless.
+#
+#   base      #8A8A85  (138, 138, 133)
+#   highlight #C9C9C3  (201, 201, 195)
+#
+# One pass takes ~1.7s; every frame is redrawn in place every ~90ms. On a
+# 256-colour terminal the blend is approximated with the gray ramp
+# (245 → 253). NO_COLOR, a non-TTY stdout and TERM=dumb turn it off, and the
+# cursor is always restored (normal exit, error, or Ctrl+C).
+#
+# This block is byte-identical in `wearsic` and `install.sh`: the installer is
+# a standalone bootstrap script that cannot source the CLI.
+# tests/shimmer-test.sh fails when the two copies drift apart.
+SHIM_BASE_R=138; SHIM_BASE_G=138; SHIM_BASE_B=133
+SHIM_HI_R=201;   SHIM_HI_G=201;   SHIM_HI_B=195
+SHIM_256_BASE=245; SHIM_256_HI=253
+SHIM_FRAME_S=0.09
+SHIM_LOOP_FRAMES=19
+SHIM_BAND_PCT=30
+SHIM_ESC="$(printf '\033')"
+SHIM_DEPTH=0
+SHIM_CURSOR_HIDDEN=0
+SHIM_LIVE_ACTIVE=0
+SHIM_PROGRESS_HOOK=""
+SHIM_LIVE_TEXT=""
+SHIM_STATUS_FILE=""
+SHIM_STAGE_NAME=""
+SHIM_STAGE_DETAIL=""
+
+# The shimmer palette is deliberately gray and self-contained: the file's own
+# theme (green/cyan/lavender) stays out of the animated area so the wave
+# reads as light, not as colour.
+shim_palette() {
+  SHIM_DIM="${SHIM_ESC}[2m"
+  SHIM_OK="${SHIM_ESC}[38;5;120m"
+  SHIM_WARN="${SHIM_ESC}[38;5;179m"
+  SHIM_ERR="${SHIM_ESC}[38;5;203m"
+  SHIM_RESET="${SHIM_ESC}[0m"
 }
 
-# Animated spinner for background work. Non-tty: plain start line, the
-# matching ok/fail line on stop (logs stay readable).
-SPIN_PID=""; SPIN_MSG=""
-spinner_start() { # $1 = message
-  SPIN_MSG="$1"
-  if [ "$TTY_OUT" != "1" ]; then say "$1…"; return 0; fi
-  printf "${C_TAG}[wearsic]${C_RESET}  %s " "$1"
-  # Dots drift white→green→white: quiet motion, never a solid block.
-  ( while :; do for f in "[38;5;255m⠋" "[38;5;158m⠙" "[38;5;120m⠹" "[38;5;114m⠸" "[38;5;114m⠼" "[38;5;120m⠴" "[38;5;158m⠦" "[38;5;255m⠧" "[38;5;158m⠇" "[38;5;120m⠏"; do printf '\b%s[0m' "$f"; sleep 0.09; done; done ) &
-  SPIN_PID=$!
-}
-spinner_stop() { # $1 = 0 ok / else fail, $2 = done message (default: start message)
-  local msg="${2:-$SPIN_MSG}"
-  if [ -n "$SPIN_PID" ]; then kill "$SPIN_PID" 2>/dev/null; wait "$SPIN_PID" 2>/dev/null; SPIN_PID=""; fi
-  if [ "$TTY_OUT" = "1" ]; then printf '\b'; fi
-  if [ "${1:-0}" = "0" ]; then ok "$msg"; else printf "${C_TAG}[wearsic]${C_RESET}  ${C_RED}✗${C_RESET} %s\n" "$msg"; fi
-  SPIN_MSG=""
+# 0 = off, 24 = truecolor, 256 = the gray ramp.
+shim_depth() {
+  [ "${TTY_OUT:-0}" = "1" ] || { printf '0'; return 0; }
+  [ -z "${NO_COLOR:-}" ] || { printf '0'; return 0; }
+  case "${WEARSIC_COLOR:-auto}" in never) printf '0'; return 0 ;; esac
+  case "${TERM:-}" in dumb) printf '0'; return 0 ;; esac
+  case "${WEARSIC_COLOR_DEPTH:-auto}" in
+    0) printf '0'; return 0 ;;
+    24) printf '24'; return 0 ;;
+    256) printf '256'; return 0 ;;
+  esac
+  case "${COLORTERM:-}" in truecolor|24bit) printf '24'; return 0 ;; esac
+  # Termux's terminal is a truecolor terminal even though TERM says 256.
+  case "${PREFIX:-}" in */com.termux/*) printf '24'; return 0 ;; esac
+  [ -n "${TERMUX_VERSION:-}" ] && { printf '24'; return 0; }
+  case "${TERM:-}" in *truecolor*|*direct*) printf '24'; return 0 ;; esac
+  case "${TERM:-}" in *256color*) printf '256'; return 0 ;; esac
+  if command -v tput >/dev/null 2>&1; then
+    local n
+    n="$(tput colors 2>/dev/null || echo 0)"
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    [ "$n" -ge 256 ] && { printf '256'; return 0; }
+  fi
+  printf '0'
 }
 
-# Download with a live █ progress bar (MB + %). Falls back to a spinner
-# when the server hides Content-Length. Returns curl's exit status.
-download_bar() { # $1 = url, $2 = out file, $3 = label
-  local url="$1" out="$2" label="${3:-download}"
-  local total=""
-  total="$(curl -fsSIL --max-time 15 "$url" 2>/dev/null | grep -i '^content-length:' | tail -1 | tr -d '\r' | awk '{print $2}')"
-  case "$total" in ''|*[!0-9]*) total="" ;; esac
-  if [ -z "$total" ] || [ "$TTY_OUT" != "1" ]; then
-    spinner_start "$label"
-    if curl -fL --retry 3 --retry-delay 2 -o "$out" "$url" >/dev/null 2>&1; then
-      spinner_stop 0 "$label ($(du -h "$out" 2>/dev/null | cut -f1))"
-    else
-      spinner_stop 1 "$label"; return 1
-    fi
+shim_init() {
+  shim_palette
+  SHIM_DEPTH="$(shim_depth)"
+}
+
+# Smooth falloff: 100 at the band centre → 0 at the band edge.
+shim_intensity() { # $1 = distance, $2 = half-width (0..100 out)
+  local d="$1" half="$2" x=0
+  [ "$half" -le 0 ] && { printf '0'; return 0; }
+  [ "$d" -ge "$half" ] && { printf '0'; return 0; }
+  x=$(( (half - d) * 100 / half ))
+  printf '%s' $(( x * x * (300 - 2 * x) / 10000 ))
+}
+
+# Blend 0..100 between the base gray and the highlight gray.
+shim_blend_rgb() { # $1 = 0..100 → "r g b"
+  local t="$1"
+  printf '%s %s %s' \
+    $(( SHIM_BASE_R + (SHIM_HI_R - SHIM_BASE_R) * t / 100 )) \
+    $(( SHIM_BASE_G + (SHIM_HI_G - SHIM_BASE_G) * t / 100 )) \
+    $(( SHIM_BASE_B + (SHIM_HI_B - SHIM_BASE_B) * t / 100 ))
+}
+
+# The same blend on the 256-colour gray ramp (245 ≈ #8A8A85, 253 ≈ #C9C9C3).
+shim_blend_256() { # $1 = 0..100 → palette index
+  printf '%s' $(( SHIM_256_BASE + (SHIM_256_HI - SHIM_256_BASE) * $1 / 100 ))
+}
+
+# Render $1 with the band centred at $2 (half-width $3). The blend maths is
+# inlined here on purpose: a command substitution per character would fork
+# ~60 processes per frame and the animation would stutter.
+shim_render() { # $1 = text, $2 = centre, $3 = half-width
+  local text="$1" centre="$2" half="$3" i=0 n=${#1} ch d t r g b out=""
+  if [ "$SHIM_DEPTH" != "24" ] && [ "$SHIM_DEPTH" != "256" ]; then
+    printf '%s' "$text"
     return 0
   fi
-  curl -fL --retry 3 --retry-delay 2 -o "$out" "$url" >/dev/null 2>&1 &
-  local pid=$! have=0 pct=0
-  while kill -0 "$pid" 2>/dev/null; do
-    # curl creates $out only when its first bytes arrive: before that, an
-    # unguarded `wc -c < "$out"` makes the SHELL's redirection print
-    # "No such file or directory" (2>/dev/null on the command does not
-    # silence a failed input redirection — it is applied after it).
-    if [ -e "$out" ]; then
-      have="$(wc -c < "$out" 2>/dev/null || echo 0)"
+  while [ "$i" -lt "$n" ]; do
+    ch="${text:$i:1}"
+    d=$(( i - centre )); [ "$d" -lt 0 ] && d=$(( -d ))
+    if [ "$d" -ge "$half" ]; then
+      t=0
     else
-      have=0
+      t=$(( (half - d) * 100 / half ))
+      t=$(( t * t * (300 - 2 * t) / 10000 ))
     fi
-    case "$have" in ''|*[!0-9]*) have=0 ;; esac
-    pct=$(( have * 100 / total ))
-    [ "$pct" -gt 100 ] && pct=100
-    draw_bar "$label" "$pct" "$have" "$total"
-    sleep 0.2
+    if [ "$SHIM_DEPTH" = "24" ]; then
+      r=$(( SHIM_BASE_R + (SHIM_HI_R - SHIM_BASE_R) * t / 100 ))
+      g=$(( SHIM_BASE_G + (SHIM_HI_G - SHIM_BASE_G) * t / 100 ))
+      b=$(( SHIM_BASE_B + (SHIM_HI_B - SHIM_BASE_B) * t / 100 ))
+      out="${out}${SHIM_ESC}[38;2;${r};${g};${b}m${ch}"
+    else
+      out="${out}${SHIM_ESC}[38;5;$(( SHIM_256_BASE + (SHIM_256_HI - SHIM_256_BASE) * t / 100 ))m${ch}"
+    fi
+    i=$(( i + 1 ))
   done
-  wait "$pid" || { printf '\n'; return 1; }
-  draw_bar "$label" 100 "$total" "$total"
-  printf '\n'
-  return 0
+  printf '%s%s' "$out" "$SHIM_RESET"
 }
 
+shim_width() { # room for the live line
+  local w="${COLS:-${COLUMNS:-80}}"
+  case "$w" in ''|*[!0-9]*) w=80 ;; esac
+  [ "$w" -lt 24 ] && w=24
+  printf '%s' $(( w - 4 ))
+}
+
+# Draw the live line, replacing whatever is on the current line.
+shim_draw_live() { # $1 = frame index
+  local frame="$1" text="$SHIM_LIVE_TEXT" n half centre maxw
+  [ "$SHIM_DEPTH" = "0" ] && return 0
+  [ "$TTY_OUT" = "1" ] || return 0
+  n=${#text}
+  [ "$n" -le 0 ] && return 0
+  maxw="$(shim_width)"
+  if [ "$n" -gt "$maxw" ]; then
+    text="${text:0:$(( maxw - 1 ))}…"
+    n=${#text}
+  fi
+  half=$(( n * SHIM_BAND_PCT / 100 / 2 ))
+  [ "$half" -lt 3 ] && half=3
+  centre=$(( -half + (n + 2 * half) * frame / SHIM_LOOP_FRAMES ))
+  printf '\r%s[K' "$SHIM_ESC"
+  shim_render "$text" "$centre" "$half"
+  SHIM_LIVE_ACTIVE=1
+}
+
+# Erase the live line (only if one is on screen).
+shim_clear_live() {
+  [ "${SHIM_LIVE_ACTIVE:-0}" = "1" ] || return 0
+  SHIM_LIVE_ACTIVE=0
+  [ "$TTY_OUT" = "1" ] || return 0
+  printf '\r%s[K' "$SHIM_ESC"
+}
+
+shim_cursor_hide() {
+  [ "$TTY_OUT" = "1" ] || return 0
+  [ "$SHIM_CURSOR_HIDDEN" = "1" ] && return 0
+  printf '%s[?25l' "$SHIM_ESC"
+  SHIM_CURSOR_HIDDEN=1
+}
+
+shim_cursor_show() {
+  [ "$SHIM_CURSOR_HIDDEN" = "1" ] || return 0
+  printf '%s[?25h' "$SHIM_ESC"
+  SHIM_CURSOR_HIDDEN=0
+}
+
+# Update the live text from a file (the worker writes progress there).
+shim_status_file() {
+  if [ -z "$SHIM_STATUS_FILE" ]; then
+    SHIM_STATUS_FILE="$(mktemp "${TMPDIR:-/tmp}/wearsic-shim-status.XXXXXX" 2>/dev/null)" || SHIM_STATUS_FILE=""
+  fi
+  printf '%s' "$SHIM_STATUS_FILE"
+}
+
+shim_status() { # $1 = text
+  local f
+  f="$(shim_status_file)"
+  [ -n "$f" ] || return 0
+  printf '%s\n' "$1" > "$f" 2>/dev/null || true
+}
+
+shim_cleanup() {
+  [ -n "$SHIM_STATUS_FILE" ] && rm -f "$SHIM_STATUS_FILE" 2>/dev/null
+  SHIM_STATUS_FILE=""
+}
+
+# 12.4M / 900K — small, quiet byte formatting for the live line.
+shim_bytes() { # $1 = bytes
+  local b="${1:-0}"
+  case "$b" in ''|*[!0-9]*) b=0 ;; esac
+  if [ "$b" -ge 1048576 ]; then awk "BEGIN{printf \"%.1fM\", $b/1048576}";
+  elif [ "$b" -ge 1024 ]; then awk "BEGIN{printf \"%.0fK\", $b/1024}";
+  else printf '%sB' "$b"; fi
+}
+
+# Animate until the job ($1) exits. A progress hook ($SHIM_PROGRESS_HOOK) is
+# called before every frame, so a download can report its real percentage.
+shim_animate() { # $1 = pid
+  local pid="$1" frame=0 t=""
+  shim_cursor_hide
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ -n "$SHIM_PROGRESS_HOOK" ]; then
+      "$SHIM_PROGRESS_HOOK" >/dev/null 2>&1 || true
+    fi
+    if [ -n "$SHIM_STATUS_FILE" ] && [ -s "$SHIM_STATUS_FILE" ]; then
+      t="$(cat "$SHIM_STATUS_FILE" 2>/dev/null || true)"
+      [ -n "$t" ] && SHIM_LIVE_TEXT="$t"
+    fi
+    shim_draw_live "$frame"
+    sleep "$SHIM_FRAME_S"
+    frame=$(( (frame + 1) % SHIM_LOOP_FRAMES ))
+  done
+  shim_cursor_show
+}
+
+# Wait for a condition while the live line shimmers.
+# $1 = label, $2 = timeout in seconds, $3 = shell test command
+shim_wait() { # label limit test-command
+  local label="$1" limit="$2" test="$3" i=0 max step
+  case "$limit" in ''|*[!0-9]*) limit=30 ;; esac
+  if [ "$SHIM_DEPTH" = "0" ] || [ "$TTY_OUT" != "1" ]; then
+    # No animation: poll once a second, exactly like the old spinner.
+    max="$limit"; step=1
+  else
+    max=$(( limit * 10 )); step=0
+  fi
+  SHIM_LIVE_TEXT="$label"
+  shim_cursor_hide
+  while [ "$i" -lt "$max" ]; do
+    shim_draw_live $(( i % SHIM_LOOP_FRAMES ))
+    if eval "$test" >/dev/null 2>&1; then
+      shim_clear_live
+      shim_cursor_show
+      return 0
+    fi
+    if [ "$step" = "0" ]; then sleep "$SHIM_FRAME_S"; else sleep 1; fi
+    i=$(( i + 1 ))
+  done
+  shim_clear_live
+  shim_cursor_show
+  return 1
+}
+
+# The tail of a captured log — used when a command fails, so a failure is
+# never silently swallowed.
+shim_log_tail() { # $1 = log file, $2 = number of lines
+  local f="$1" n="${2:-10}"
+  [ -s "$f" ] || return 0
+  printf '  %s%s%s\n' "$SHIM_DIM" "last $n lines:" "$SHIM_RESET" >&2
+  tail -n "$n" "$f" 2>/dev/null | sed 's/^/  /' >&2
+}
+
+# Run a command with the live line shimmering. The output is captured, not
+# sprayed over the terminal; on failure the tail is surfaced.
+# Usage: shim_run "<live text>" <cmd> [args...]
+shim_run() { # $1 = live text, rest = command
+  local text="$1"; shift
+  local log rc=0
+  log="$(mktemp "${TMPDIR:-/tmp}/wearsic-shim.XXXXXX" 2>/dev/null)" || log="/dev/null"
+  SHIM_LIVE_TEXT="$text"
+  if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
+    "$@" >"$log" 2>&1 &
+    local pid=$!
+    shim_animate "$pid"
+    wait "$pid"; rc=$?
+    shim_clear_live
+  else
+    "$@" >"$log" 2>&1
+    rc=$?
+  fi
+  [ "$rc" = "0" ] || shim_log_tail "$log" 12
+  [ "$log" = "/dev/null" ] || rm -f "$log" 2>/dev/null
+  return "$rc"
+}
+
+# Download helpers: the caller starts the transfer, the animation loop asks
+# for progress, and the caller waits for the result. The transfer itself is
+# quiet — only the size is polled, so the terminal shows one clean line.
+SHIM_FETCH_OUT=""; SHIM_FETCH_PREFIX=""; SHIM_FETCH_TOTAL=""; SHIM_FETCH_PID=""
+
+shim_fetch_start() { # $1 = url, $2 = out file, $3 = live text prefix
+  SHIM_FETCH_OUT="$2"; SHIM_FETCH_PREFIX="$3"
+  SHIM_FETCH_TOTAL="$(curl -fsSIL --max-time 15 "$1" 2>/dev/null \
+    | grep -i '^content-length:' | tail -1 | tr -d '\r' | awk '{print $2}')"
+  case "$SHIM_FETCH_TOTAL" in ''|*[!0-9]*) SHIM_FETCH_TOTAL="" ;; esac
+  curl -fL --retry 3 --retry-delay 2 -o "$2" "$1" >/dev/null 2>&1 &
+  SHIM_FETCH_PID=$!
+}
+
+# The animation hook: report the real percentage of the running download.
+shim_fetch_progress() {
+  local have=0 pct=0
+  [ -n "$SHIM_FETCH_PID" ] || return 0
+  if [ -e "$SHIM_FETCH_OUT" ]; then have="$(wc -c < "$SHIM_FETCH_OUT" 2>/dev/null || echo 0)"; fi
+  case "$have" in ''|*[!0-9]*) have=0 ;; esac
+  if [ -n "$SHIM_FETCH_TOTAL" ] && [ "$SHIM_FETCH_TOTAL" -gt 0 ]; then
+    pct=$(( have * 100 / SHIM_FETCH_TOTAL )); [ "$pct" -gt 100 ] && pct=100
+    shim_status "$SHIM_FETCH_PREFIX  ${pct}% · $(shim_bytes "$have") / $(shim_bytes "$SHIM_FETCH_TOTAL")"
+  else
+    shim_status "$SHIM_FETCH_PREFIX  downloading…"
+  fi
+}
+
+shim_fetch_wait() {
+  local rc=0
+  [ -n "$SHIM_FETCH_PID" ] || return 1
+  wait "$SHIM_FETCH_PID"; rc=$?
+  SHIM_FETCH_PID=""
+  return "$rc"
+}
+
+# ── stage machine ─────────────────────────────────────────────────────────
+# One quiet line per stage. The ACTIVE stage shimmers in place; a finished
+# stage collapses into a single line that is printed exactly once.
+shim_stage_begin() { # $1 = stage name, $2 = detail (optional)
+  SHIM_STAGE_NAME="$1"
+  SHIM_STAGE_DETAIL="${2:-}"
+  SHIM_LIVE_TEXT="$1"
+  [ -n "$SHIM_STAGE_DETAIL" ] && SHIM_LIVE_TEXT="$1  $SHIM_STAGE_DETAIL"
+  [ "$SHIM_DEPTH" = "0" ] && return 0
+  shim_cursor_hide
+  shim_draw_live 0
+}
+
+shim_stage_status() { # $1 = detail
+  SHIM_STAGE_DETAIL="$1"
+  SHIM_LIVE_TEXT="$SHIM_STAGE_NAME"
+  [ -n "$SHIM_STAGE_DETAIL" ] && SHIM_LIVE_TEXT="$SHIM_STAGE_NAME  $SHIM_STAGE_DETAIL"
+}
+
+# The stage line without the wave — drawn between two animation segments so
+# the line never blinks out of existence.
+shim_stage_plain() {
+  [ "$SHIM_DEPTH" = "0" ] && return 0
+  [ "$TTY_OUT" = "1" ] || return 0
+  printf '\r%s[K  %s%s%s' "$SHIM_ESC" "$SHIM_DIM" "$SHIM_LIVE_TEXT" "$SHIM_RESET"
+  SHIM_LIVE_ACTIVE=1
+}
+
+shim_stage_end() { # $1 = ok|fail, $2 = detail (optional)
+  local kind="$1" detail="${2:-$SHIM_STAGE_DETAIL}"
+  if [ "$SHIM_DEPTH" != "0" ]; then
+    shim_clear_live
+    shim_cursor_show
+  fi
+  if [ "$kind" = "ok" ]; then
+    printf '  %s✓%s %s%s%s' "$SHIM_OK" "$SHIM_RESET" "$SHIM_DIM" "$SHIM_STAGE_NAME" "$SHIM_RESET"
+  else
+    printf '  %s✗%s %s%s%s' "$SHIM_ERR" "$SHIM_RESET" "$SHIM_DIM" "$SHIM_STAGE_NAME" "$SHIM_RESET"
+  fi
+  if [ -n "$detail" ]; then
+    printf '  %s%s%s' "$SHIM_DIM" "$detail" "$SHIM_RESET"
+  fi
+  printf '\n'
+  SHIM_STAGE_NAME=""; SHIM_STAGE_DETAIL=""
+}
+
+# A whole stage in one call: shimmer the name while the command works, then
+# print the single result line. The command's output is captured.
+shim_stage_run() { # $1 = stage name, $2 = detail, rest = command
+  local name="$1" detail="$2"; shift 2
+  local log rc=0
+  log="$(mktemp "${TMPDIR:-/tmp}/wearsic-shim.XXXXXX" 2>/dev/null)" || log="/dev/null"
+  shim_stage_begin "$name" "$detail"
+  if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
+    "$@" >"$log" 2>&1 &
+    local pid=$!
+    shim_animate "$pid"
+    wait "$pid"; rc=$?
+    shim_clear_live
+  else
+    "$@" >"$log" 2>&1
+    rc=$?
+  fi
+  if [ "$rc" = "0" ]; then
+    shim_stage_end ok "$detail"
+  else
+    shim_stage_end fail "$detail"
+    shim_log_tail "$log" 12
+  fi
+  [ "$log" = "/dev/null" ] || rm -f "$log" 2>/dev/null
+  return "$rc"
+}
+
+# The animation is opt-in per terminal: a real TTY with colour support gets
+# the shimmer, everything else (pipes, CI logs, NO_COLOR) stays plain.
+shim_init
+# ── WSHIM-CORE-END ─────────────────────────────────────────────────────────
 # Install a file ATOMICALLY: copy to a sibling temp, then rename into place.
 # (Same helper as the wearsic CLI — keep the two in sync.) A plain `cp` over
 # a script bash is currently executing truncates that inode, and the running
@@ -144,22 +471,7 @@ replace_file() { # $1 = source file, $2 = destination file
   return 1
 }
 
-draw_bar() { # $1 label $2 pct $3 have-bytes $4 total-bytes
-  local label="$1" pct="$2" have="$3" total="$4" width=18 i bar=""
-  local filled=$(( pct * width / 100 ))
-  i=0; while [ "$i" -lt "$filled" ]; do bar="${bar}█"; i=$((i + 1)); done
-  while [ "$i" -lt "$width" ]; do bar="${bar}░"; i=$((i + 1)); done
-  printf "\r${C_TAG}[wearsic]${C_RESET}  %s ${C_CYAN}%s${C_RESET} %3d%%  ${C_DIM}%s / %s${C_RESET}" \
-    "$label" "$bar" "$pct" "$(human_bytes "$have")" "$(human_bytes "$total")"
-}
 
-human_bytes() { # $1 = bytes -> 12.4M
-  local b="${1:-0}"
-  case "$b" in ''|*[!0-9]*) b=0 ;; esac
-  if [ "$b" -ge 1048576 ]; then awk "BEGIN{printf \"%.1fM\", $b/1048576}";
-  elif [ "$b" -ge 1024 ]; then awk "BEGIN{printf \"%.0fK\", $b/1024}";
-  else printf '%sB' "$b"; fi
-}
 
 # Rounded box for the pairing card / big announcements. Buffered: content
 # decides the width, so long URLs can never stick out past the border.
@@ -179,7 +491,7 @@ box_end() {
   w=${#BOX_TITLE}
   local wrapped=""
   while IFS= read -r line; do
-    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    plain="$(printf '%s' "$line" | sed "s/${SHIM_ESC}\[[0-9;]*m//g")"
     if [ "${#plain}" -le "$maxw" ]; then
       wrapped="$wrapped
 $line"
@@ -198,7 +510,7 @@ EOF
   BOX_BODY="$(printf '%s' "$wrapped" | tail -n +2)"
   w=${#BOX_TITLE}
   while IFS= read -r line; do
-    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    plain="$(printf '%s' "$line" | sed "s/${SHIM_ESC}\[[0-9;]*m//g")"
     [ "${#plain}" -gt "$w" ] && w=${#plain}
   done <<EOF
 $BOX_BODY
@@ -208,16 +520,20 @@ EOF
   i=$(( ${#BOX_TITLE} + 4 )); while [ "$i" -lt "$((w + 4))" ]; do printf '─'; i=$((i + 1)); done
   printf "${C_RESET}\n"
   while IFS= read -r line; do
-    plain="$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')"
+    plain="$(printf '%s' "$line" | sed "s/${SHIM_ESC}\[[0-9;]*m//g")"
     spaces=$(( w - ${#plain} ))
     printf "${C_ACC}│${C_RESET} %s" "$line"
     i=0; while [ "$i" -lt "$spaces" ]; do printf ' '; i=$((i + 1)); done
-    printf ' ${C_ACC}│${C_RESET}\n'
+    printf " ${C_ACC}│${C_RESET}\n"
   done <<EOF
 $BOX_BODY
 EOF
   printf "${C_ACC}╰"
-  i=0; while [ "$i" -lt "$((w + 4))" ]; do printf '─'; i=$((i + 1)); done
+  # The bottom border must be exactly as wide as the rows and the top
+  # border: `╰` + (w + 3) dashes = w + 4 columns, the same as every row
+  # above it. (It used to be w + 4 dashes — one column too long, so the
+  # bottom-right corner stuck out past the right border.)
+  i=0; while [ "$i" -lt "$((w + 3))" ]; do printf '─'; i=$((i + 1)); done
   printf "${C_RESET}\n"
   BOX_TITLE=""; BOX_BODY=""; BOX_N=0
 }
@@ -315,31 +631,71 @@ write_env_value() {  # $1 = key, $2 = value, $3 = file (default $DEST/.env)
 # The API key in effect after this install: whatever is already in .env
 # (always preserved), else WEARSIC_API_KEY from the environment, else a
 # freshly generated secure key — a fresh install is never left open.
+# Sets EFFECTIVE_KEY and API_KEY_STATE (for the stage line).
 resolve_effective_key() {
   local k
   k="$(env_value WEARSIC_API_KEY)"
-  if [ -z "$k" ] && [ -n "${WEARSIC_API_KEY:-}" ]; then
+  if [ -n "$k" ]; then
+    API_KEY_STATE="existing API key kept"
+  elif [ -n "${WEARSIC_API_KEY:-}" ]; then
     k="$WEARSIC_API_KEY"
     write_env_value WEARSIC_API_KEY "$k"
-    ok "API key written to $DEST/.env (from WEARSIC_API_KEY)" >&2
-  fi
-  if [ -z "$k" ]; then
+    API_KEY_STATE="API key taken from WEARSIC_API_KEY"
+  else
     k="$(generate_api_key)"
     write_env_value WEARSIC_API_KEY "$k"
-    ok "Generated a secure API key for you (saved in $DEST/.env)" >&2
+    API_KEY_STATE="API key created"
   fi
-  # Only the key on stdout (this runs in a command substitution) — all
-  # messages above go to stderr so they cannot pollute the key value.
-  printf '%s' "$k"
+  EFFECTIVE_KEY="$k"
 }
 
 port() { local p; p="$(env_value PORT)"; [ -n "$p" ] || p="8080"; printf '%s' "$p"; }
 
 health_ok() { curl -sf -m 5 "http://127.0.0.1:$(port)/health" >/dev/null 2>&1; }
 
-# ── 1. environment ──────────────────────────────────────────────────────────
-step "1/7  Checking your device…"
+# ── the seven stages ──────────────────────────────────────────────────────
+#   Download → Install → Configure → Build → Start → Verify → Ready
+#
+# The ACTIVE stage shimmers in place: a soft gray wave travels across the
+# line while the work happens. A finished stage collapses into ONE quiet
+# line, printed exactly once. Sub-process output is captured, so the
+# terminal is never flooded with duplicate logs — only a failure shows what
+# actually went wrong.
 
+SRC=""
+ZIP_URL=""
+SHA_URL=""
+EFFECTIVE_KEY=""
+API_KEY_STATE=""
+PKG_PID=0
+PKG_NEED=""
+# WEARSIC_VERBOSE=1 keeps the captured output of each step (the quiet
+# default is the point: the terminal shows stages, not logs).
+STAGE_VERBOSE="${WEARSIC_VERBOSE:-0}"
+
+# Run a command with the stage line shimmering meanwhile. Its output is
+# captured (never sprayed over the terminal).
+stage_cmd() { # $1 = command...
+  "$@" >"$WORK/stage.log" 2>&1 &
+  local pid=$! rc=0
+  shim_animate "$pid"
+  wait "$pid"; rc=$?
+  shim_stage_plain
+  if [ "$STAGE_VERBOSE" = "1" ]; then
+    shim_log_tail "$WORK/stage.log" 8
+  fi
+  return "$rc"
+}
+
+# A failed stage: the stage line turns into a failure, the captured output
+# is shown, and the install stops WITHOUT touching anything else.
+stage_fail() { # $1 = what failed
+  shim_stage_end fail "$1"
+  shim_log_tail "$WORK/stage.log" 12
+  exit 1
+}
+
+# ── device ────────────────────────────────────────────────────────────────
 IS_TERMUX=0
 case "${PREFIX:-}" in */com.termux/*) IS_TERMUX=1 ;; esac
 [ -n "${TERMUX_VERSION:-}" ] && IS_TERMUX=1
@@ -350,56 +706,56 @@ case "$ARCH" in
   x86_64)        ARCH_LABEL="x86_64" ;;
   *)             ARCH_LABEL="$ARCH" ;;
 esac
-
 if [ "$IS_TERMUX" = "1" ]; then
-  ok "Termux on Android ($ARCH_LABEL) — native, no root needed"
+  printf '  %sTermux on Android (%s) — native, no root needed%s\n' \
+    "$SHIM_DIM" "$ARCH_LABEL" "$SHIM_RESET"
 else
-  warn "Termux not detected ($ARCH_LABEL) — continuing (the server is a plain JVM app)"
-fi
-
-# ── 2. dependencies (runs in the BACKGROUND while we download) ─────────────
-step "2/7  Installing dependencies (Java, curl, unzip)…"
-
-PKG_BG=0
-PKG_START=$SECONDS
-if [ "$IS_TERMUX" = "1" ] && command -v pkg >/dev/null 2>&1; then
-  # Skip the (slow) index refresh entirely when everything is present.
-  NEED_PKGS=""
-  for p in openjdk-17 unzip curl; do
-    pkg list-installed 2>/dev/null | grep -q "^${p}/" || NEED_PKGS="$NEED_PKGS $p"
-  done
-  if [ -z "$NEED_PKGS" ]; then
-    ok "openjdk-17, unzip, curl (already installed — no download)"
-  else
-    # Backgrounded so the server zip downloads in parallel — the two slow
-    # network jobs overlap instead of adding up. Status reaped in step 4.
-    ( pkg update -y >/dev/null 2>&1
-      # shellcheck disable=SC2086
-      pkg install -y $NEED_PKGS >/dev/null 2>&1
-    ) >"$WORK/pkg.log" 2>&1 &
-    PKG_PID=$!
-    PKG_BG=1
-    say "     downloading packages in the background (Java is ~100MB on first install)…"
-  fi
-else
-  for c in java unzip curl; do
-    command -v "$c" >/dev/null 2>&1 \
-      || die "'$c' is missing. Install it first (Debian/Ubuntu: sudo apt-get install -y openjdk-17-jre-headless unzip curl)"
-    ok "$c found"
-  done
+  printf '  %sNot Termux (%s) — continuing (the server is a plain JVM app)%s\n' \
+    "$SHIM_DIM" "$ARCH_LABEL" "$SHIM_RESET"
 fi
 
 command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 \
   || die "sha256sum is missing (install coreutils)"
 
-# ── 3. locate the payload ────────────────────────────────────────────────
-# When this script runs from an extracted release package (it sits next to
-# bin/wearsic-server), the payload is already here — install it directly,
-# no download. Piped from GitHub or run from a checkout: download the
+# ── dependencies (installed in the BACKGROUND while the release downloads) ─
+deps_start() {
+  [ "$IS_TERMUX" = "1" ] || return 0
+  command -v pkg >/dev/null 2>&1 || return 0
+  PKG_NEED=""
+  local p
+  for p in openjdk-17 unzip curl; do
+    pkg list-installed 2>/dev/null | grep -q "^${p}/" || PKG_NEED="$PKG_NEED $p"
+  done
+  [ -n "$PKG_NEED" ] || return 0
+  ( pkg update -y >/dev/null 2>&1
+    # shellcheck disable=SC2086
+    pkg install -y $PKG_NEED >/dev/null 2>&1 ) >"$WORK/pkg.log" 2>&1 &
+  PKG_PID=$!
+}
+
+deps_wait() {
+  [ "$PKG_PID" != "0" ] || return 0
+  shim_stage_status "waiting for the dependencies (Java is ~100MB on first install)"
+  if ! wait "$PKG_PID"; then
+    shim_log_tail "$WORK/pkg.log" 6
+    die "Failed to install dependencies. Run: pkg update -y && pkg install -y openjdk-17 unzip curl"
+  fi
+  PKG_PID=0
+  local p
+  for p in openjdk-17 unzip curl; do
+    pkg list-installed 2>/dev/null | grep -q "^${p}/" \
+      || die "Dependency '$p' is still missing after install. Run: pkg install -y $p"
+  done
+}
+
+# The payload sitting next to this installer (a release package): no
+# download needed. Piped from GitHub or run from a checkout: download the
 # latest release instead.
-SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 LOCAL_PAYLOAD=""
-if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
+find_local_payload() {
+  local _here _cand
+  SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+  [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ] || return 0
   _here="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" 2>/dev/null && pwd)"
   for _cand in "$_here/bin/wearsic-server" "$_here/wearsic-server/bin/wearsic-server"; do
     if [ -f "$_cand" ]; then
@@ -407,154 +763,126 @@ if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
       break
     fi
   done
-fi
+}
 
-ZIP_URL="${WEARSIC_ZIP_URL:-}"
-SHA_URL="${WEARSIC_SHA_URL:-}"
-if [ -n "$LOCAL_PAYLOAD" ]; then
-  step "3/7  Using the local package next to this installer…"
-  ok "$(basename "$LOCAL_PAYLOAD") (no download needed)"
-elif [ -z "$ZIP_URL" ]; then
-  step "3/7  Finding the latest Wearsic server release…"
-  API="https://api.github.com/repos/${REPO}/releases/latest"
-  JSON="$(curl -fsSL --retry 2 "$API" 2>/dev/null || true)"
-  ZIP_URL="$(printf '%s' "$JSON" \
-    | grep -o '"browser_download_url"[^"]*"[^"]*wearsic-server-termux[^"]*\.zip"' \
-    | head -1 \
-    | sed -E 's/.*"(https[^"]*)".*/\1/')"
-  if [ -z "$ZIP_URL" ]; then
-    TAG="$(printf '%s' "$JSON" | grep -o '"tag_name"[^"]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
-    [ -n "$TAG" ] && ZIP_URL="https://github.com/${REPO}/releases/latest/download/wearsic-server-termux-${TAG}.zip"
-  fi
-  [ -n "$ZIP_URL" ] || die "Could not find a release for ${REPO}. Check your internet connection and try again."
-  [ -n "$SHA_URL" ] || SHA_URL="${ZIP_URL}.sha256"
-  ok "$(basename "$ZIP_URL")"
-else
-  step "3/7  Using the provided package URL…"
-  [ -n "$SHA_URL" ] || SHA_URL="${ZIP_URL}.sha256"
-  ok "$(basename "$ZIP_URL")"
-fi
+# ── 1. Download ───────────────────────────────────────────────────────────
+shim_stage_begin "Download" "release"
+deps_start
+find_local_payload
 
-# ── 4. download + VERIFY (never install unverified bytes) ───────────────────
-SRC=""
 if [ -n "$LOCAL_PAYLOAD" ]; then
-  step "4/7  Verifying the local package…"
   SRC="$LOCAL_PAYLOAD"
-  ok "complete engine found next to this installer"
+  # The dependencies install in the background; wait for them INSIDE this
+  # stage, so a first run shows the wait instead of a silent minute.
+  deps_wait
+  shim_stage_end ok "local package — no download needed"
 else
-  step "4/7  Downloading and verifying…"
-
-  ZIP="$WORK/wearsic-server.zip"
-  SHA="$WORK/wearsic-server.zip.sha256"
-  download_bar "$ZIP_URL" "$ZIP" "downloading $(basename "$ZIP_URL")" \
-    || die "Download failed: $ZIP_URL"
-  [ -s "$ZIP" ] || die "Downloaded file is empty."
-
-  spinner_start "fetching checksum"
-  if ! curl -fsSL --retry 2 -o "$SHA" "$SHA_URL" 2>/dev/null || [ ! -s "$SHA" ]; then
-    spinner_stop 1 "checksum"; die "No SHA-256 checksum found at $SHA_URL — refusing to install unverified code."
+  ZIP_URL="${WEARSIC_ZIP_URL:-}"
+  SHA_URL="${WEARSIC_SHA_URL:-}"
+  if [ -z "$ZIP_URL" ]; then
+    shim_stage_status "finding the latest release"
+    API="https://api.github.com/repos/${REPO}/releases/latest"
+    JSON="$(curl -fsSL --retry 2 "$API" 2>/dev/null || true)"
+    ZIP_URL="$(printf '%s' "$JSON" \
+      | grep -o '"browser_download_url"[^"]*"[^"]*wearsic-server-termux[^"]*\.zip"' \
+      | head -1 \
+      | sed -E 's/.*"(https[^"]*)".*/\1/')"
+    if [ -z "$ZIP_URL" ]; then
+      TAG="$(printf '%s' "$JSON" | grep -o '"tag_name"[^"]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
+      [ -n "$TAG" ] && ZIP_URL="https://github.com/${REPO}/releases/latest/download/wearsic-server-termux-${TAG}.zip"
+    fi
+    [ -n "$ZIP_URL" ] || stage_fail "no release found for ${REPO} — check your internet connection"
   fi
-  spinner_stop 0 "checksum"
+  [ -n "$SHA_URL" ] || SHA_URL="${ZIP_URL}.sha256"
+  PAYLOAD_NAME="$(basename "$ZIP_URL")"
 
-  # Accept either "hash" or "hash  filename" formats.
+  shim_stage_status "fetching $PAYLOAD_NAME"
+  ZIP="$WORK/wearsic-server.zip"
+  shim_fetch_start "$ZIP_URL" "$ZIP" "Download"
+  SHIM_PROGRESS_HOOK=shim_fetch_progress
+  shim_animate "$SHIM_FETCH_PID"
+  if ! shim_fetch_wait; then
+    SHIM_PROGRESS_HOOK=""
+    stage_fail "the download failed — nothing was installed"
+  fi
+  SHIM_PROGRESS_HOOK=""
+  [ -s "$ZIP" ] || stage_fail "the downloaded file is empty — nothing was installed"
+
+  # Authenticity: never install bytes without a published checksum.
+  shim_stage_status "verifying the checksum"
+  SHA="$WORK/wearsic-server.zip.sha256"
+  stage_cmd curl -fsSL --retry 2 -o "$SHA" "$SHA_URL" \
+    || stage_fail "no SHA-256 checksum at $SHA_URL — refusing to install unverified code"
+  [ -s "$SHA" ] || stage_fail "no SHA-256 checksum at $SHA_URL — refusing to install unverified code"
   EXPECTED="$(awk '{print $1; exit}' "$SHA" | tr 'A-F' 'a-f')"
-  spinner_start "verifying SHA-256"
   if command -v sha256sum >/dev/null 2>&1; then
     ACTUAL="$(sha256sum "$ZIP" | awk '{print $1}')"
   else
     ACTUAL="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
   fi
-  if [ "$EXPECTED" != "$ACTUAL" ]; then
-    spinner_stop 1 "SHA-256"; die "SHA-256 MISMATCH — the download is corrupt or tampered. Nothing was installed."
-  fi
-  spinner_stop 0 "SHA-256 verified"
+  [ "$EXPECTED" = "$ACTUAL" ] \
+    || stage_fail "SHA-256 MISMATCH — the download is corrupt or tampered. Nothing was installed."
 
+  deps_wait
+  shim_stage_status "extracting"
   STAGE="$WORK/stage"
   mkdir -p "$STAGE"
-  spinner_start "extracting package"
-  if ! unzip -t "$ZIP" >/dev/null 2>&1; then
-    spinner_stop 1 "extracting package"; die "The downloaded file is not a valid ZIP (truncated download?)."
-  fi
-  if ! unzip -oq "$ZIP" -d "$STAGE"; then
-    spinner_stop 1 "extracting package"; die "Could not extract the server package."
-  fi
-  spinner_stop 0 "extracted"
+  stage_cmd unzip -t "$ZIP" || stage_fail "the downloaded file is not a valid ZIP (truncated download?)"
+  stage_cmd unzip -oq "$ZIP" -d "$STAGE" || stage_fail "could not extract the server package"
   SRC="$STAGE/wearsic-server"
   [ -d "$SRC" ] || SRC="$STAGE"
+  shim_stage_end ok "$PAYLOAD_NAME · checksum verified"
 fi
 
-# ── reap the background dependency install from step 2 ─────────────────────
-if [ "$PKG_BG" = "1" ]; then
-  spinner_start "waiting for dependencies (Java, curl, unzip)"
-  if wait "$PKG_PID"; then
-    spinner_stop 0 "dependencies ready"
-  else
-    spinner_stop 1 "dependencies"
-    tail -5 "$WORK/pkg.log" 2>/dev/null
-    die "Failed to install dependencies. Run: pkg update -y && pkg install -y openjdk-17 unzip curl"
-  fi
-  for p in openjdk-17 unzip curl; do
-    if pkg list-installed 2>/dev/null | grep -q "^${p}/"; then
-      ok "$p"
-    else
-      die "Dependency '$p' is still missing after install. Run: pkg install -y $p"
-    fi
-  done
-  PKG_SECS=$(( SECONDS - PKG_START ))
-  if [ "$PKG_SECS" -gt 120 ]; then
-    warn "dependency download took ${PKG_SECS}s — your mirror may be slow."
-    warn "Try a faster one: termux-change-repo  (pick something nearby)"
-  fi
-fi
+# The dependencies must be there before anything is unpacked or started.
+[ "$PKG_PID" != "0" ] && deps_wait
 
-# ── 5. stage + validate the package before touching anything ────────────────
-step "5/7  Preparing the update…"
+# ── 2. Install ────────────────────────────────────────────────────────────
+shim_stage_begin "Install" "engine into $DEST"
 
 # The package must look like a complete engine before we touch the active
 # installation (same check the supervisor's updater uses).
-[ -f "$SRC/bin/wearsic-server" ] || die "Package is incomplete (bin/wearsic-server missing) — nothing was changed."
-[ -n "$(ls -A "$SRC/lib" 2>/dev/null)" ] || die "Package is incomplete (lib/ empty) — nothing was changed."
-[ -f "$SRC/run-termux.sh" ] || die "Package is incomplete (run-termux.sh missing) — nothing was changed."
-ok "package validated (engine, launcher, libraries)"
-
-# ── 6. crash-safe install (staged swap + rollback) ──────────────────────────
-step "6/7  Installing to $DEST…"
+[ -f "$SRC/bin/wearsic-server" ] || stage_fail "the package is incomplete (bin/wearsic-server missing) — nothing was changed"
+[ -n "$(ls -A "$SRC/lib" 2>/dev/null)" ] || stage_fail "the package is incomplete (lib/ empty) — nothing was changed"
+[ -f "$SRC/run-termux.sh" ] || stage_fail "the package is incomplete (run-termux.sh missing) — nothing was changed"
+# The Cloudflare front door uploads this file verbatim. A release without it
+# can install but cannot deploy, so fail BEFORE touching the live install.
+[ -f "$SRC/wearsic-cloudflare-worker.js" ] || stage_fail "the package is incomplete (wearsic-cloudflare-worker.js missing) — nothing was changed"
 
 # Preserve existing data across (re)installs. These files are NEVER deleted:
 # the swap only replaces bin/ and lib/ — the code, never your state.
-[ -f "$DEST/wearsic.db" ] && ok "existing database found — keeping wearsic.db"
-[ -f "$DEST/.env" ]       && ok "existing configuration found — keeping .env (and its API key)"
-[ -d "$DEST/downloads" ]  && ok "existing downloads found — keeping downloads/"
+KEPT=""
+[ -f "$DEST/wearsic.db" ]     && KEPT="wearsic.db"
+[ -f "$DEST/.env" ]           && KEPT="$KEPT .env"
+[ -d "$DEST/downloads" ]      && KEPT="$KEPT downloads/"
 
 mkdir -p "$DEST" "$DEST/wearsic-state" "$DEST/downloads"
 
-# Prepare COMPLETE replacement dirs first. Nothing active is touched until
-# both copies exist (an interruption here = nothing happened).
+shim_stage_status "staging the engine"
 rm -rf "$DEST/bin.new" "$DEST/lib.new"
-spinner_start "copying engine into place"
-if ! cp -r "$SRC/bin" "$DEST/bin.new"; then
-  spinner_stop 1 "copying engine"; die "Could not prepare the new engine (disk full?) — the current install is untouched."
-fi
-if ! cp -r "$SRC/lib" "$DEST/lib.new"; then
+stage_cmd cp -r "$SRC/bin" "$DEST/bin.new" \
+  || stage_fail "could not prepare the new engine (disk full?) — the current install is untouched"
+stage_cmd cp -r "$SRC/lib" "$DEST/lib.new" || {
   rm -rf "$DEST/bin.new"
-  spinner_stop 1 "copying engine"; die "Could not prepare the new engine (disk full?) — the current install is untouched."
-fi
-spinner_stop 0 "engine staged"
+  stage_fail "could not prepare the new engine (disk full?) — the current install is untouched"
+}
 
 # Swap by rename: the previous engine is kept as bin.prev/lib.prev for
-# rollback until the new one passes its health check (step 7).
+# rollback until the new one passes its health check (the Start stage).
+shim_stage_status "swapping the engine in"
 rm -rf "$DEST/bin.prev" "$DEST/lib.prev"
 if [ -d "$DEST/bin" ]; then
   mv "$DEST/bin" "$DEST/bin.prev" && mv "$DEST/lib" "$DEST/lib.prev" \
-    || { rm -rf "$DEST/bin.new" "$DEST/lib.new"; die "Swap failed — the current install is untouched."; }
+    || { rm -rf "$DEST/bin.new" "$DEST/lib.new"; stage_fail "the swap failed — the current install is untouched"; }
 fi
 mv "$DEST/bin.new" "$DEST/bin" && mv "$DEST/lib.new" "$DEST/lib" \
-  || die "Swap failed midway — run 'wearsic update' or reinstall to recover."
-[ -f "$DEST/bin/wearsic-server" ] || die "Engine swap did not complete — run 'wearsic update' to recover."
+  || stage_fail "the swap failed midway — run 'wearsic update' or reinstall to recover"
+[ -f "$DEST/bin/wearsic-server" ] || stage_fail "the engine swap did not complete — run 'wearsic update' to recover"
 
 # Launcher + supporting files (code only — never data). run-termux.sh goes
 # in atomically: re-running the installer over a LIVE server must not
 # truncate the supervisor's script while bash is reading it.
+shim_stage_status "installing the launcher and the command"
 for f in run-termux.sh .env.example README.md wearsic-cloudflare-worker.js; do
   [ -f "$SRC/$f" ] || continue
   if [ "$f" = "run-termux.sh" ]; then
@@ -564,35 +892,25 @@ for f in run-termux.sh .env.example README.md wearsic-cloudflare-worker.js; do
   fi
 done
 chmod +x "$DEST/run-termux.sh" "$DEST/bin/wearsic-server" 2>/dev/null || true
-ok "engine installed (previous engine kept for rollback)"
-
-# Config + API key. .env is only ever created or key-updated — never reset,
-# and an existing custom PORT/DB path is kept exactly as the user set it.
-touch "$DEST/.env"
-[ -n "$(env_value PORT)" ] || write_env_value PORT "${PORT:-8080}"
-[ -n "$(env_value WEARSIC_DB_PATH)" ] || write_env_value WEARSIC_DB_PATH "wearsic.db"
-EFFECTIVE_KEY="$(resolve_effective_key)"
 
 # Install the `wearsic` command (from the staged package, before $WORK is
 # wiped). Termux: $PREFIX/bin is on PATH and writable without root.
+CLI_BIN=""
 if [ -f "$SRC/wearsic" ]; then
   if [ -n "${PREFIX:-}" ] && [ -d "${PREFIX}/bin" ] && [ -w "${PREFIX}/bin" ]; then
     CLI_BIN="$PREFIX/bin"
   else
     CLI_BIN="$HOME/.local/bin"
     mkdir -p "$CLI_BIN"
-    case ":$PATH:" in
-      *":$CLI_BIN:"*) ;;
-      *) warn "$CLI_BIN is not on PATH — add it:  export PATH=\"\$PATH:$CLI_BIN\"" ;;
-    esac
   fi
   # replace_file (not cp): the destination may be the very script an older
   # `wearsic` process is still executing (e.g. `wearsic update` in another
-  # terminal, or this file after a re-install) — a truncating copy corrupts
-  # the running shell's remaining lines.
+  # terminal) — a truncating copy corrupts the running shell's remaining
+  # lines.
   replace_file "$SRC/wearsic" "$DEST/wearsic" 2>/dev/null || true
-  replace_file "$SRC/wearsic" "$CLI_BIN/wearsic" && chmod +x "$CLI_BIN/wearsic" "$DEST/wearsic" 2>/dev/null \
-    && ok "'wearsic' command installed ($CLI_BIN/wearsic)"
+  if replace_file "$SRC/wearsic" "$CLI_BIN/wearsic"; then
+    chmod +x "$CLI_BIN/wearsic" "$DEST/wearsic" 2>/dev/null || true
+  fi
 fi
 
 # Auto-start on reboot (Termux:Boot; Termux only).
@@ -604,68 +922,92 @@ termux-wake-lock
 exec "$DEST/run-termux.sh"
 EOF
   chmod +x "$HOME/.termux/boot/start-wearsic.sh"
-  ok "auto-start on reboot installed (Termux:Boot)"
+fi
+shim_stage_end ok "engine in $DEST"
+[ -n "$KEPT" ] && printf '  %skept%s %s\n' "$SHIM_DIM" "$SHIM_RESET" "$KEPT"
+if [ -n "$CLI_BIN" ]; then
+  case ":$PATH:" in
+    *":$CLI_BIN:"*) ;;
+    *) printf '  %s%s is not on PATH — add it: export PATH="$PATH:%s"%s\n' \
+         "$SHIM_DIM" "$CLI_BIN" "$CLI_BIN" "$SHIM_RESET" ;;
+  esac
 fi
 
-# ── 7. start + health check ─────────────────────────────────────────────────
-if [ "${WEARSIC_NO_START:-0}" = "1" ]; then
-  say ""
-  say "Installed but not started (WEARSIC_NO_START=1)."
-  say "Start it with:  wearsic start"
-  exit 0
-fi
+# ── 3. Configure ──────────────────────────────────────────────────────────
+shim_stage_begin "Configure" "settings"
+# .env is only ever created or key-updated — never reset, and an existing
+# custom PORT/DB path is kept exactly as the user set it.
+touch "$DEST/.env"
+[ -n "$(env_value PORT)" ] || write_env_value PORT "${PORT:-8080}"
+[ -n "$(env_value WEARSIC_DB_PATH)" ] || write_env_value WEARSIC_DB_PATH "wearsic.db"
+chmod 600 "$DEST/.env" 2>/dev/null || true
+resolve_effective_key
+shim_stage_end ok "$API_KEY_STATE"
 
-step "7/7  Starting the server…"
-
-# Restart cleanly on upgrades so the new engine actually runs.
-if health_ok; then
-  say "     restarting into the new engine…"
-  [ -x "$DEST/wearsic" ] && bash "$DEST/wearsic" stop >/dev/null 2>&1
-  pkill -f "com.wearsic.server.ApplicationKt" 2>/dev/null
-  sleep 1
-fi
-
-( cd "$DEST" && nohup bash "$DEST/run-termux.sh" >/dev/null 2>&1 & )
-spinner_start "waiting for first boot (cold JVM on phones takes minutes)"
-i=0
-while [ "$i" -lt 180 ]; do
-  health_ok && break
-  i=$((i + 1))
-  if [ "$((i % 30))" = "0" ]; then
-    say "     still booting… (${i}s — JVM warmup + first health check)"
-  fi
-  sleep 1
-done
-if health_ok; then
-  spinner_stop 0 "server is up"
+# ── 4. Build ──────────────────────────────────────────────────────────────
+shim_stage_begin "Build" "engine"
+# A release ships a prebuilt engine; a source checkout is compiled here.
+if [ -x "$DEST/bin/wearsic-server" ]; then
+  shim_stage_end ok "prebuilt engine — nothing to compile"
+elif [ -f "$SRC/gradlew" ]; then
+  shim_stage_status "compiling the engine (first build takes a while)"
+  stage_cmd bash "$SRC/gradlew" -p "$SRC" :wearsic-server:installDist \
+    || stage_fail "the engine build failed"
+  shim_stage_end ok "engine built from source"
 else
-  spinner_stop 1 "server boot"
+  shim_stage_end ok "prebuilt engine"
 fi
 
-if ! health_ok; then
-  warn "The server did not become healthy in time."
-  warn "Check the logs:  wearsic logs"
-  exit 1
+# ── 5. Start ──────────────────────────────────────────────────────────────
+if [ "${WEARSIC_NO_START:-0}" = "1" ]; then
+  shim_stage_begin "Start" "server"
+  shim_stage_end ok "skipped (WEARSIC_NO_START=1)"
+else
+  shim_stage_begin "Start" "server"
+  # Restart cleanly on upgrades so the new engine actually runs.
+  if health_ok; then
+    shim_stage_status "restarting into the new engine"
+    [ -x "$DEST/wearsic" ] && bash "$DEST/wearsic" stop >/dev/null 2>&1
+    pkill -f "com.wearsic.server.ApplicationKt" 2>/dev/null
+    sleep 1
+  fi
+  ( cd "$DEST" && nohup bash "$DEST/run-termux.sh" >/dev/null 2>&1 & )
+  shim_stage_status "waiting for the first boot (a cold JVM takes a while on a phone)"
+  shim_wait "Start  waiting for the first boot" 180 "health_ok" \
+    || stage_fail "the server did not become healthy in time"
+  shim_stage_end ok "listening on port $(port)"
 fi
+
+# ── 6. Verify ─────────────────────────────────────────────────────────────
+shim_stage_begin "Verify" "the API"
+shim_stage_status "checking health and the API key"
+VERIFY_STATE="health ok"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 10 \
+  -H "X-Wearsic-Key: $EFFECTIVE_KEY" \
+  "http://127.0.0.1:$(port)/api/frontdoor/probe" 2>/dev/null || echo 000)"
+case "$CODE" in
+  200|206) VERIFY_STATE="health ok · api key accepted" ;;
+  401|403) stage_fail "the engine rejected the API key (an older server may still be running: wearsic stop)" ;;
+  404)     VERIFY_STATE="health ok" ;;
+  *)       VERIFY_STATE="health ok" ;;
+esac
+READY="$(curl -sf -m 5 "http://127.0.0.1:$(port)/ready" 2>/dev/null || true)"
+if printf '%s' "$READY" | grep -q '"ready":true'; then
+  VERIFY_STATE="$VERIFY_STATE · ready to serve music"
+fi
+shim_stage_end ok "$VERIFY_STATE"
 
 # The new engine is healthy — the rollback copy is no longer needed.
 rm -rf "$DEST/bin.prev" "$DEST/lib.prev"
-ok "server healthy on port $(port)"
 
-READY="$(curl -sf -m 5 "http://127.0.0.1:$(port)/ready" 2>/dev/null || true)"
-if printf '%s' "$READY" | grep -q '"ready":true'; then
-  ok "ready to serve music"
-elif [ -n "$READY" ]; then
-  warn "engine reports not-ready yet — run 'wearsic doctor' for details"
-fi
-
-# ── pairing card ────────────────────────────────────────────────────────────
+# ── 7. Ready ──────────────────────────────────────────────────────────────
 LAN_IP="$(detect_lan_ip)"
 SERVER_URL=""
 [ -n "$LAN_IP" ] && SERVER_URL="http://${LAN_IP}:$(port)"
 
+shim_stage_begin "Ready" "connect the watch"
 printf '\n'
-box_begin "♪ Wearsic server is ready — connect your watch"
+box_begin "Wearsic server is ready"
 box_line ""
 if [ -n "$SERVER_URL" ]; then
   box_line "   ${C_BOLD}Server :${C_RESET} $SERVER_URL"
@@ -681,5 +1023,16 @@ box_line "   type the Server line, then the Key line."
 box_line ""
 box_line "   ${C_DIM}Again anytime:  wearsic url    ·    wearsic doctor${C_RESET}"
 box_end
+shim_stage_end ok "wearsic url · wearsic doctor"
 printf '\n'
-say "Manage it with:  wearsic start | stop | restart | status | logs | health | url | api-key | update | doctor"
+say "Manage it with:  wearsic start | stop | restart | status | dashboard | logs | health | url | api-key | update | doctor"
+
+# Optional: the permanent public URL in the same run.
+if [ "${WEARSIC_CLOUDFLARE:-0}" = "1" ]; then
+  if [ -x "$DEST/wearsic" ]; then
+    say ""
+    bash "$DEST/wearsic" cloudflare
+  else
+    warn "WEARSIC_CLOUDFLARE=1 was requested, but the wearsic command is missing — run: wearsic cloudflare"
+  fi
+fi

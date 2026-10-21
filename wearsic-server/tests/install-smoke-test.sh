@@ -80,7 +80,8 @@ make_release() { # $1 = version tag, $2 = marker content
   local d="$T/dist-$1"
   mkdir -p "$d/wearsic-server"
   cp -r "$BUILD_DIST/bin" "$BUILD_DIST/lib" "$d/wearsic-server/"
-  cp "$HERE/run-termux.sh" "$HERE/wearsic" "$HERE/.env.example" "$d/wearsic-server/"
+  cp "$HERE/run-termux.sh" "$HERE/wearsic" "$HERE/wearsic-cloudflare-worker.js" \
+     "$HERE/.env.example" "$d/wearsic-server/"
   printf '%s\n' "$2" > "$d/wearsic-server/lib/test-engine-marker"
   # Every real release ships a slightly different CLI — and that difference
   # is what breaks a running updater that copies the new CLI over itself:
@@ -218,6 +219,27 @@ else
 fi
 CLI restart >/dev/null 2>&1 && HEALTH | grep -q '"status":"ok"' \
   && pass "wearsic restart (back to healthy)" || fail "wearsic restart (back to healthy)"
+
+# The one-command flow and the live dashboard.
+if CLI setup >"$T/setup.log" 2>&1; then
+  pass "wearsic setup (exit 0)"
+else
+  fail "wearsic setup (exit 0) (see $T/setup.log)"
+  tail -20 "$T/setup.log"
+fi
+grep -q 'Configure' "$T/setup.log" && grep -q 'Verify' "$T/setup.log" \
+  && pass "wearsic setup shows its stages" || fail "wearsic setup shows its stages"
+grep -q "$API_KEY" "$T/setup.log" \
+  && pass "wearsic setup shows the watch values" || fail "wearsic setup shows the watch values"
+if CLI dashboard --once >"$T/dash.log" 2>&1; then
+  pass "wearsic dashboard --once (exit 0)"
+else
+  fail "wearsic dashboard --once (exit 0)"
+  tail -20 "$T/dash.log"
+fi
+grep -q 'server' "$T/dash.log" && grep -q 'api' "$T/dash.log" \
+  && pass "wearsic dashboard renders health, LAN and API rows" \
+  || fail "wearsic dashboard renders health, LAN and API rows"
 CLI stop >/dev/null 2>&1
 CLI status >/dev/null 2>&1
 rc=$?

@@ -181,6 +181,13 @@ jobs:
           ./gradlew :wearsic-server:installDist
           bash wearsic-server/tests/cloudflare-e2e-test.sh
 
+      # The terminal shimmer (the soft gray wave) and the stage machine: the
+      # exact #8A8A85/#C9C9C3 blend, the 256-colour fallback, NO_COLOR, a
+      # non-TTY stdout, cursor restoration (including Ctrl+C), narrow
+      # terminals, and the seven installer stages. Offline.
+      - name: Run CLI shell tests (terminal shimmer + stages)
+        run: bash wearsic-server/tests/shimmer-test.sh
+
       # The Worker itself is JavaScript, so it gets a real JS engine rather
       # than a grep. Pins the two properties that decide whether audio works
       # through the front door: Range must be forwarded, and the body must
@@ -319,6 +326,9 @@ jobs:
           # payload and installs it offline instead of re-downloading.
           cp install.sh "$STAGE/"
           cp wearsic-server/wearsic "$STAGE/"
+          # The Cloudflare front door uploads this file verbatim. Without it
+          # an installed release cannot start `wearsic cloudflare` at all.
+          cp wearsic-server/wearsic-cloudflare-worker.js "$STAGE/"
           cp wearsic-server/.env.example "$STAGE/"
           cp wearsic-server/README.md "$STAGE/"
           # Licence files must travel with the distributed server. The server

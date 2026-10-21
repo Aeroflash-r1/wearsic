@@ -64,10 +64,55 @@ The installer will:
 - start the server
 - check that the server is healthy
 
+It does all of that in **seven quiet stages** —
+
+~~~text
+  ✓ Download    wearsic-server-termux-v1.9.5.zip · checksum verified
+  ✓ Install     engine in ~/wearsic-server
+  ✓ Configure   API key created
+  ✓ Build       prebuilt engine — nothing to compile
+  ✓ Start       listening on port 8080
+  ✓ Verify      health ok · api key accepted
+  ✓ Ready       wearsic url · wearsic doctor
+~~~
+
+— while the ACTIVE stage shimmers: a soft gray wave (base `#8A8A85`,
+highlight `#C9C9C3`) travels across the line, redrawn in place about every
+90ms. Nothing is printed twice, the raw package-manager output is captured
+(only a failure shows it), and the cursor is always restored — even on
+Ctrl+C. Piped output (logs, CI) is plain, and `NO_COLOR=1` turns the
+colour off.
+
+Add the permanent public URL in the same run:
+
+~~~bash
+curl -fsSL https://raw.githubusercontent.com/Aeroflash-r1/wearsic/main/install.sh | WEARSIC_CLOUDFLARE=1 bash
+~~~
+
+`WEARSIC_NO_START=1` installs without starting the server, and
+`WEARSIC_VERBOSE=1` keeps the detailed lines.
+
+Already installed? `wearsic setup` re-runs the same flow for an existing
+install (key → server → health → watch values) and can also update the
+engine and set up Cloudflare:
+
+~~~bash
+wearsic setup                 # configure, start, verify
+wearsic setup --update        # …and update the engine first
+wearsic setup --cloudflare    # …and set up the permanent public URL
+~~~
+
 When it finishes:
 
 ~~~bash
 wearsic status
+~~~
+
+For a live view of the running server (health, uptime, LAN address,
+Cloudflare front door, API health) that refreshes in place:
+
+~~~bash
+wearsic dashboard
 ~~~
 
 For a complete setup diagnostic:
@@ -184,42 +229,99 @@ Quick Tunnel is usually faster, and free — but its hostname is **random** and
 changes on every restart, so the watch can never remember it.
 
 `wearsic cloudflare` combines the two: a Cloudflare **Worker** sits in front
-of the Quick Tunnel and gives it a permanent address.
+of the Quick Tunnel and gives it a permanent address. The Worker source is
+uploaded verbatim; it streams audio and preserves byte ranges, response
+headers and the API key.
 
 ~~~bash
-# One-time: a free Cloudflare account, an API token and your account id.
-#   token  -> Cloudflare dashboard -> Workers & Pages -> API Tokens ->
-#             Create Token -> "Edit Cloudflare Workers" + "Account Settings: Read"
-#   id     -> the same page shows the Account ID
-wearsic api-key your-own-key          # a public URL always needs the API key
-export CLOUDFLARE_API_TOKEN=...
-export CLOUDFLARE_ACCOUNT_ID=...
-
+# One command. A free Cloudflare account is enough; no domain is needed.
 wearsic cloudflare
 ~~~
 
-It prints:
+That command does the whole setup:
+
+- starts the Wearsic engine if it is stopped;
+- creates a strong API key **only if no key is saved** (an existing key is
+  never replaced) and saves it to `~/wearsic-server/.env` with mode 600;
+- walks you through Cloudflare authorization;
+- installs `cloudflared` from Cloudflare's official release if needed;
+- deploys the reviewed Worker, verifies the URL, and ends with one card
+  containing **both** values for the watch.
+
+`wearsic cloudflare login` is still available if you want to authorize ahead
+of time. If `wrangler` is installed, authorization uses Cloudflare's
+browser/device OAuth flow. If `npm` is available but wrangler is not, the CLI
+offers to install wrangler for you; otherwise it opens the token page and
+prompts for a scoped API token with hidden input, checks it, and saves it to
+`.env` with mode 600. The token needs **Workers Scripts:Edit** and
+**Account Settings:Read** (the "Edit Cloudflare Workers" template includes
+both). Never paste the Global API Key.
+
+To choose your own key, run `wearsic api-key <your-key>` before
+`wearsic cloudflare`; the setup will keep it. `wearsic start` also still works
+if you prefer to start the server yourself, but it is no longer required.
+
+The account ID is detected automatically and saved; set
+`CLOUDFLARE_ACCOUNT_ID` only when the credential can see more than one
+account. An existing `workers.dev` subdomain is reused. One is created only
+when the account has none. The CLI also enables the Worker's `workers.dev`
+route after each upload: Workers created through the API are private by
+default and return 404 / error 1042 until that route is turned on.
+Credentials can also come from `CLOUDFLARE_API_TOKEN` in the environment or
+`.env`, or from an existing wrangler session.
+
+The first start can take a minute or two. It waits for the Quick Tunnel,
+deploys the Worker, and checks auth and Range/206 streaming through the
+permanent URL. It prints:
 
 ~~~text
   PERMANENT URL   https://wearsic.your-subdomain.workers.dev
   current tunnel  https://random-words.trycloudflare.com
 ~~~
 
-Put the **permanent URL** into **Wearsic → Settings → Server URL** and enter
-your API key. The address never changes: if the tunnel restarts and hands out
-a new random hostname, the Worker is re-uploaded automatically and the watch
-carries on.
+and then a watch setup card:
+
+~~~text
+  ready for your watch
+  Server URL
+  https://wearsic.your-subdomain.workers.dev
+
+  API key
+  <your key>
+~~~
+
+Enter both in **Wearsic → Settings**. The address never changes: if the
+tunnel restarts and hands out a new random hostname, the supervisor
+re-uploads the Worker automatically and the watch carries on.
 
 Notes:
 
-- **No domain, no DNS, no cost.** The `workers.dev` subdomain is created on
-  first use if the account does not have one yet.
-- The credentials can live in `~/wearsic-server/.env` (see `.env.example`)
-  instead of the environment.
-- `wearsic cloudflare status` checks the permanent URL end to end;
-  `wearsic cloudflare stop` shuts it down.
-- Like every other public path here, this REQUIRES an API key — without one
-  the engine would be open to anyone who guesses the address.
+- **No domain, no DNS, no cost.** The Worker lives on `workers.dev`.
+- `wearsic cloudflare status` shows the permanent URL, supervisor state, and
+  live health/auth checks. `wearsic cloudflare verify` proves auth plus
+  byte-range (`206`/`Content-Range`) streaming through the URL, not just
+  `/health`. `wearsic cloudflare logs` shows supervisor activity with secrets
+  redacted, and `wearsic cloudflare url` prints just the URL.
+- To test a real track through the permanent URL (requires a working
+  extractor and a video id):
+  `WEARSIC_CF_PLAYBACK_ID=<videoId> wearsic cloudflare verify`.
+- `wearsic cloudflare` is idempotent: running it again reuses the tunnel and
+  Worker, and `wearsic cloudflare stop` stops the tunnel and supervisor but
+  **leaves the Worker and permanent URL deployed**. Start it again after a
+  reboot with `wearsic cloudflare`.
+- Deployment retries are bounded (network errors, `429` and `5xx`, with
+  exponential backoff and jitter). Authorization or permission errors
+  (`401`/`403`) stop the supervisor and are reported instead of looping.
+  A dead tunnel is restarted and the Worker is re-pointed; a failed health
+  check triggers a re-deploy.
+- If setup fails with a permission error, recreate the token with Workers
+  Scripts:Edit and Account Settings:Read. If it says the credential was
+  rejected, run `wearsic cloudflare login` again. DNS and transient network
+  failures are retried; check `wearsic cloudflare status` and `logs` if the
+  URL is not live yet.
+- The public URL still REQUIRES an API key. Cloudflare setup creates one only
+  when none exists; it never replaces a key you already saved. `wearsic
+  funnel` and `wearsic public` still refuse to run without one.
 
 
 ### First-time Tailscale requirement

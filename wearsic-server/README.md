@@ -222,6 +222,42 @@ Stream extraction is resilient:
 - The **iOS Innertube client is tried first** (it is the one that actually works against YouTube's bot wall), falling back to the default client. Because the client choice is a process-global NewPipeExtractor setting, all extractions are serialized behind a mutex — correctness over concurrency, at no practical cost for a personal server.
 - NewPipe failures map to clean JSON errors instead of empty 500 responses: `404` when a video is unavailable, `503` for bot/ReCaptcha challenges (with a hint to configure the YouTube cookie), and `502` for other extraction failures.
 
+## The terminal (shimmer + stages + dashboard)
+
+The CLI is a small bash program that renders itself. Three pieces carry the
+whole experience:
+
+- **The shimmer** — a soft highlight band travels left → right across the
+  active line. Every character is blended between the base gray `#8A8A85`
+  and the highlight gray `#C9C9C3` by its distance from the band, so the
+  effect is a wave of light rather than a blinking highlight. One pass takes
+  ~1.7s and every frame is redrawn in place every ~90ms. Truecolor in
+  Termux; a 256-colour gray ramp (base **245**, highlight 253) elsewhere;
+  `NO_COLOR`, a non-TTY stdout and `TERM=dumb` turn it off. The cursor is
+  hidden only while the wave is on screen and is always restored — normal
+  exit, error, or Ctrl+C.
+- **The stage machine** — the installer walks **Download → Install →
+  Configure → Build → Start → Verify → Ready**. The active stage shimmers;
+  a finished stage collapses into one quiet line, printed exactly once.
+  Sub-process output is captured and only shown when a step fails.
+- **The dashboard** — `wearsic dashboard` renders health, uptime, the LAN
+  address, the Cloudflare front door and tunnel state, the API/stream health
+  and the current engine activity, and refreshes the frame in place.
+
+The shimmer core lives in [`lib/wearsic-shimmer.sh`](lib/wearsic-shimmer.sh)
+and is embedded byte-identically in `wearsic` and in the repository's
+`install.sh` (the installer is piped straight from GitHub and cannot source
+the CLI). `bash lib/sync-shimmer.sh` re-inserts it into both, and
+`tests/shimmer-test.sh` fails when the two copies drift apart.
+
+```bash
+wearsic setup                 # configure, start, verify, show the watch values
+wearsic setup --update        # …and update the engine first
+wearsic setup --cloudflare    # …and set up the permanent public URL
+wearsic dashboard             # live view (Ctrl+C to exit)
+wearsic dashboard --once      # one frame (for scripts and tests)
+```
+
 ## Public access (HTTPS)
 
 The watch app already sends `X-Wearsic-Key` automatically once the key
@@ -234,13 +270,48 @@ wearsic funnel     # prints https://<phone-name>.<tailnet>.ts.net
 
 Public exposure REQUIRES an API key: `wearsic funnel` and
 `wearsic public` refuse to run without one (and `funnel` also refuses
-to expose a server that is not running and healthy). No key is ever invented
-or changed automatically — set one yourself with `wearsic api-key
-<your-key>`.
+to expose a server that is not running and healthy). Set your own with
+`wearsic api-key <your-key>`, or let `wearsic cloudflare` create one only
+when none exists; it never replaces an existing key.
 
-A Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:8080`)
-also works but its URL changes on every restart. All options, including
-the no-tunnel ones, are in [`../TERMUX_SERVER_GUIDE.md`](../TERMUX_SERVER_GUIDE.md).
+The permanent no-domain option is `wearsic cloudflare`. A Quick Tunnel's
+random `trycloudflare.com` hostname changes on restart, so the CLI deploys a
+reviewed Cloudflare Worker in front of it at
+`https://wearsic.<subdomain>.workers.dev`. The Worker streams responses and
+preserves Range/206, `Content-Range`, the API key, multiple `Set-Cookie`
+headers, and same-origin redirects; it never buffers a track.
+
+Setup is one command:
+
+```bash
+wearsic cloudflare
+```
+
+It starts the engine if it is stopped, creates a 48-character API key only
+when no key is saved, authorizes Cloudflare, installs `cloudflared`, deploys
+and verifies the Worker, then prints a single card with the permanent URL and
+API key for **Wearsic → Settings**. Existing keys, `.env`, server data and
+the database are preserved.
+
+For an explicit pre-authorization, `wearsic cloudflare login` uses wrangler's
+browser/device OAuth flow when wrangler is installed. If `npm` is available
+but wrangler is not, the CLI offers a one-time wrangler install; otherwise it
+prompts for a scoped token (Workers Scripts:Edit + Account Settings:Read,
+never the Global API Key) and saves it to `.env` with mode 600. An existing
+`CLOUDFLARE_API_TOKEN` in the environment/.env or a wrangler session also
+works. The account id and `workers.dev` subdomain are detected automatically;
+the subdomain is created only when the account has none. To use your own API
+key, run `wearsic api-key <your-key>` first; setup keeps it.
+
+`wearsic cloudflare status` reports live health and auth through the permanent
+URL; `verify` proves auth plus Range/206 streaming with
+`/api/frontdoor/probe` (not just `/health`); `logs` redacts secrets; `url`
+prints it; and `stop` leaves the Worker and URL deployed. A real-track probe is
+opt-in with `WEARSIC_CF_PLAYBACK_ID`. Deployment retries use bounded
+exponential backoff with jitter for network/`429`/`5xx`; permanent `4xx`
+errors stop the supervisor. A restarted tunnel is detected and the Worker is
+re-pointed automatically. All options, including the no-tunnel ones, are in
+[`../TERMUX_SERVER_GUIDE.md`](../TERMUX_SERVER_GUIDE.md).
 
 ## License
 

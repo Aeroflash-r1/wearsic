@@ -218,37 +218,153 @@ A Cloudflare Worker in front of the tunnel fixes that: the Worker has a
 `ORIGIN` binding) whenever the tunnel hands out a new hostname. The watch only
 ever knows the permanent address and is never re-paired.
 
+### Verification probe
+
+`GET /api/frontdoor/probe` is an authenticated, deterministic self-test used
+by `wearsic cloudflare verify`. It needs no YouTube extraction and returns no
+user data or secrets.
+
+- Through the API auth intercept, a request without the key gets `401`.
+- Without `Range`, it returns `200`, `Content-Type:
+  application/octet-stream`, `Accept-Ranges: bytes`, `Content-Length: 65536`,
+  and a 64 KiB body where byte `i` (zero-based) is `(i * 31 + 7) & 0xFF`.
+- `Range: bytes=10-19` returns `206`, `Content-Range: bytes 10-19/65536`,
+  and exactly the 10 matching bytes (byte 10 is `61`, byte 19 is `84`).
+- An open-ended range (`Range: bytes=65000-`) is clamped to the payload and
+  returns the remaining bytes. A range end past the payload is clamped too.
+- A malformed, multi-range, or out-of-bounds request returns `416` with
+  `Content-Range: bytes */65536`.
+- The response must not be cached. It is suitable for checking that auth,
+  `Range`, `206`, `Content-Range` and streaming all survive the Worker.
+
+`wearsic cloudflare verify` performs these checks through the permanent URL.
+It never treats `/health` alone as proof of playback. To additionally fetch a
+real track through the front door, opt in with
+`WEARSIC_CF_PLAYBACK_ID=<videoId>`; this requires a working extractor and is
+reported separately from the deterministic probe.
+
 ### Contract requirements on the Worker
 
 The proxy MUST preserve these, or audio breaks:
 
 - **`Range`** request headers and `Content-Range`/`206` responses. The engine
   answers byte-range audio; dropping `Range` turns every seek into a full
-  re-download.
-- **Streaming** responses. Buffering a whole track in the Worker would add
-  seconds of latency and exceed the memory limit on long songs.
+  re-download. `Content-Length` and `Accept-Ranges` are preserved too.
+- **Streaming** responses, including bodies without a known length. Buffering
+  a whole track in the Worker would add seconds of latency and exceed the
+  memory limit on long songs.
 - The **`X-Wearsic-Key`** (or whatever the engine's auth header is) request
-  header, unchanged.
+  header, unchanged. The Worker never stores or invents the secret.
+- **Multiple `Set-Cookie`** response headers and other end-to-end headers.
+  They must not be folded into one value.
+- Bodyless statuses (`204`, `205`, `304`) must carry no body. `HEAD` remains
+  bodyless.
+- **Redirects** are not followed by the Worker. A same-origin `Location` is
+  rewritten to the permanent hostname; an external `Location` is passed
+  through unchanged. This prevents the caller from being sent to the random
+  tunnel hostname.
+- The real client IP is visible as `CF-Connecting-IP`; the Worker forwards it
+  in `X-Forwarded-For` along with `X-Forwarded-Proto` and
+  `X-Forwarded-Host`.
 - **No caching** of any response — a cached track would be served forever and
-  the tunnel hostname would stop mattering.
+  the tunnel hostname would stop mattering. The Worker sets `Cache-Control:
+  no-store`.
 - Hop-by-hop headers (`Connection`, `Transfer-Encoding`, `Host`, …) are
   stripped in both directions: they describe the single hop they arrived on.
+- An origin/network failure returns an opaque `502` with a request id; a
+  missing/invalid `ORIGIN` binding returns an opaque `500`. Bodies never echo
+  the tunnel hostname, request URL or a stack trace.
 
 The implementation is `wearsic-server/wearsic-cloudflare-worker.js` and is
 uploaded verbatim — nothing is generated at runtime that cannot be read first.
+The contract is covered by `tests/worker-proxy-test.mjs`; the engine probe is
+covered by `FrontDoorProbeTest`; the CLI/supervisor behavior is covered by
+`tests/cloudflare-tunnel-test.sh` and `tests/cloudflare-e2e-test.sh`.
 
 ### Operations
 
-- `wearsic cloudflare` — start the tunnel and the front door, print the
-  permanent URL.
-- `wearsic cloudflare status` — the permanent URL and a live health check
-  *through* it.
-- `wearsic cloudflare stop` — stop both.
-- `wearsic cloudflare url` — print just the permanent URL (for scripting).
+- `wearsic cloudflare [start]` — the one-command setup. It starts the engine
+  if stopped, creates a 48-character hex API key only when none is saved
+  (an existing key is never replaced), offers authorization, installs
+  `cloudflared`, detects the account/subdomain, deploys the Worker, starts the
+  Quick Tunnel, waits for a real `live` state, runs the `verify` checks, and
+  prints one card with the permanent URL and API key. `--no-verify` skips only
+  that final probe.
+- `wearsic cloudflare login [--wrangler|--token-stdin]` — optional
+  pre-authorization. `--wrangler` uses wrangler's browser/device OAuth;
+  `--token-stdin` prompts for a scoped token with hidden input and saves it to
+  `.env` (mode 600). In auto mode, an existing wrangler session is preferred
+  when available; if npm is present but wrangler is not, the CLI offers a
+  one-time wrangler install, then falls back to the hidden prompt.
+- `wearsic cloudflare logout` — remove the saved API token. It does not delete
+  the deployed Worker or its URL; revoke the token in the dashboard too.
+- `wearsic cloudflare status` — the permanent URL, supervisor state, and live
+  health plus auth checks *through* the URL. It reports the recorded error
+  rather than claiming success when the supervisor is degraded/stopped.
+- `wearsic cloudflare verify` — prove auth + `Range`/`206`/`Content-Range`
+  streaming through the permanent URL using `/api/frontdoor/probe`.
+- `wearsic cloudflare logs [-f]` — recent supervisor activity, with secrets
+  redacted. `wearsic cloudflare url` prints just the permanent URL.
+- `wearsic cloudflare stop` — stop the tunnel and supervisor. The Worker and
+  permanent URL stay deployed; a later `start` reuses them.
 
-Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, and — because the
-address is public — a `WEARSIC_API_KEY`. The Worker is created on first use;
-the account's `workers.dev` subdomain is created if it does not exist yet.
+Credential resolution is: `CLOUDFLARE_API_TOKEN` from the environment/`.env`,
+then the official wrangler OAuth session, then `wearsic cloudflare login`.
+`CLOUDFLARE_ACCOUNT_ID` is optional: it is auto-detected via `/accounts` or
+`wrangler whoami --json` and persisted. An existing `workers.dev` subdomain is
+reused; one is created only when the account has none. The public address
+still REQUIRES a `WEARSIC_API_KEY`. Setup creates one only when none exists,
+restarts the engine so the key takes effect, and never replaces a saved key.
+
+Deployment retries are bounded exponential backoff with jitter and apply only
+to network failures, `429`, and `5xx`. A permanent `4xx` (for example a bad
+token or missing Workers permission) stops the supervisor and records
+`last_error`; it is never retried forever. The state file tracks the tunnel
+`origin` separately from the last successfully deployed `deployed_origin`, so
+a failed re-point cannot masquerade as success. The supervisor truncates the
+per-tunnel log before each start, waits for the new origin's `/health`, restarts
+a dead tunnel, re-points the Worker when the hostname changes, and periodically
+re-deploys if the permanent URL fails its health check. A single-instance lock
+keeps a second supervisor from starting.
+
+## Terminal presentation (CLI)
+
+The server CLI renders itself; the rules below keep it predictable for
+scripts, logs and small screens.
+
+- **The shimmer.** While work is in progress, the active line carries a soft
+  highlight band that travels left → right. Every character is blended
+  between the base gray `#8A8A85` (138,138,133) and the highlight gray
+  `#C9C9C3` (201,201,195) by its distance from the band. One pass takes
+  ~1.7s; every frame is redrawn in place every ~90ms with a carriage return
+  and a line erase. Truecolor on Termux; on a 256-colour terminal the blend
+  is approximated with the gray ramp (base **245**, highlight 253).
+- **When it is off.** `NO_COLOR=1`, `WEARSIC_COLOR=never`, a non-TTY stdout
+  and `TERM=dumb` all disable it; piped output stays plain and one line per
+  message. `WEARSIC_COLOR_DEPTH=24|256` forces a depth.
+- **The cursor** is hidden only while the wave is on screen and is restored
+  on every exit path: normal exit, an error, and Ctrl+C.
+- **The stage machine.** Long operations run as stages — the installer uses
+  Download → Install → Configure → Build → Start → Verify → Ready. The
+  active stage shimmers; a finished stage collapses into ONE quiet line,
+  printed exactly once. Sub-process output is captured internally and is
+  only surfaced when a step fails, so a failure is never hidden and success
+  is never claimed early.
+- **Narrow screens.** The live line is truncated to the terminal width
+  (never wrapped) and the panels fall back to stacked rows.
+
+Commands:
+
+- `wearsic setup [--update] [--cloudflare]` — the one-command path for an
+  existing install: create the API key when there is none (never replace an
+  existing one), start the engine when it is stopped, verify health **and**
+  the API key, then show the watch values together. `--update` updates the
+  engine first, `--cloudflare` sets up the permanent public URL afterwards.
+- `wearsic dashboard [--once]` — a live, in-place view of the running
+  server: health, uptime, the LAN address, the Cloudflare front door and
+  tunnel state, the API/stream health and the current engine activity.
+  `--once` renders a single frame (for scripts and tests); a non-TTY
+  stdout always renders one frame.
 
 ## Response Compression & Caching (server ≥ v1.9.1)
 - **gzip**: JSON responses ≥ 512 bytes are gzip-compressed

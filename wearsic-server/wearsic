@@ -3596,8 +3596,8 @@ cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
     if [ -n "$tls_pem" ]; then
       bindings+=("-b" "$tls_pem:/etc/ssl/certs/ca-certificates.crt")
     fi
-    "${bindings[@]}" "$prefix/bin/proot" \
-      "$cfbin" tunnel --no-autoupdate --protocol http2 \
+    proot="$prefix/bin/proot"
+    "$proot" "${bindings[@]}" "$cfbin" tunnel --no-autoupdate --protocol http2 \
       --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
   else
     "$cfbin" tunnel --no-autoupdate --protocol http2 \

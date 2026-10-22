@@ -3526,33 +3526,103 @@ cf_http_code() {  # url [timeout]
 # its failure text can still point at a trycloudflare host (the request
 # endpoint api.trycloudflare.com in particular), and whatever answers there
 # must never read as "our engine is reachable".
+CF_HEALTH_LAST="no answer"  # observed result of the last probe, for error texts
 cf_health_ok() {  # url [timeout]
   local tf code found=1
   tf="$(mktemp "${TMPDIR:-/tmp}/wearsic-h.XXXXXX")" || return 1
   code="$(curl -sS -o "$tf" -w '%{http_code}' --max-time "${2:-15}" "$1" 2>/dev/null)" || true
-  if [ "$code" = "200" ] && grep -q '"status":"ok"' "$tf" 2>/dev/null; then
-    found=0
-  fi
+  case "$code" in
+    200)
+      if grep -q '"status":"ok"' "$tf" 2>/dev/null; then
+        found=0; CF_HEALTH_LAST="HTTP 200 ok"
+      else
+        CF_HEALTH_LAST="HTTP 200 with unexpected body"
+      fi
+      ;;
+    ''|0) CF_HEALTH_LAST="no answer (timeout)" ;;
+    *)    CF_HEALTH_LAST="HTTP $code" ;;
+  esac
   rm -f "$tf"
   return "$found"
 }
 
-# A Quick Tunnel can hand out a hostname before its edge route is serving.
-# Deploying then would "succeed" while every playback request 502s.
-cf_origin_ready() {  # origin [tries]
-  local origin="$1" tries="${2:-15}" i
-  case "$tries" in ''|*[!0-9]*) tries=15 ;; esac
-  for i in $(seq 1 "$tries"); do
+# A Quick Tunnel can hand out a hostname before its edge route is serving
+# ("may take some time to be reachable" — observed 1–2+ minutes on real
+# phones). Deploying then would "succeed" while every request 502s, so the
+# budget is wall-clock seconds instead of a try count: the original fixed
+# ~35 s window killed healthy tunnels in the middle of their warm-up on a
+# live phone. $3 (optional) = the tunnel pid: a dead tunnel must fail fast
+# because a restart makes more sense than polling a corpse. CF_READY_LAST
+# records what the last probe saw so the failure text can say what actually
+# happened.
+CF_READY_LAST="no answer"
+cf_origin_ready() {  # origin [budget_s] [tunnel_pid]
+  local origin="$1" budget="${2:-180}" pid="${3:-}" deadline
+  case "$budget" in ''|*[!0-9]*) budget=180 ;; esac
+  deadline=$(( $(date +%s) + budget ))
+  while :; do
     if cf_health_ok "$origin/health" 8; then
+      CF_READY_LAST=""
       return 0
     fi
+    case "$CF_HEALTH_LAST" in ?*) CF_READY_LAST="$CF_HEALTH_LAST" ;; esac
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+      CF_READY_LAST="tunnel process exited"
+      return 1
+    fi
+    [ "$(date +%s)" -ge "$deadline" ] && return 1
     sleep 2
   done
-  return 1
 }
 
 cf_permanent_health() {  # permanent url
   cf_health_ok "$1/health" 15
+}
+
+# --- Tunnel teardown ----------------------------------------------------------
+# Killing the tunnel is not one kill: the launcher (proot) was observed to
+# survive a plain TERM while its cloudflared child kept serving, which both
+# orphaned engine instances and hung the supervisor in wait() ("ERROR … did
+# not serve /health" with no restart afterwards). Take the whole tree down:
+# descendants first, TERM, then KILL whatever is still standing.
+cf_list_kids() {  # pid -> child pids, one per line (read from /proc)
+  local dir st
+  for dir in /proc/[0-9]*; do
+    st="$(awk '/^PPid:/{print $2}' "$dir/status" 2>/dev/null)" || continue
+    [ "$st" = "$1" ] && printf '%s\n' "${dir#/proc/}"
+  done
+}
+
+cf_kill_tree() {  # pid — TERM the process and its descendants, kids first
+  local pid="${1:-}" kid
+  [ -n "$pid" ] || return 0
+  for kid in $(cf_list_kids "$pid"); do
+    cf_kill_tree "$kid"
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+cf_kill_tree_k() {  # pid — KILL the process and its descendants, kids first
+  local pid="${1:-}" kid
+  [ -n "$pid" ] || return 0
+  for kid in $(cf_list_kids "$pid"); do
+    cf_kill_tree_k "$kid"
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
+cf_kill_tree_all() {  # pid — TERM the tree, KILL survivors, reap the shell child
+  local pid="${1:-}" i
+  [ -n "$pid" ] || return 0
+  cf_kill_tree "$pid"
+  for i in 1 2 3 4 5; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    cf_kill_tree_k "$pid"
+  fi
+  wait "$pid" 2>/dev/null || true
 }
 
 # --- The supervisor ---------------------------------------------------------
@@ -3639,13 +3709,36 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
     return 0
   fi
 
+  # Reap tunnels left over from an earlier supervisor generation, before
+  # the first launch. A previous supervisor was killed or hung while its
+  # (proot+cloudflared) tunnel survived; that orphan keeps its announce
+  # fd APPENDED to this same per-attempt log, so the fresh supervisor's
+  # hostname read would pick up the OLD tunnel's URL and deploy to a
+  # tunnel no supervisor actually watches (observed live: two generations
+  # of "worker -> <same old hostname>" seconds after each restart).
+  # Only tunnels of THIS install are touched: the match needs both
+  # "bin/cloudflared tunnel" and this install's DEST in the cmdline.
+  cf_kill_all_tunnels() {
+    local dir pid cmdline
+    for dir in /proc/[0-9]*; do
+      pid="${dir#/proc/}"
+      [ "$pid" = "$$" ] && continue
+      cmdline="$( { tr '\0' ' ' < "$dir/cmdline"; } 2>/dev/null )" || continue
+      case "$cmdline" in
+        *"$DEST"*"bin/cloudflared tunnel"*) cf_kill_tree_k "$pid" && printf '%s ' "$pid" ;;
+      esac
+    done
+  }
+  local reaped
+  reaped="$(cf_kill_all_tunnels)"
+  case "$reaped" in ?*) cf_log "reaped orphan tunnel(s) from an earlier supervisor: $reaped" ;; esac
+
   local tunnel_pid="" origin="" deployed="" sub="" perm="" acc="" cfbin=""
   local restart_delay=1 started_at=0 rc=0
 
   cf_supervise_cleanup() {
     if [ -n "${tunnel_pid:-}" ]; then
-      kill "$tunnel_pid" 2>/dev/null || true
-      wait "$tunnel_pid" 2>/dev/null || true
+      cf_kill_tree_all "$tunnel_pid"
     fi
     cf_lock_release
   }
@@ -3716,24 +3809,54 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
     if [ -z "$origin" ]; then
       cf_log "ERROR: could not read the tunnel hostname"
       cf_state_write error "$sub" "$perm" "" "$deployed" "Could not read the tunnel hostname from cloudflared" "$acc"
-      kill "$tunnel_pid" 2>/dev/null || true
-      wait "$tunnel_pid" 2>/dev/null || true
+      cf_kill_tree_all "$tunnel_pid"
       cf_sleep_backoff "$restart_delay" "tunnel start"
       restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
       continue
     fi
     cf_log "tunnel hostname: $origin"
 
-    # 2. Do not deploy a hostname that is not serving yet. This is the
-    #    difference between "uploaded" and "actually reachable".
-    if ! cf_origin_ready "$origin"; then
-      cf_log "ERROR: tunnel $origin did not serve /health"
-      cf_state_write error "$sub" "$perm" "$origin" "$deployed" "The tunnel is up but the engine did not answer through it" "$acc"
-      kill "$tunnel_pid" 2>/dev/null || true
-      wait "$tunnel_pid" 2>/dev/null || true
-      cf_sleep_backoff "$restart_delay" "tunnel readiness"
-      restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
-      continue
+    # 2. Do not deploy a hostname that is not serving yet. Quick tunnels
+    #    routinely take a minute or two before the edge answers ("may take
+    #    some time to be reachable") — wait up to three minutes, and never
+    #    kill an announced-but-slowing tunnel: it may answer any second, and
+    #    restarting throws away the hostname while leaving the engine
+    #    running behind the old one (a real phone ended up with a supervisor
+    #    hung in wait() while /health finally answered through the
+    #    "killed" tunnel). Bail out quickly only when the tunnel process is
+    #    genuinely gone.
+    if ! cf_origin_ready "$origin" 180 "$tunnel_pid"; then
+      cf_log "ERROR: tunnel $origin did not serve /health (${CF_READY_LAST:-no answer})"
+      cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" \
+        "The tunnel is up but the engine did not answer through it (${CF_READY_LAST:-no answer})" "$acc"
+      if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+        wait "$tunnel_pid" 2>/dev/null || true
+        cf_sleep_backoff "$restart_delay" "tunnel readiness"
+        restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
+        continue
+      fi
+      # The tunnel is alive. Keep watching it on a slow cadence and deploy
+      # the instant /health answers; log progress once a minute.
+      local wpoll=0
+      while :; do
+        sleep 10
+        cf_health_ok "$origin/health" 8 || true
+        if [ "${CF_HEALTH_LAST:-}" = "HTTP 200 ok" ]; then
+          cf_log "tunnel $origin started serving /health after $(( $(date +%s) - started_at ))s"
+          break
+        fi
+        if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+          wait "$tunnel_pid" 2>/dev/null || true
+          cf_log "tunnel exited before serving; restarting"
+          cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "tunnel not serving and exited; restarting" "$acc"
+          cf_sleep_backoff "$restart_delay" "tunnel restart"
+          restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
+          continue 2
+        fi
+        wpoll=$(( wpoll + 1 ))
+        [ $(( wpoll % 6 )) -eq 0 ] && \
+          cf_log "tunnel $origin still not serving /health (last: ${CF_HEALTH_LAST:-no answer}) — keeping the tunnel and waiting"
+      done
     fi
 
     # 3. Point the Worker at it, with retries.
@@ -3748,8 +3871,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
       if [ "$rc" -eq 2 ]; then
         cf_log "deployment failed permanently; supervisor exiting"
         cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
-        kill "$tunnel_pid" 2>/dev/null || true
-        wait "$tunnel_pid" 2>/dev/null || true
+        cf_kill_tree_all "$tunnel_pid"
         return 1
       fi
     fi
@@ -3779,8 +3901,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
             if [ "$rc" -eq 2 ]; then
               cf_log "re-point failed permanently; supervisor exiting"
               cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
-              kill "$tunnel_pid" 2>/dev/null || true
-              wait "$tunnel_pid" 2>/dev/null || true
+              cf_kill_tree_all "$tunnel_pid"
               return 1
             fi
           fi
@@ -3814,8 +3935,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
               if [ "$rc" -eq 2 ]; then
                 cf_log "deployment failed permanently; supervisor exiting"
                 cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
-                kill "$tunnel_pid" 2>/dev/null || true
-                wait "$tunnel_pid" 2>/dev/null || true
+                cf_kill_tree_all "$tunnel_pid"
                 return 1
               fi
             fi
@@ -3831,8 +3951,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
             if [ "$rc" -eq 2 ]; then
               cf_log "re-deploy after health check failed permanently; supervisor exiting"
               cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
-              kill "$tunnel_pid" 2>/dev/null || true
-              wait "$tunnel_pid" 2>/dev/null || true
+              cf_kill_tree_all "$tunnel_pid"
               return 1
             fi
           fi
@@ -4473,8 +4592,7 @@ cf_cloudflare_stop() {
     sleep 1
   done
   for pid in $pids; do
-    pkill -KILL -P "$pid" 2>/dev/null || true
-    kill -KILL "$pid" 2>/dev/null || true
+    cf_kill_tree_all "$pid"
   done
   cf_lock_release
   cf_state_set_status stopped

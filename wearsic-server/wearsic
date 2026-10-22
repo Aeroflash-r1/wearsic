@@ -777,7 +777,17 @@ shim_fetch_start() { # $1 = url, $2 = out file, $3 = live text prefix
   SHIM_F_RATE=0
   SHIM_F_PAINT_B=""; SHIM_F_PAINT_MS=0
   SHIM_F_START_MS=0; SHIM_F_START_B=0
-  curl -fL --retry 3 --retry-delay 2 -o "$2" "$1" >/dev/null 2>&1 &
+  # No timeout on this curl = a stalled carrier connection wedges the
+  # caller in `wait` forever (a live phone ran `wearsic update` for 20+
+  # minutes with 0% CPU while the front door churned). A stall must make
+  # curl EXIT: --speed-limit/--speed-time abort a transfer that stops
+  # delivering data, --connect-timeout/--max-time cap the rest. 1800 s is
+  # generous for a ~30 MB zip on a slow hotspot; healthy links finish in
+  # a minute or two. shim_fetch_wait adds a shell-side ceiling too.
+  curl -fL --retry 3 --retry-delay 2 \
+    --connect-timeout 20 --max-time 1800 \
+    --speed-limit 1024 --speed-time 30 \
+    -o "$2" "$1" >/dev/null 2>&1 &
   SHIM_FETCH_PID=$!
 }
 
@@ -990,9 +1000,31 @@ shim_fetch_done() {
   printf '\r%s[K%s\n' "$SHIM_ESC" "$line"
 }
 
-shim_fetch_wait() {
-  local rc=0
+shim_fetch_wait() {  # optional $1 = hard ceiling in seconds
+  local rc=0 waited=0 limit="${1:-}"
   [ -n "$SHIM_FETCH_PID" ] || return 1
+  # Never wait on a transfer FOREVER. curl now aborts stalled transfers
+  # itself; this shell-side ceiling is the second belt (and the only one
+  # if the pid somehow outlives the transfer). On overflow the transfer
+  # is killed and the wait fails with 124 — `wearsic update` can then
+  # report a stalled download instead of hanging.
+  case "$limit" in
+    ''|*[!0-9]*) limit=$(( ${SHIM_FETCH_MAX_WAIT:-1800} + 60 )) ;;
+  esac
+  while kill -0 "$SHIM_FETCH_PID" 2>/dev/null; do
+    if [ "$waited" -ge "$limit" ]; then
+      kill "$SHIM_FETCH_PID" 2>/dev/null || true
+      sleep 1
+      kill -9 "$SHIM_FETCH_PID" 2>/dev/null || true
+      wait "$SHIM_FETCH_PID" 2>/dev/null || true
+      SHIM_FETCH_PID=""
+      # Wipe the mid-flight bar so the caller's error line starts clean.
+      [ "${TTY_OUT:-0}" = "1" ] && { printf '\r%s[K\n' "$SHIM_ESC"; SHIM_LIVE_ACTIVE=0; }
+      return 124
+    fi
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
   wait "$SHIM_FETCH_PID"; rc=$?
   SHIM_FETCH_PID=""
   if [ "$rc" = "0" ]; then
@@ -3484,8 +3516,16 @@ cf_ensure_cloudflared() {
       "$tmp" "Cloudflare  installing cloudflared"
     SHIM_PROGRESS_HOOK=shim_fetch_progress
     shim_animate "$SHIM_FETCH_PID"
-    if ! shim_fetch_wait; then
+    local fetch_rc=0
+    shim_fetch_wait || fetch_rc=$?
+    if [ "$fetch_rc" != "0" ]; then
       SHIM_PROGRESS_HOOK=""
+      if [ "$fetch_rc" = "124" ]; then
+        shim_stage_end fail "the download stalled"
+        rm -f "$tmp"
+        err "cloudflared download stalled (the connection stopped delivering data) — retry when the network is steadier, or install it manually"
+        return 1
+      fi
       shim_stage_end fail "the cloudflared download failed"
       rm -f "$tmp"
       err "cloudflared download failed — check the connection or install it manually"
@@ -4039,6 +4079,35 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
       fi
     fi
     if [ -z "$origin" ]; then
+      # 0b. The tunnel BINARY can vanish under us: every engine update
+      #     replaces bin/ wholesale and the release ships no cloudflared,
+      #     so after `wearsic update` each launch dies in seconds while
+      #     the supervisor keeps minting hostnames for a binary that is
+      #     not there (live outage 2026-10-22: an update deleted the
+      #     37 MB binary and the front door burned four tunnels).
+      #     Ask the SAME resolver the launcher uses (CLOUDFLARED_PATH,
+      #     PATH, then $DEST/bin/cloudflared) — a custom binary location
+      #     must not be mistaken for a missing one. Restore BEFORE
+      #     spending a mint on a doomed launch.
+      if ! cf_cloudflared_bin >/dev/null 2>&1; then
+        cf_log "the tunnel binary is missing (an engine update replaced bin/) — restoring it"
+        cf_state_write degraded "$sub" "$perm" "" "$deployed" \
+          "The tunnel binary was removed by an engine update — restoring it" "$acc"
+        if [ -x "$DEST/bin.prev/cloudflared" ]; then
+          # The rollback copy still has it — no network needed.
+          cp -f "$DEST/bin.prev/cloudflared" "$DEST/bin/cloudflared" 2>/dev/null || true
+          chmod 0755 "$DEST/bin/cloudflared" 2>/dev/null || true
+        fi
+        if ! cfbin="$(cf_ensure_cloudflared)"; then
+          cf_log "ERROR: ${CF_LAST_ERROR:-cloudflared is missing and could not be re-downloaded}"
+          cf_state_write degraded "$sub" "$perm" "" "$deployed" \
+            "The tunnel binary is missing and could not be re-downloaded" "$acc"
+          cf_sleep_backoff "$restart_delay" "tunnel binary restore"
+          restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 300 ] && restart_delay=300
+          continue
+        fi
+        cf_log "tunnel binary restored: $cfbin"
+      fi
       : > "$tlog"
       # The tunnel is MINTED with curl, not by cloudflared's own client: on
       # real carriers the Go client's POST to api.trycloudflare.com stalls
@@ -5115,8 +5184,14 @@ cmd_update() {
   shim_fetch_start "$zip_url" "$zip" "Download  fetching $zname"
   SHIM_PROGRESS_HOOK=shim_fetch_progress
   shim_animate "$SHIM_FETCH_PID"
-  if ! shim_fetch_wait; then
+  local fetch_rc=0
+  shim_fetch_wait || fetch_rc=$?
+  if [ "$fetch_rc" != "0" ]; then
     SHIM_PROGRESS_HOOK=""
+    if [ "$fetch_rc" = "124" ]; then
+      shim_stage_end fail "the download stalled — nothing was changed"
+      die "the download stalled (the connection stopped delivering data) — nothing was changed; retry when the network is steadier"
+    fi
     shim_stage_end fail "the download failed — nothing was changed"
     die "download failed — nothing was changed"
   fi
@@ -5186,6 +5261,15 @@ cmd_update() {
     [ -d "$DEST/bin.prev" ] && mv "$DEST/bin.prev" "$DEST/bin"
     [ -d "$DEST/lib.prev" ] && mv "$DEST/lib.prev" "$DEST/lib"
     die "the swap did not complete — the previous engine was restored"
+  fi
+  # The tunnel binary is NOT part of the engine release (its bin/ ships the
+  # engine only): a plain swap would delete cloudflared and every supervisor
+  # launch afterwards would die on a missing binary while minting hostnames
+  # (live outage 2026-10-22). Keep the old one when the new bin/ lacks it.
+  if [ -x "$DEST/bin.prev/cloudflared" ] && [ ! -e "$DEST/bin/cloudflared" ]; then
+    cp -f "$DEST/bin.prev/cloudflared" "$DEST/bin/cloudflared" 2>/dev/null \
+      && chmod 0755 "$DEST/bin/cloudflared" 2>/dev/null \
+      && dim "kept the tunnel binary (cloudflared) across the engine swap"
   fi
   for f in run-termux.sh .env.example README.md wearsic-cloudflare-worker.js; do
     [ -f "$src/$f" ] || continue

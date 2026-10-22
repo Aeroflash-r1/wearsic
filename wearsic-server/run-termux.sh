@@ -297,6 +297,17 @@ apply_staged_update() {
   fi
   chmod +x "$PKG_DIR/bin/wearsic-server" "$PKG_DIR/run-termux.sh" 2>/dev/null
 
+  # The tunnel binary is not part of the engine release: keep it across
+  # the swap (bin.prev still holds the old bin/), or the Cloudflare
+  # supervisor's next launch dies on a missing binary while minting
+  # hostnames (live outage 2026-10-22). Rollback restores bin.prev and
+  # thereby the binary too.
+  if [ -x "$PKG_DIR/bin.prev/cloudflared" ] && [ ! -e "$PKG_DIR/bin/cloudflared" ]; then
+    cp -f "$PKG_DIR/bin.prev/cloudflared" "$PKG_DIR/bin/cloudflared" 2>/dev/null \
+      && chmod 0755 "$PKG_DIR/bin/cloudflared" 2>/dev/null \
+      && log "kept the tunnel binary (cloudflared) across the engine swap"
+  fi
+
   # 3) Swap complete — record it, then clean up.
   printf 'phase=swapped\nversion=%s\n' "${NEW_VER:-unknown}" > "$MARKER"
   APP="$PKG_DIR/bin/wearsic-server"

@@ -150,10 +150,14 @@ case "\$url" in
     # Stand in for the quick-tunnel MINT: the supervisor asks for a tunnel
     # with curl (its own Go client stalls on real carriers) and turns the
     # answer into a TUNNEL_TOKEN. The hostname must match the one the fake
-    # cloudflared announces, so both sides of the test agree.
+    # cloudflared announces, so both sides of the test agree. The trailing
+    # line emulates curl's `-w '\nQT_CODE %{http_code}\n'` — without the
+    # QT_CODE prefix the supervisor reads the mint as "no answer" and every
+    # cycle burns a 5x4s retry ladder before falling back to the classic
+    # announce path (which made this test race its own restart window).
     host="first-random-words.trycloudflare.com"
     [ -f "$WORK/new-host" ] && host="\$(basename "\$(cat "$WORK/new-host")" .trycloudflare.com).trycloudflare.com"
-    printf '{"success":true,"result":{"id":"11111111-2222-3333-4444-555555555555","name":"qt-test","hostname":"%s","account_tag":"0123456789abcdef0123456789abcdef","secret":"c2VjcmV0"}}\n200' "\$host"
+    printf '{"success":true,"result":{"id":"11111111-2222-3333-4444-555555555555","name":"qt-test","hostname":"%s","account_tag":"0123456789abcdef0123456789abcdef","secret":"c2VjcmV0"}}\nQT_CODE 200' "\$host"
     exit 0
     ;;
   https://*.workers.dev/*|http://*.workers.dev/*)
@@ -426,6 +430,15 @@ fi
 
 # ── 6. status, verify, logs, stop ──────────────────────────────────────────
 echo "status and stop"
+
+# The tunnel dies right after the step-4 re-point (that pkill), and the
+# supervisor's restart cycle takes a few seconds. Wait — bounded — for the
+# cycle to settle so `status` reports the steady state instead of a
+# snapshot of "tunnel exited; restarting".
+for i in $(seq 1 60); do
+  grep -q '"status":"live"' "$state" 2>/dev/null && break
+  sleep 1
+done
 
 PATH="$WORK/bin:$PATH" timeout 60 bash "$CLI" cloudflare status > "$WORK/status.out" 2>&1
 rc=$?

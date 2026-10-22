@@ -445,7 +445,17 @@ shim_fetch_start() { # $1 = url, $2 = out file, $3 = live text prefix
   SHIM_F_RATE=0
   SHIM_F_PAINT_B=""; SHIM_F_PAINT_MS=0
   SHIM_F_START_MS=0; SHIM_F_START_B=0
-  curl -fL --retry 3 --retry-delay 2 -o "$2" "$1" >/dev/null 2>&1 &
+  # No timeout on this curl = a stalled carrier connection wedges the
+  # caller in `wait` forever (a live phone ran `wearsic update` for 20+
+  # minutes with 0% CPU while the front door churned). A stall must make
+  # curl EXIT: --speed-limit/--speed-time abort a transfer that stops
+  # delivering data, --connect-timeout/--max-time cap the rest. 1800 s is
+  # generous for a ~30 MB zip on a slow hotspot; healthy links finish in
+  # a minute or two. shim_fetch_wait adds a shell-side ceiling too.
+  curl -fL --retry 3 --retry-delay 2 \
+    --connect-timeout 20 --max-time 1800 \
+    --speed-limit 1024 --speed-time 30 \
+    -o "$2" "$1" >/dev/null 2>&1 &
   SHIM_FETCH_PID=$!
 }
 
@@ -658,9 +668,31 @@ shim_fetch_done() {
   printf '\r%s[K%s\n' "$SHIM_ESC" "$line"
 }
 
-shim_fetch_wait() {
-  local rc=0
+shim_fetch_wait() {  # optional $1 = hard ceiling in seconds
+  local rc=0 waited=0 limit="${1:-}"
   [ -n "$SHIM_FETCH_PID" ] || return 1
+  # Never wait on a transfer FOREVER. curl now aborts stalled transfers
+  # itself; this shell-side ceiling is the second belt (and the only one
+  # if the pid somehow outlives the transfer). On overflow the transfer
+  # is killed and the wait fails with 124 — `wearsic update` can then
+  # report a stalled download instead of hanging.
+  case "$limit" in
+    ''|*[!0-9]*) limit=$(( ${SHIM_FETCH_MAX_WAIT:-1800} + 60 )) ;;
+  esac
+  while kill -0 "$SHIM_FETCH_PID" 2>/dev/null; do
+    if [ "$waited" -ge "$limit" ]; then
+      kill "$SHIM_FETCH_PID" 2>/dev/null || true
+      sleep 1
+      kill -9 "$SHIM_FETCH_PID" 2>/dev/null || true
+      wait "$SHIM_FETCH_PID" 2>/dev/null || true
+      SHIM_FETCH_PID=""
+      # Wipe the mid-flight bar so the caller's error line starts clean.
+      [ "${TTY_OUT:-0}" = "1" ] && { printf '\r%s[K\n' "$SHIM_ESC"; SHIM_LIVE_ACTIVE=0; }
+      return 124
+    fi
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
   wait "$SHIM_FETCH_PID"; rc=$?
   SHIM_FETCH_PID=""
   if [ "$rc" = "0" ]; then
@@ -1207,6 +1239,16 @@ fi
 mv "$DEST/bin.new" "$DEST/bin" && mv "$DEST/lib.new" "$DEST/lib" \
   || stage_fail "the swap failed midway — run 'wearsic update' or reinstall to recover"
 [ -f "$DEST/bin/wearsic-server" ] || stage_fail "the engine swap did not complete — run 'wearsic update' to recover"
+
+# The tunnel binary is NOT part of the engine release (bin/ ships the
+# engine only): a swap over an EXISTING install would delete cloudflared
+# and the running supervisor's next launch would die on a missing binary
+# while minting hostnames (live outage 2026-10-22). Keep the old one
+# when the new bin/ lacks it.
+if [ -x "$DEST/bin.prev/cloudflared" ] && [ ! -e "$DEST/bin/cloudflared" ]; then
+  cp -f "$DEST/bin.prev/cloudflared" "$DEST/bin/cloudflared" 2>/dev/null \
+    && chmod 0755 "$DEST/bin/cloudflared" 2>/dev/null
+fi
 
 # Launcher + supporting files (code only — never data). run-termux.sh goes
 # in atomically: re-running the installer over a LIVE server must not

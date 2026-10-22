@@ -146,6 +146,44 @@ class EngineUpdaterSecurityTest {
         return zip.readBytes()
     }
 
+    // The real release zip (android.yml) ships the Cloudflare Worker source
+    // plus licence texts at the package top level. A narrower allowlist broke
+    // the phone's self-update with "zip: unexpected entry in release
+    // package: wearsic-server/wearsic-cloudflare-worker.js".
+    @Test
+    fun `staging accepts the released package layout`(@TempDir tmp: File) = runBlocking {
+        val zip = File.createTempFile("wearsic-rel", ".zip"); zip.deleteOnExit()
+        makeZip(
+            zip,
+            mapOf(
+                "wearsic-server/" to "",
+                "wearsic-server/bin/wearsic-server" to "#!/bin/sh\necho engine\n",
+                "wearsic-server/lib/wearsic-server.jar" to "jarbytes",
+                "wearsic-server/run-termux.sh" to "#!/bin/sh\n",
+                "wearsic-server/wearsic" to "#!/bin/sh\n",
+                "wearsic-server/wearsic-cloudflare-worker.js" to "export default {fetch(){}}\n",
+                "wearsic-server/install.sh" to "#!/bin/sh\n",
+                "wearsic-server/.env.example" to "CLOUDFLARE_WORKER=\n",
+                "wearsic-server/README.md" to "# wearsic\n",
+                "wearsic-server/LICENSE" to "GPL-3.0-only\n",
+                "wearsic-server/LICENSE.apache-2.0" to "Apache-2.0\n",
+                "wearsic-server/NOTICE" to "notices\n",
+            )
+        )
+        val bytes = zip.readBytes()
+        val (port, closer) = serve(bytes, sha256Text = "${sha256Hex(bytes)}  engine.zip\n")
+        try {
+            val u = updater(File(tmp, "state"))
+            val r = u.downloadAndStage(
+                RemoteUpdate("1.8.0", "http://127.0.0.1:$port/engine.zip", "http://127.0.0.1:$port/engine.zip.sha256")
+            )
+            assertNotNull(r)
+            assertTrue(u.hasStagedUpdate())
+        } finally {
+            closer.close()
+        }
+    }
+
     // ---------------- authenticity ----------------
 
     @Test

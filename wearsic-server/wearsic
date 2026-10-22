@@ -2290,6 +2290,7 @@ cmd_funnel() {
 CF_WORKER_SRC_NAME="wearsic-cloudflare-worker.js"
 CF_COMPAT_DATE="2025-08-06"
 CF_API_BASE="https://api.cloudflare.com/client/v4"
+CF_QT_API="https://api.trycloudflare.com/tunnel"
 CF_RETRY_BASE="${WEARSIC_CF_RETRY_BASE:-2}"
 CF_RETRY_CAP="${WEARSIC_CF_RETRY_CAP:-60}"
 CF_RETRY_MAX="${WEARSIC_CF_RETRY_MAX:-6}"
@@ -3579,6 +3580,58 @@ cf_permanent_health() {  # permanent url
   cf_health_ok "$1/health" 15
 }
 
+# Minting a quick tunnel WITHOUT cloudflared's own client. On real carriers
+# cloudflared's Go POST to api.trycloudflare.com can stall for minutes
+# ("context deadline exceeded") while curl answers in seconds to the very
+# same endpoint from the same uid. The POST that CREATES the tunnel is
+# therefore made with curl; the response already carries everything a
+# tunnel token needs:
+#   {"success":true,"result":{"id":"…","hostname":"…random",
+#    "account_tag":"…","secret":"…"}}
+# base64({"a":account_tag,"t":id,"s":secret}) IS a valid TUNNEL_TOKEN, so
+# cloudflared can run that tunnel without ever asking the API:
+#   TUNNEL_TOKEN=<token> cloudflared tunnel --url http://127.0.0.1:8080
+# The token is kept in the CF_QT_TOKEN global (never logged — logs only
+# show its length) and the URL in CF_QT_ORIGIN; both are set in the
+# CALLER'S shell (rc 0 = minted), because a command-substitution caller
+# would run this function in a subshell and lose the assignments.
+cf_quick_setup() {  # [tries] -> rc 0 if minted; sets CF_QT_ORIGIN + CF_QT_TOKEN
+  local tries="${1:-5}" i out code body j host acct tid sec tok
+  case "$tries" in ''|*[!0-9]*) tries=5 ;; esac
+  CF_QT_TOKEN=""
+  for i in $(seq 1 "$tries"); do
+    out="$(curl -sS --max-time 20 -X POST -w '\nQT_CODE %{http_code}\n' \
+      "$CF_QT_API" 2>/dev/null)" || out=""
+    code="$(printf '%s' "$out" | sed -n 's/^QT_CODE //p' | head -1)"
+    body="$(printf '%s' "$out" | sed '$d')"
+    case "$code" in
+      ""|*[!0-9]*) sleep 4; continue ;;
+      429) sleep 6; continue ;;
+      200|201) : ;;
+      *) sleep 4; continue ;;
+    esac
+    acct="$(printf '%s' "$body" | sed -n 's/.*"account_tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    tid="$(printf '%s' "$body" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    host="$(printf '%s' "$body" | sed -n 's/.*"hostname"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    sec="$(printf '%s' "$body" | sed -n 's/.*"secret"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    if [ -z "$host" ] || [ -z "$acct" ] || [ -z "$tid" ] || [ -z "$sec" ]; then
+      sleep 4; continue
+    fi
+    case "$host" in
+      *.trycloudflare.com) : ;;
+      *) sleep 4; continue ;;
+    esac
+    j="$(printf '{"a":"%s","t":"%s","s":"%s"}' "$acct" "$tid" "$sec")"
+    tok="$(printf '%s' "$j" | base64 -w 0 2>/dev/null | tr -d '\n')"
+    [ -n "$tok" ] || tok="$(printf '%s' "$j" | openssl base64 -A 2>/dev/null | tr -d '\n')"
+    [ -n "$tok" ] || { sleep 1; continue; }
+    CF_QT_TOKEN="$tok"
+    CF_QT_ORIGIN="https://$host"
+    return 0
+  done
+  return 1
+}
+
 # --- Tunnel teardown ----------------------------------------------------------
 # Killing the tunnel is not one kill: the launcher (proot) was observed to
 # survive a plain TERM while its cloudflared child kept serving, which both
@@ -3667,17 +3720,42 @@ cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
       bindings+=("-b" "$tls_pem:/etc/ssl/certs/ca-certificates.crt")
     fi
     proot="$prefix/bin/proot"
-    "$proot" "${bindings[@]}" "$cfbin" tunnel --no-autoupdate --protocol http2 \
-      --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
+    # A curl-minted token (CF_QT_TOKEN) turns the launch into TUNNEL_TOKEN
+    # mode: cloudflared only CONNECTS to the edge and never visits the
+    # flaky api.trycloudflare.com. Measured on the live phone: `tunnel`
+    # WITHOUT the `run` subcommand ignores TUNNEL_TOKEN and falls back to
+    # the flaky one-shot quick-tunnel POST, and `run` rejects the parent
+    # flags (--protocol/--no-autoupdate) — those ride env vars instead
+    # (TUNNEL_TRANSPORT_PROTOCOL, NO_AUTOUPDATE). The env-assignment
+    # prefix does not disturb argv order (proot first, binds, binary last).
+    if [ -n "${CF_QT_TOKEN:-}" ]; then
+      TUNNEL_TOKEN="$CF_QT_TOKEN" TUNNEL_TRANSPORT_PROTOCOL=http2 NO_AUTOUPDATE=true \
+        "$proot" "${bindings[@]}" "$cfbin" tunnel run \
+        --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
+    else
+      "$proot" "${bindings[@]}" "$cfbin" tunnel --no-autoupdate --protocol http2 \
+        --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
+    fi
   else
-    "$cfbin" tunnel --no-autoupdate --protocol http2 \
-      --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
+    if [ -n "${CF_QT_TOKEN:-}" ]; then
+      TUNNEL_TOKEN="$CF_QT_TOKEN" TUNNEL_TRANSPORT_PROTOCOL=http2 NO_AUTOUPDATE=true \
+        "$cfbin" tunnel run --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
+    else
+      "$cfbin" tunnel --no-autoupdate --protocol http2 \
+        --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
+    fi
   fi
 }
 
 # Runs the tunnel, points the Worker at it, and re-points the Worker every
 # time the tunnel hands out a new random hostname. Restarts the tunnel if it
 # dies. Runs detached; the CLI starts it and reads the state file.
+#
+# The tunnel is minted with curl (api.trycloudflare.com's Go client can
+# stall for minutes on real carriers while curl answers in seconds);
+# cloudflared then only RUNS it via TUNNEL_TOKEN and never visits the
+# flaky endpoint. curl-less (fallback) the daemon's own announce path is
+# used. The response hostname / announce log are authoritative.
 #
 # Recovery rules:
 #   · a per-tunnel log is truncated before each start, so a stale hostname
@@ -3783,37 +3861,55 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
   while :; do
     started_at="$(date +%s)"
     : > "$tlog"
-    cf_tunnel_launch "$p" "$tlog"
-    tunnel_pid=$!
-    cf_log "tunnel started (pid $tunnel_pid)"
-    cf_state_write starting "$sub" "$perm" "" "$deployed" "waiting for the tunnel hostname" "$acc"
-
-    # 1. Wait for the random hostname. The log is authoritative; the
-    #    metrics endpoint is the fallback for builds that log differently.
+    # The tunnel is MINTED with curl, not by cloudflared's own client: on
+    # real carriers the Go client's POST to api.trycloudflare.com stalls
+    # for minutes while curl answers in seconds from the same uid. The
+    # response carries id, hostname and secret — everything a
+    # TUNNEL_TOKEN needs — so cloudflared only ever RUNS the tunnel and
+    # never visits the flaky endpoint. The classic announce path (the
+    # daemon asking for the hostname itself) stays as the fallback.
     origin=""
-    local i mport
-    for i in $(seq 1 90); do
-      origin="$(cf_hostname_from_log "$tlog")"
-      if [ -z "$origin" ]; then
-        for mport in 20241 20242 20243 20244 20245; do
-          origin="$(cf_hostname_from_metrics "$mport")"
-          [ -n "$origin" ] && break
-        done
-      fi
-      [ -n "$origin" ] && break
-      kill -0 "$tunnel_pid" 2>/dev/null || break
-      sleep 1
-    done
-    origin="$(cf_normalize_origin "$origin")"
+    if cf_quick_setup "${CF_QT_SETUP_TRIES:-5}"; then
+      origin="$CF_QT_ORIGIN"
+      cf_log "tunnel available at $origin (provisioned by curl)"
+      cf_state_write starting "$sub" "$perm" "$origin" "$deployed" "waiting for the tunnel to connect" "$acc"
+      cf_tunnel_launch "$p" "$tlog"
+      tunnel_pid=$!
+      cf_log "tunnel started (pid $tunnel_pid)"
+    else
+      cf_log "curl did not provision a tunnel; using cloudflared's own announce path"
+      cf_tunnel_launch "$p" "$tlog"
+      tunnel_pid=$!
+      cf_log "tunnel started (pid $tunnel_pid)"
+      cf_state_write starting "$sub" "$perm" "" "$deployed" "waiting for the tunnel hostname" "$acc"
 
-    if [ -z "$origin" ]; then
-      cf_log "ERROR: could not read the tunnel hostname"
-      cf_state_write error "$sub" "$perm" "" "$deployed" "Could not read the tunnel hostname from cloudflared" "$acc"
-      cf_kill_tree_all "$tunnel_pid"
-      cf_sleep_backoff "$restart_delay" "tunnel start"
-      restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
-      continue
+      # 1. Wait for the random hostname. The log is authoritative; the
+      #    metrics endpoint is the fallback for builds that log differently.
+      origin=""
+      local i mport
+      for i in $(seq 1 90); do
+        origin="$(cf_hostname_from_log "$tlog")"
+        if [ -z "$origin" ]; then
+          for mport in 20241 20242 20243 20244 20245; do
+            origin="$(cf_hostname_from_metrics "$mport")"
+            [ -n "$origin" ] && break
+          done
+        fi
+        [ -n "$origin" ] && break
+        kill -0 "$tunnel_pid" 2>/dev/null || break
+        sleep 1
+      done
+
+      if [ -z "$origin" ]; then
+        cf_log "ERROR: could not read the tunnel hostname"
+        cf_state_write error "$sub" "$perm" "" "$deployed" "Could not read the tunnel hostname from cloudflared" "$acc"
+        cf_kill_tree_all "$tunnel_pid"
+        cf_sleep_backoff "$restart_delay" "tunnel start"
+        restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
+        continue
+      fi
     fi
+    origin="$(cf_normalize_origin "$origin")"
     cf_log "tunnel hostname: $origin"
 
     # 2. Do not deploy a hostname that is not serving yet. Quick tunnels

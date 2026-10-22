@@ -408,6 +408,10 @@ class EngineUpdater(
         internal val ALLOWED_TOP_LEVEL = setOf(
             "bin", "lib", "run-termux.sh", "wearsic", "install.sh",
             "README.md", "SETUP.md", ".env.example",
+            // The Cloudflare Worker source rides in every release zip (the
+            // front door deploys it verbatim); licence texts travel too.
+            "wearsic-cloudflare-worker.js", "LICENSE", "LICENSE.apache-2.0",
+            "NOTICE",
         )
 
         /** Extracts the first 64-hex token from a `.sha256` checksum file. */

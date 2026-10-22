@@ -4109,7 +4109,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
     # 4. Watch for a new hostname, and for the permanent URL going dead.
     #    Start the clock now: a just-deployed Worker needs a moment to
     #    propagate, and a health check at second 5 would re-deploy in vain.
-    local last_check
+    local last_check cf_stale=0
     last_check="$(date +%s)"
     while cf_tunnel_alive "$tunnel_pid"; do
       sleep 5
@@ -4171,7 +4171,14 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
             fi
           fi
         elif ! cf_permanent_health "$perm"; then
-          cf_log "permanent URL check failed — re-deploying the Worker"
+          # The permanent URL is not answering. A re-deploy of the same
+          # Worker fixes a broken Worker, but NOT a tunnel whose edge
+          # connection is half-dead (the process is there, the traffic is
+          # not). Count consecutive failures: after a few minutes of them
+          # the tunnel itself is replaced — the hostname changes once,
+          # deliberately, instead of serving a dead front door forever.
+          cf_stale=$(( cf_stale + 1 ))
+          cf_log "permanent URL check failed (${cf_stale} in a row) — re-deploying the Worker"
           if cf_deploy_worker_retry "$origin"; then
             cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
             cf_log "worker re-deployed after a failed health check"
@@ -4185,6 +4192,17 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
               return 1
             fi
           fi
+          if [ "$cf_stale" -ge 3 ]; then
+            cf_log "the front door stayed down for 3 checks — replacing the tunnel"
+            cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" \
+              "The tunnel was not serving through the edge — replacing it" "$acc"
+            cf_tunnel_stop "$tunnel_pid"
+            cf_sleep_backoff "$restart_delay" "tunnel replacement"
+            restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
+            continue
+          fi
+        else
+          cf_stale=0
         fi
       fi
     done

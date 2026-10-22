@@ -1265,6 +1265,24 @@ chmod 600 "$DEST/.env" 2>/dev/null || true
 resolve_effective_key
 shim_stage_end ok "$API_KEY_STATE"
 
+# Ownership hygiene: the engine, the tunnel and the CLI all run UNPRIVILEGED
+# (the Termux app user). When the installer is run with root — e.g. from a
+# proot shell — a root-owned 0700 tree locks the app user out of its own
+# install: it cannot read .env, cannot write the state directory and cannot
+# exec the tunnel binary, which shows up as a tunnel that dies in seconds.
+# Hand the tree back to the owner of $HOME.
+if [ "$(id -u)" = "0" ] && [ -n "${HOME:-}" ] && [ -d "$HOME" ]; then
+  OWNER_UID="$(stat -c %u "$HOME" 2>/dev/null || echo 0)"
+  OWNER_GID="$(stat -c %g "$HOME" 2>/dev/null || echo 0)"
+  if [ "$OWNER_UID" != "0" ]; then
+    chown -R "$OWNER_UID:$OWNER_GID" "$DEST" 2>/dev/null || true
+    for f in "$CLI_BIN/wearsic" "$DEST/wearsic" "$HOME/.termux/boot/start-wearsic.sh"; do
+      [ -e "$f" ] && chown "$OWNER_UID:$OWNER_GID" "$f" 2>/dev/null || true
+    done
+    chmod 755 "$DEST/bin/cloudflared" 2>/dev/null || true
+  fi
+fi
+
 # ── 4. Build ──────────────────────────────────────────────────────────────
 shim_stage_begin "Build" "engine"
 # A release ships a prebuilt engine; a source checkout is compiled here.

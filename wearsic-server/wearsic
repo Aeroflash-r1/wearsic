@@ -555,6 +555,14 @@ shim_draw_live() { # $1 = frame index
   n=${#text}
   [ "$n" -le 0 ] && return 0
   maxw="$(shim_width)"
+  # A label wider than the terminal WRAPS, and "\r" can only erase the last
+  # wrapped line — the leftover fragments then pile up (the "Cloudflare
+  # waiting for the tunnel + the Worker front…" repetition users saw on a
+  # narrow Termux screen). Prefer the short label when there is one.
+  if [ "$n" -gt "$maxw" ] && [ -n "${SHIM_LIVE_SHORT:-}" ]; then
+    text="$SHIM_LIVE_SHORT"
+    n=${#text}
+  fi
   if [ "$n" -gt "$maxw" ]; then
     text="${text:0:$(( maxw - 1 ))}…"
     n=${#text}
@@ -693,7 +701,7 @@ shim_animate() { # $1 = pid
 
 # Wait for a condition while the live line shimmers.
 # $1 = label, $2 = timeout in seconds, $3 = shell test command
-shim_wait() { # label limit test-command
+shim_wait() { # label limit test-command [short-label]
   local label="$1" limit="$2" test="$3" i=0 max step
   case "$limit" in ''|*[!0-9]*) limit=30 ;; esac
   if [ "$SHIM_DEPTH" = "0" ] || [ "$TTY_OUT" != "1" ]; then
@@ -703,6 +711,7 @@ shim_wait() { # label limit test-command
     max=$(( limit * 10 )); step=0
   fi
   SHIM_LIVE_TEXT="$label"
+  SHIM_LIVE_SHORT="${4:-}"
   shim_cursor_hide
   while [ "$i" -lt "$max" ]; do
     shim_draw_live $(( i % SHIM_LOOP_FRAMES ))
@@ -2443,7 +2452,33 @@ cf_credential() {  # $1 = key name
 }
 
 cf_token_from_env() { cf_credential CLOUDFLARE_API_TOKEN; }
-cf_account_env()   { cf_credential CLOUDFLARE_ACCOUNT_ID; }
+
+# Configuration (which account, which workers.dev subdomain, which Worker)
+# comes from the INSTALL's .env, not from a stale value exported in some old
+# shell: an exported CLOUDFLARE_ACCOUNT_ID pointed the front door at a
+# different Cloudflare account than the one the phone actually serves, so
+# the tunnel was deployed where nobody was watching. The file wins; a
+# disagreeing export is reported instead of silently winning. The API
+# TOKEN deliberately keeps env-first precedence (a token passed on the
+# command line must not be overridden by a stale file).
+cf_config() {  # $1 = key -> value
+  local v
+  v="$(env_value "$1")"
+  [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+  cf_credential "$1"
+}
+
+cf_config_conflict() {  # $1 = key -> prints a warning if env and .env disagree
+  local key="$1" file_v env_v
+  file_v="$(env_value "$key")"
+  env_v="$(printenv "$key" 2>/dev/null || true)"
+  if [ -n "$file_v" ] && [ -n "$env_v" ] && [ "$file_v" != "$env_v" ]; then
+    printf 'the shell exports %s=%s but %s pins %s — using the installed configuration' \
+      "$key" "$env_v" "$(basename "${ENV_FILE:-.env}")" "$file_v"
+  fi
+}
+
+cf_account_env()   { cf_config CLOUDFLARE_ACCOUNT_ID; }
 
 cf_wrangler_available() { command -v wrangler >/dev/null 2>&1; }
 
@@ -3094,7 +3129,7 @@ cf_rand4() {
 # returns no subdomain still takes the create path.
 cf_ensure_subdomain() {  # $1 = account id
   local acc="$1" want sub cand candidates
-  want="$(cf_credential CLOUDFLARE_SUBDOMAIN)"
+  want="$(cf_config CLOUDFLARE_SUBDOMAIN)"
   if [ -n "$want" ]; then
     case "$want" in
       *[!a-z0-9-]*) err "CLOUDFLARE_SUBDOMAIN must be lowercase letters, digits or dashes"; return 1 ;;
@@ -3160,7 +3195,7 @@ cf_ensure_subdomain() {  # $1 = account id
 # --- Worker identity and source --------------------------------------------
 cf_worker_name() {
   local w
-  w="$(cf_credential CLOUDFLARE_WORKER)"
+  w="$(cf_config CLOUDFLARE_WORKER)"
   [ -n "$w" ] || w="wearsic"
   # The workers.dev hostname IS the worker name, so it must be a valid DNS
   # label: letters, digits and dashes, no leading/trailing dash, <=63 chars.
@@ -3176,7 +3211,7 @@ cf_worker_name() {
 
 cf_worker_src() {
   local c
-  c="$(cf_credential CLOUDFLARE_WORKER_SRC)"
+  c="$(cf_config CLOUDFLARE_WORKER_SRC)"
   if [ -n "$c" ]; then
     [ -f "$c" ] && { printf '%s' "$c"; return 0; }
     return 1
@@ -3408,6 +3443,20 @@ cf_cloudflared_bin() {
 cf_ensure_cloudflared() {
   local bin
   bin="$(cf_cloudflared_bin)" && { printf '%s' "$bin"; return 0; }
+  # A binary that exists but cannot be EXECUTED by this user (installed by
+  # another uid, or with the mode stripped) makes every tunnel die in
+  # seconds with a bare "tunnel process exited". Repair the mode first;
+  # if that is not ours to fix, say exactly what is wrong instead of
+  # failing later inside the supervisor.
+  local existing="$DEST/bin/cloudflared"
+  if [ -f "$existing" ] && [ ! -x "$existing" ]; then
+    if chmod 0755 "$existing" 2>/dev/null && [ -x "$existing" ]; then
+      printf '%s' "$existing"; return 0
+    fi
+    err "The tunnel binary $existing is not executable by this user"
+    err "  fix it with: chmod 755 $existing   (or re-run the installer as this user)"
+    return 1
+  fi
   # The automatic download is the Linux/Android release. On other hosts the
   # user must provide a native cloudflared (or install it in PATH).
   case "$(uname -s 2>/dev/null || printf '')" in
@@ -3451,7 +3500,7 @@ cf_ensure_cloudflared() {
     err "cloudflared download is not a Linux executable (got '$magic') — nothing was installed"
     return 1
   fi
-  chmod +x "$tmp"
+  chmod 0755 "$tmp"
   # A binary for the right CPU can still be unusable on Android if it is not
   # compatible with the device's libc. Fail here with an actionable message
   # instead of starting a supervisor that can never read a tunnel hostname.
@@ -3567,7 +3616,7 @@ cf_origin_ready() {  # origin [budget_s] [tunnel_pid]
       return 0
     fi
     case "$CF_HEALTH_LAST" in ?*) CF_READY_LAST="$CF_HEALTH_LAST" ;; esac
-    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+    if [ -n "$pid" ] && ! cf_tunnel_alive "$pid"; then
       CF_READY_LAST="tunnel process exited"
       return 1
     fi
@@ -3599,16 +3648,21 @@ cf_quick_setup() {  # [tries] -> rc 0 if minted; sets CF_QT_ORIGIN + CF_QT_TOKEN
   local tries="${1:-5}" i out code body j host acct tid sec tok
   case "$tries" in ''|*[!0-9]*) tries=5 ;; esac
   CF_QT_TOKEN=""
+  CF_QT_LAST=""
   for i in $(seq 1 "$tries"); do
     out="$(curl -sS --max-time 20 -X POST -w '\nQT_CODE %{http_code}\n' \
       "$CF_QT_API" 2>/dev/null)" || out=""
     code="$(printf '%s' "$out" | sed -n 's/^QT_CODE //p' | head -1)"
     body="$(printf '%s' "$out" | sed '$d')"
     case "$code" in
-      ""|*[!0-9]*) sleep 4; continue ;;
-      429) sleep 6; continue ;;
+      ""|*[!0-9]*) CF_QT_LAST="no answer from $CF_QT_API"; sleep 4; continue ;;
+      # Cloudflare rate-limits the quick-tunnel API per IP ("error code:
+      # 1015"). Minting one tunnel after another burns that budget, so stop
+      # at the FIRST 429 and let the supervisor back off — hammering the
+      # limiter only extends it.
+      429) CF_QT_LAST="HTTP 429 — the tunnel API is rate-limiting this network"; return 1 ;;
       200|201) : ;;
-      *) sleep 4; continue ;;
+      *) CF_QT_LAST="HTTP $code from $CF_QT_API"; sleep 4; continue ;;
     esac
     acct="$(printf '%s' "$body" | sed -n 's/.*"account_tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
     tid="$(printf '%s' "$body" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
@@ -3630,6 +3684,54 @@ cf_quick_setup() {  # [tries] -> rc 0 if minted; sets CF_QT_ORIGIN + CF_QT_TOKEN
     return 0
   done
   return 1
+}
+
+# Is the tunnel still there? The LAUNCHER pid is not a reliable witness: the
+# Go runtime of cloudflared breaks away from proot's ptrace session, so the
+# launcher exits while cloudflared keeps running (and keeps reconnecting to
+# the edge). Trusting only the launcher made the supervisor kill a perfectly
+# healthy tunnel, mint a new one and change the hostname every few seconds
+# — exactly the "the URL keeps changing" symptom. So a tunnel is alive when
+# the launcher is alive OR a cloudflared process of THIS install (matching
+# the tunnel token when we know it) is running.
+cf_tunnel_pid() {  # -> pid of the live cloudflared of this install (empty if none)
+  local dir pid cmdline envline
+  for dir in /proc/[0-9]*; do
+    pid="${dir#/proc/}"
+    [ "$pid" = "$$" ] && continue
+    cmdline="$( { tr '\0' ' ' < "$dir/cmdline"; } 2>/dev/null )" || continue
+    case "$cmdline" in
+      *"$DEST/bin/cloudflared tunnel"*) : ;;
+      *) continue ;;
+    esac
+    if [ -n "${CF_QT_TOKEN:-}" ]; then
+      envline="$( { tr '\0' '\n' < "$dir/environ"; } 2>/dev/null )" || envline=""
+      case "$envline" in
+        *"TUNNEL_TOKEN=$CF_QT_TOKEN"*) printf '%s' "$pid"; return 0 ;;
+        *) continue ;;
+      esac
+    fi
+    printf '%s' "$pid"; return 0
+  done
+  return 1
+}
+
+cf_tunnel_alive() {  # $1 = launcher pid -> rc 0 if the tunnel is still running
+  local pid="${1:-}"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi
+  cf_tunnel_pid >/dev/null 2>&1
+}
+
+# Stop the tunnel for good: the launcher's tree AND the cloudflared process
+# itself (the launcher may already be gone — that is how orphans survived
+# and kept appending to the shared tunnel log).
+cf_tunnel_stop() {  # $1 = launcher pid
+  local pid="${1:-}" real
+  cf_kill_tree_all "$pid"
+  real="$(cf_tunnel_pid 2>/dev/null || true)"
+  if [ -n "$real" ]; then
+    cf_kill_tree_k "$real"
+  fi
 }
 
 # --- Tunnel teardown ----------------------------------------------------------
@@ -3816,7 +3918,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
 
   cf_supervise_cleanup() {
     if [ -n "${tunnel_pid:-}" ]; then
-      cf_kill_tree_all "$tunnel_pid"
+      cf_tunnel_stop "$tunnel_pid"
     fi
     cf_lock_release
   }
@@ -3860,33 +3962,64 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
 
   while :; do
     started_at="$(date +%s)"
-    : > "$tlog"
-    # The tunnel is MINTED with curl, not by cloudflared's own client: on
-    # real carriers the Go client's POST to api.trycloudflare.com stalls
-    # for minutes while curl answers in seconds from the same uid. The
-    # response carries id, hostname and secret — everything a
-    # TUNNEL_TOKEN needs — so cloudflared only ever RUNS the tunnel and
-    # never visits the flaky endpoint. The classic announce path (the
-    # daemon asking for the hostname itself) stays as the fallback.
     origin=""
-    if cf_quick_setup "${CF_QT_SETUP_TRIES:-5}"; then
-      origin="$CF_QT_ORIGIN"
-      cf_log "tunnel available at $origin (provisioned by curl)"
-      cf_state_write starting "$sub" "$perm" "$origin" "$deployed" "waiting for the tunnel to connect" "$acc"
-      cf_tunnel_launch "$p" "$tlog"
-      tunnel_pid=$!
-      cf_log "tunnel started (pid $tunnel_pid)"
-    else
-      cf_log "curl did not provision a tunnel; using cloudflared's own announce path"
-      cf_tunnel_launch "$p" "$tlog"
-      tunnel_pid=$!
-      cf_log "tunnel started (pid $tunnel_pid)"
-      cf_state_write starting "$sub" "$perm" "" "$deployed" "waiting for the tunnel hostname" "$acc"
+    # 0. ADOPT a tunnel that is already running for this install. Minting a
+    #    fresh tunnel for every hiccup is what changed the hostname every
+    #    few seconds AND burned the quick-tunnel rate limit (HTTP 429 /
+    #    "error code: 1015" — the API allows only a handful of tunnels per
+    #    IP per minute). If this install's tunnel is still alive, keep it
+    #    and keep serving from it.
+    local live_pid live_origin
+    live_pid="$(cf_tunnel_pid 2>/dev/null || true)"
+    if [ -n "$live_pid" ]; then
+      # The running tunnel's own announcement wins (when it makes one);
+      # otherwise the origin remembered in the state file is the authority.
+      live_origin="$(cf_hostname_from_log "$tlog")"
+      [ -z "$live_origin" ] && live_origin="$(cf_state_get origin 2>/dev/null || true)"
+      live_origin="$(cf_normalize_origin "$live_origin")"
+      if [ -n "$live_origin" ]; then
+        cf_log "adopting the tunnel that is already running (pid $live_pid): $live_origin"
+        origin="$live_origin"
+        tunnel_pid="$live_pid"
+        cf_state_write starting "$sub" "$perm" "$origin" "$deployed" "checking the running tunnel" "$acc"
+      fi
+    fi
+    if [ -z "$origin" ]; then
+      : > "$tlog"
+      # The tunnel is MINTED with curl, not by cloudflared's own client: on
+      # real carriers the Go client's POST to api.trycloudflare.com stalls
+      # for minutes while curl answers in seconds from the same uid. The
+      # response carries id, hostname and secret — everything a
+      # TUNNEL_TOKEN needs — so cloudflared only ever RUNS the tunnel and
+      # never visits the flaky endpoint. The classic announce path (the
+      # daemon asking for the hostname itself) stays as the fallback.
+      if cf_quick_setup "${CF_QT_SETUP_TRIES:-5}"; then
+        origin="$CF_QT_ORIGIN"
+        cf_log "tunnel available at $origin (provisioned by curl)"
+        cf_state_write starting "$sub" "$perm" "$origin" "$deployed" "waiting for the tunnel to connect" "$acc"
+        cf_tunnel_launch "$p" "$tlog"
+        tunnel_pid=$!
+        cf_log "tunnel started (pid $tunnel_pid)"
+      elif [ "${CF_QT_LAST:-}" = "HTTP 429 — the tunnel API is rate-limiting this network" ]; then
+        # Rate-limited: wait it out. Minting again immediately would only
+        # extend the limit, and the classic fallback would stall for
+        # minutes on the very endpoint that is throttling us.
+        cf_log "ERROR: ${CF_QT_LAST} — waiting before trying again"
+        cf_state_write degraded "$sub" "$perm" "" "$deployed" \
+          "The tunnel API is rate-limiting this network (HTTP 429) — waiting for it to clear" "$acc"
+        cf_sleep_backoff "$restart_delay" "tunnel mint"
+        restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 300 ] && restart_delay=300
+        continue
+      else
+        cf_log "curl did not provision a tunnel (${CF_QT_LAST:-no answer}); using cloudflared's own announce path"
+        cf_tunnel_launch "$p" "$tlog"
+        tunnel_pid=$!
+        cf_log "tunnel started (pid $tunnel_pid)"
+        cf_state_write starting "$sub" "$perm" "" "$deployed" "waiting for the tunnel hostname" "$acc"
 
-      # 1. Wait for the random hostname. The log is authoritative; the
-      #    metrics endpoint is the fallback for builds that log differently.
-      origin=""
-      local i mport
+        # 1. Wait for the random hostname. The log is authoritative; the
+        #    metrics endpoint is the fallback for builds that log differently.
+        local i mport
       for i in $(seq 1 90); do
         origin="$(cf_hostname_from_log "$tlog")"
         if [ -z "$origin" ]; then
@@ -3896,17 +4029,18 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
           done
         fi
         [ -n "$origin" ] && break
-        kill -0 "$tunnel_pid" 2>/dev/null || break
+        cf_tunnel_alive "$tunnel_pid" || break
         sleep 1
       done
 
       if [ -z "$origin" ]; then
         cf_log "ERROR: could not read the tunnel hostname"
         cf_state_write error "$sub" "$perm" "" "$deployed" "Could not read the tunnel hostname from cloudflared" "$acc"
-        cf_kill_tree_all "$tunnel_pid"
+        cf_tunnel_stop "$tunnel_pid"
         cf_sleep_backoff "$restart_delay" "tunnel start"
         restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
         continue
+      fi
       fi
     fi
     origin="$(cf_normalize_origin "$origin")"
@@ -3925,7 +4059,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
       cf_log "ERROR: tunnel $origin did not serve /health (${CF_READY_LAST:-no answer})"
       cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" \
         "The tunnel is up but the engine did not answer through it (${CF_READY_LAST:-no answer})" "$acc"
-      if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+      if ! cf_tunnel_alive "$tunnel_pid"; then
         wait "$tunnel_pid" 2>/dev/null || true
         cf_sleep_backoff "$restart_delay" "tunnel readiness"
         restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
@@ -3941,7 +4075,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
           cf_log "tunnel $origin started serving /health after $(( $(date +%s) - started_at ))s"
           break
         fi
-        if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+        if ! cf_tunnel_alive "$tunnel_pid"; then
           wait "$tunnel_pid" 2>/dev/null || true
           cf_log "tunnel exited before serving; restarting"
           cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "tunnel not serving and exited; restarting" "$acc"
@@ -3967,7 +4101,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
       if [ "$rc" -eq 2 ]; then
         cf_log "deployment failed permanently; supervisor exiting"
         cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
-        cf_kill_tree_all "$tunnel_pid"
+        cf_tunnel_stop "$tunnel_pid"
         return 1
       fi
     fi
@@ -3977,7 +4111,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
     #    propagate, and a health check at second 5 would re-deploy in vain.
     local last_check
     last_check="$(date +%s)"
-    while kill -0 "$tunnel_pid" 2>/dev/null; do
+    while cf_tunnel_alive "$tunnel_pid"; do
       sleep 5
       local new
       new="$(cf_hostname_from_log "$tlog")"
@@ -3997,7 +4131,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
             if [ "$rc" -eq 2 ]; then
               cf_log "re-point failed permanently; supervisor exiting"
               cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
-              cf_kill_tree_all "$tunnel_pid"
+              cf_tunnel_stop "$tunnel_pid"
               return 1
             fi
           fi
@@ -4031,7 +4165,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
               if [ "$rc" -eq 2 ]; then
                 cf_log "deployment failed permanently; supervisor exiting"
                 cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
-                cf_kill_tree_all "$tunnel_pid"
+                cf_tunnel_stop "$tunnel_pid"
                 return 1
               fi
             fi
@@ -4047,7 +4181,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
             if [ "$rc" -eq 2 ]; then
               cf_log "re-deploy after health check failed permanently; supervisor exiting"
               cf_state_write error "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment was rejected}" "$acc"
-              cf_kill_tree_all "$tunnel_pid"
+              cf_tunnel_stop "$tunnel_pid"
               return 1
             fi
           fi
@@ -4532,6 +4666,14 @@ cf_start() {
 
   cf_ensure_auth || return 1
   local acc sub perm cfbin
+  # A stale exported account/subdomain used to point the front door at a
+  # different Cloudflare account than the install is configured for. Say it
+  # out loud once, then use the installed configuration.
+  local conflict
+  conflict="$(cf_config_conflict CLOUDFLARE_ACCOUNT_ID)"
+  [ -n "$conflict" ] && warn "$conflict"
+  conflict="$(cf_config_conflict CLOUDFLARE_SUBDOMAIN)"
+  [ -n "$conflict" ] && warn "$conflict"
   acc="$(cf_ensure_account)" || return 1
   sub="$(cf_ensure_subdomain "$acc")" || return 1
   perm="$(cf_permanent_url "$sub")" || die "${CF_LAST_ERROR:-invalid permanent URL}"
@@ -4569,7 +4711,7 @@ cf_start() {
   # tunnel answers /health and Cloudflare accepts the Worker upload. A stale
   # URL from a previous run can therefore never be reported as success.
   local st err
-  shim_wait "Cloudflare  waiting for the tunnel + the Worker front door" 240 cf_state_settled
+  shim_wait "Cloudflare  waiting for the tunnel + the Worker front door" 240 cf_state_settled "Cloudflare  waiting for the tunnel…"
   st="$(cf_state_get status || true)"
   if [ "$st" != "live" ]; then
     err="$(cf_state_get last_error || true)"

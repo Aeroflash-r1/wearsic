@@ -146,6 +146,16 @@ case "\$url" in
     esac
     exit 0
     ;;
+  https://api.trycloudflare.com/tunnel)
+    # Stand in for the quick-tunnel MINT: the supervisor asks for a tunnel
+    # with curl (its own Go client stalls on real carriers) and turns the
+    # answer into a TUNNEL_TOKEN. The hostname must match the one the fake
+    # cloudflared announces, so both sides of the test agree.
+    host="first-random-words.trycloudflare.com"
+    [ -f "$WORK/new-host" ] && host="\$(basename "\$(cat "$WORK/new-host")" .trycloudflare.com).trycloudflare.com"
+    printf '{"success":true,"result":{"id":"11111111-2222-3333-4444-555555555555","name":"qt-test","hostname":"%s","account_tag":"0123456789abcdef0123456789abcdef","secret":"c2VjcmV0"}}\n200' "\$host"
+    exit 0
+    ;;
   https://*.workers.dev/*|http://*.workers.dev/*)
     # Stand in for the Worker: forward to the engine the way the real
     # Worker forwards to the tunnel origin.
@@ -382,7 +392,8 @@ echo "https://third-random-words.trycloudflare.com" > "$WORK/new-host"
 # must notice, restart it, discover the new hostname and re-deploy.
 pkill -f "$WORK/bin/cloudflared" 2>/dev/null
 for i in $(seq 1 90); do
-  grep -q '"deployed_origin":"https://third-random-words.trycloudflare.com"' "$state" 2>/dev/null && break
+  if grep -q '"deployed_origin":"https://third-random-words.trycloudflare.com"' "$state" 2>/dev/null \
+     && grep -q '"status":"live"' "$state" 2>/dev/null; then break; fi
   sleep 1
 done
 if grep -q '"deployed_origin":"https://third-random-words.trycloudflare.com"' "$state" 2>/dev/null; then

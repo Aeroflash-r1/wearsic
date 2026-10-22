@@ -58,7 +58,7 @@ for fn in cf_hostname_from_text cf_hostname_from_log cf_hostname_from_metrics \
           cf_normalize_origin cf_origin_valid cf_worker_name cf_permanent_url \
           cf_retry_delay cf_enable_workers_dev cf_deploy_worker cf_deploy_worker_retry cf_api cf_api_ok cf_api_message \
           cf_generate_api_key ensure_api_key ensure_engine \
-          env_value write_env_key \
+          env_value write_env_key cf_config \
           cf_api_code cf_api_explain cf_state_dir cf_state_file cf_state_get \
           cf_state_get_num cf_state_write cf_json_escape cf_env_set cf_env_unset; do
   extract "$fn"
@@ -194,12 +194,14 @@ echo "permanent URL"
 
 source "$WORK/stubs.sh"
 source "$WORK/fn_cf_worker_name.sh"
+source "$WORK/fn_cf_config.sh"
 source "$WORK/fn_cf_permanent_url.sh"
 
-( . "$WORK/stubs.sh"; . "$WORK/fn_cf_worker_name.sh" ) >/dev/null 2>&1
+( . "$WORK/stubs.sh"; . "$WORK/fn_cf_worker_name.sh"; . "$WORK/fn_cf_config.sh"; . "$WORK/fn_cf_config.sh" ) >/dev/null 2>&1
 STUB_CRED="" bash -c '
   cf_credential() { printf "%s" "$STUB_CRED"; }
-  . "'"$WORK"'/fn_cf_worker_name.sh"
+  env_value() { printf ""; }
+  . "'"$WORK"'/fn_cf_worker_name.sh"; . "'"$WORK"'/fn_cf_config.sh"
   w="$(cf_worker_name)"; [ "$w" = "wearsic" ] && echo PASS || echo "FAIL got=$w"
 ' > "$WORK/wn.default" 2>&1
 grep -q PASS "$WORK/wn.default" \
@@ -208,16 +210,30 @@ grep -q PASS "$WORK/wn.default" \
 
 STUB_CRED="my-watch-gw" bash -c '
   cf_credential() { printf "%s" "$STUB_CRED"; }
-  . "'"$WORK"'/fn_cf_worker_name.sh"
+  env_value() { printf ""; }
+  . "'"$WORK"'/fn_cf_worker_name.sh"; . "'"$WORK"'/fn_cf_config.sh"
   w="$(cf_worker_name)"; [ "$w" = "my-watch-gw" ] && echo PASS || echo "FAIL got=$w"
 ' > "$WORK/wn.custom" 2>&1
 grep -q PASS "$WORK/wn.custom" \
   && pass "honours a custom worker name" \
   || fail "custom worker name ($(tail -1 "$WORK/wn.custom"))"
 
+# The INSTALL's configuration wins over a stale value exported in an old
+# shell — that mismatch silently pointed the front door at a different
+# Cloudflare account than the phone actually serves.
+STUB_CRED="my-watch-gw" bash -c '
+  cf_credential() { printf "%s" "$STUB_CRED"; }
+  env_value() { printf "installed-gw"; }
+  . "'"$WORK"'/fn_cf_worker_name.sh"; . "'"$WORK"'/fn_cf_config.sh"
+  w="$(cf_worker_name)"; [ "$w" = "installed-gw" ] && echo PASS || echo "FAIL got=$w"
+' > "$WORK/wn.installed" 2>&1
+grep -q PASS "$WORK/wn.installed" \
+  && pass "the installed configuration wins over a stale export" \
+  || fail "installed configuration ignored ($(tail -1 "$WORK/wn.installed"))"
+
 STUB_CRED="bad name!" bash -c '
   cf_credential() { printf "%s" "$STUB_CRED"; }
-  . "'"$WORK"'/fn_cf_worker_name.sh"
+  . "'"$WORK"'/fn_cf_worker_name.sh"; . "'"$WORK"'/fn_cf_config.sh"
   cf_worker_name >/dev/null 2>&1
 ' >"$WORK/wn.bad" 2>&1
 [ $? -ne 0 ] \
@@ -226,7 +242,7 @@ STUB_CRED="bad name!" bash -c '
 
 STUB_CRED="-dash-" bash -c '
   cf_credential() { printf "%s" "$STUB_CRED"; }
-  . "'"$WORK"'/fn_cf_worker_name.sh"
+  . "'"$WORK"'/fn_cf_worker_name.sh"; . "'"$WORK"'/fn_cf_config.sh"
   cf_worker_name >/dev/null 2>&1
 ' >"$WORK/wn.dash" 2>&1
 [ $? -ne 0 ] \
@@ -503,7 +519,7 @@ set -u
 . "$WORK/fn_env_value.sh"
 . "$WORK/fn_cf_subdomain.sh"
 . "$WORK/fn_cf_rand4.sh"
-. "$WORK/fn_cf_ensure_subdomain.sh"
+. "$WORK/fn_cf_ensure_subdomain.sh"; . "$WORK/fn_cf_config.sh"
 . "$WORK/fn_json_tail.sh"
 . "$WORK/fn_jstr.sh"
 ENV_FILE="$WORK/sub.env"
@@ -540,6 +556,7 @@ source "$WORK/fn_cf_api_code.sh"
 source "$WORK/fn_cf_api_explain.sh"
 source "$WORK/fn_cf_origin_valid.sh"
 source "$WORK/fn_cf_worker_name.sh"
+source "$WORK/fn_cf_config.sh"
 source "$WORK/fn_cf_enable_workers_dev.sh"
 source "$WORK/fn_cf_deploy_worker.sh"
 

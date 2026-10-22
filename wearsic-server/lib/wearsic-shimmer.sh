@@ -29,6 +29,7 @@ SHIM_CURSOR_HIDDEN=0
 SHIM_LIVE_ACTIVE=0
 SHIM_PROGRESS_HOOK=""
 SHIM_LIVE_TEXT=""
+SHIM_LIVE_SHORT=""
 SHIM_STATUS_FILE=""
 SHIM_STAGE_NAME=""
 SHIM_STAGE_DETAIL=""
@@ -144,6 +145,14 @@ shim_draw_live() { # $1 = frame index
   n=${#text}
   [ "$n" -le 0 ] && return 0
   maxw="$(shim_width)"
+  # A label wider than the terminal WRAPS, and "\r" can only erase the last
+  # wrapped line — the leftover fragments then pile up (the "Cloudflare
+  # waiting for the tunnel + the Worker front…" repetition users saw on a
+  # narrow Termux screen). Prefer the short label when there is one.
+  if [ "$n" -gt "$maxw" ] && [ -n "${SHIM_LIVE_SHORT:-}" ]; then
+    text="$SHIM_LIVE_SHORT"
+    n=${#text}
+  fi
   if [ "$n" -gt "$maxw" ]; then
     text="${text:0:$(( maxw - 1 ))}…"
     n=${#text}
@@ -282,7 +291,7 @@ shim_animate() { # $1 = pid
 
 # Wait for a condition while the live line shimmers.
 # $1 = label, $2 = timeout in seconds, $3 = shell test command
-shim_wait() { # label limit test-command
+shim_wait() { # label limit test-command [short-label]
   local label="$1" limit="$2" test="$3" i=0 max step
   case "$limit" in ''|*[!0-9]*) limit=30 ;; esac
   if [ "$SHIM_DEPTH" = "0" ] || [ "$TTY_OUT" != "1" ]; then
@@ -292,6 +301,7 @@ shim_wait() { # label limit test-command
     max=$(( limit * 10 )); step=0
   fi
   SHIM_LIVE_TEXT="$label"
+  SHIM_LIVE_SHORT="${4:-}"
   shim_cursor_hide
   while [ "$i" -lt "$max" ]; do
     shim_draw_live $(( i % SHIM_LOOP_FRAMES ))

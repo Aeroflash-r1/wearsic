@@ -440,6 +440,7 @@ SHIM_CURSOR_HIDDEN=0
 SHIM_LIVE_ACTIVE=0
 SHIM_PROGRESS_HOOK=""
 SHIM_LIVE_TEXT=""
+SHIM_LIVE_SHORT=""
 SHIM_STATUS_FILE=""
 SHIM_STAGE_NAME=""
 SHIM_STAGE_DETAIL=""
@@ -3596,6 +3597,59 @@ cf_health_ok() {  # url [timeout]
   return "$found"
 }
 
+# --- The engine BEHIND the tunnel -------------------------------------------
+# A dead engine looks exactly like a broken tunnel from the public side: the
+# front door answers 502/530 while cloudflared itself is perfectly healthy.
+# Replacing tunnels cannot fix that — it only spends the quick-tunnel rate
+# limit and changes the hostname. A real phone lost its engine at 20:46 and
+# the supervisor spent four tunnels before noticing the origin was the
+# casualty. So: probe the LOCAL origin first, and bring the engine back.
+cf_local_origin_ok() {  # $1 = engine port -> rc 0 if the local engine answers
+  cf_health_ok "http://127.0.0.1:${1:-8080}/health" 6
+}
+
+cf_engine_guard() {  # $1 = engine port — restart the engine side, not the tunnel
+  local port="${1:-8080}" run="${RUN:-$DEST/run-termux.sh}" sup_pids
+  CF_ENGINE_RETRIES=$(( ${CF_ENGINE_RETRIES:-0} + 1 ))
+  if [ -f "$run" ]; then
+    sup_pids="$(pids_for "$run" 2>/dev/null)"
+  else
+    sup_pids=""
+  fi
+  if [ -n "$sup_pids" ]; then
+    if [ "$CF_ENGINE_RETRIES" -lt 4 ]; then
+      # The auto-heal supervisor watches /health itself and restarts a dead
+      # engine within its own cycle — waiting is the correct action.
+      cf_log "the engine's auto-heal supervisor is running — waiting for it to bring the engine back (attempt $CF_ENGINE_RETRIES)"
+      return 0
+    fi
+    # It is there, but the engine has stayed down for minutes: that
+    # supervisor is stuck (a live instance refused to start the engine for
+    # thirteen minutes on a real phone, while the front door burned tunnels).
+    # Replace the stuck supervisor — never the tunnel.
+    cf_log "the auto-heal supervisor is not restoring the engine — restarting it"
+    printf '%s\n' "$sup_pids" | while read -r sp; do
+      [ -n "$sp" ] && kill "$sp" 2>/dev/null || true
+    done
+    sleep 2
+  fi
+  if [ ! -f "$run" ]; then
+    cf_log "ERROR: engine launcher $run not found — cannot restart the engine"
+    return 1
+  fi
+  # Launch detached, exactly like `wearsic cloudflare start` does: the
+  # auto-heal supervisor owns the wake lock, the restart backoff and the
+  # log rotation for the engine process.
+  if command -v setsid >/dev/null 2>&1; then
+    ( cd "$DEST" && setsid nohup bash "$run" >/dev/null 2>&1 </dev/null & )
+  else
+    ( cd "$DEST" && nohup bash "$run" >/dev/null 2>&1 </dev/null & )
+  fi
+  CF_ENGINE_RETRIES=0
+  cf_log "engine is not answering on port $port — started the auto-heal supervisor ($run)"
+  return 0
+}
+
 # A Quick Tunnel can hand out a hostname before its edge route is serving
 # ("may take some time to be reachable" — observed 1–2+ minutes on real
 # phones). Deploying then would "succeed" while every request 502s, so the
@@ -4084,8 +4138,18 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
           continue 2
         fi
         wpoll=$(( wpoll + 1 ))
-        [ $(( wpoll % 6 )) -eq 0 ] && \
+        if [ $(( wpoll % 6 )) -eq 0 ]; then
+          # While the tunnel waits for the edge, make sure it is not waiting
+          # for a dead ENGINE: probe the local origin, and restart it if it
+          # is the thing that stopped answering.
+          if ! cf_local_origin_ok "$p"; then
+            cf_engine_guard "$p"
+            cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" \
+              "The engine behind the tunnel is not answering — bringing it back" "$acc"
+            sleep 45
+          fi
           cf_log "tunnel $origin still not serving /health (last: ${CF_HEALTH_LAST:-no answer}) — keeping the tunnel and waiting"
+        fi
       done
     fi
 
@@ -4109,7 +4173,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
     # 4. Watch for a new hostname, and for the permanent URL going dead.
     #    Start the clock now: a just-deployed Worker needs a moment to
     #    propagate, and a health check at second 5 would re-deploy in vain.
-    local last_check cf_stale=0
+    local last_check cf_stale=0 CF_ENGINE_RETRIES=0
     last_check="$(date +%s)"
     while cf_tunnel_alive "$tunnel_pid"; do
       sleep 5
@@ -4171,6 +4235,16 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
             fi
           fi
         elif ! cf_permanent_health "$perm"; then
+          # First ask WHERE the failure is: if the engine behind the tunnel
+          # is dead, the tunnel is innocent and must not be replaced (that
+          # spends the rate limit and changes the hostname for nothing).
+          if ! cf_local_origin_ok "$p"; then
+            cf_engine_guard "$p"
+            cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" \
+              "The engine behind the tunnel is not answering — bringing it back" "$acc"
+            sleep 45
+            continue
+          fi
           # The permanent URL is not answering. A re-deploy of the same
           # Worker fixes a broken Worker, but NOT a tunnel whose edge
           # connection is half-dead (the process is there, the traffic is
@@ -4203,6 +4277,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
           fi
         else
           cf_stale=0
+          CF_ENGINE_RETRIES=0
         fi
       fi
     done

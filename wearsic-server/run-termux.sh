@@ -83,7 +83,11 @@ fi
 # -XX:+ExitOnOutOfMemoryError: a half-alive JVM wedged after OOM is worse
 # than a dead one — the supervisor's restart loop IS the recovery path.
 # GC log: bounded (2×2MB) for post-mortem, always on disk when it matters.
-export JAVA_OPTS="${JAVA_OPTS:--Xms64m -Xmx512m -XX:+UseG1GC -XX:TieredStopAtLevel=1 -XX:MaxGCPauseMillis=150 -Dhttp.keepAlive=true -Dhttp.maxConnections=10 -Djava.net.preferIPv4Stack=true -XX:+ExitOnOutOfMemoryError -Xlog:gc:file=$SCRIPT_DIR/wearsic-gc.log:filecount=2,filesize=2M}"
+# The `::` after the log path is an EMPTY decorator list: without it the
+# parser reads `filecount=2` as a DECORATOR, rejects the option and the
+# JVM refuses to start at all (this shipped once — every engine start
+# failed with "Invalid decorator 'filecount=2'").
+export JAVA_OPTS="${JAVA_OPTS:--Xms64m -Xmx512m -XX:+UseG1GC -XX:TieredStopAtLevel=1 -XX:MaxGCPauseMillis=150 -Dhttp.keepAlive=true -Dhttp.maxConnections=10 -Djava.net.preferIPv4Stack=true -XX:+ExitOnOutOfMemoryError -Xlog:gc:file=$SCRIPT_DIR/wearsic-gc.log::filecount=2,filesize=2M}"
 export PORT="${PORT:-8080}"
 export WEARSIC_DB_PATH="${WEARSIC_DB_PATH:-$SCRIPT_DIR/wearsic.db}"
 
@@ -170,7 +174,15 @@ ensure_front_door() {
 }
 
 cleanup() {
-  [ -n "${CHILD:-}" ] && kill "$CHILD" 2>/dev/null
+  # Kill the engine child ONLY if the pid still looks like our engine: after
+  # the JVM exits the number can be recycled, and killing the recycled pid
+  # once took down the front-door tunnel's cloudflared (live 2026-10-23 —
+  # the tunnel died the moment a phantom run-termux's stale CHILD fired).
+  if [ -n "${CHILD:-}" ] && [ -r "/proc/$CHILD/cmdline" ]; then
+    case "$( { tr '\0' ' ' < "/proc/$CHILD/cmdline"; } 2>/dev/null )" in
+      *wearsic-server*) kill "$CHILD" 2>/dev/null ;;
+    esac
+  fi
   exit 0
 }
 trap cleanup INT TERM
@@ -182,21 +194,41 @@ trap cleanup INT TERM
 # checking live processes; the pattern is the absolute script path so it
 # cannot match an unrelated process).
 other_supervisor_pids() {
-  # Direct /proc scan (see pids_for in the wearsic CLI): no pgrep/ps
-  # dependency — busybox pgrep -f misbehaves, and `ps -ef` is not portable.
-  # $$ is the script's PID even inside $() — the command substitution has its
-  # OWN pid (BASHPID) and its command line also matches the pattern. Filter
+  # Precise /proc scan: a process counts as the supervisor only when its
+  # argv[1] IS the script (bash /path/run-termux.sh). Matching the path as
+  # a SUBSTRING was over-broad — a recovery launcher like
+  #   bash -c "cd … && setsid nohup bash …/run-termux.sh &"
+  # mentions the path in its own argv, was counted as a live supervisor,
+  # and made the real instance refuse to start ("another supervisor is
+  # already running (pid <the launcher>)") while no engine existed at all.
+  # argv[1] either IS the path verbatim, or resolves (relative argv[1]
+  # against the process's OWN cwd) to the same canonical file — covers
+  # ./run-termux.sh and the /data/user/0 vs /data/data spellings without
+  # cross-counting a different install's run-termux.sh basename.
+  # $$ is the script's PID even inside $() — the command substitution has
+  # its OWN pid (BASHPID) and its argv[1] can also be the script. Filter
   # both, or the guard would always "find itself" and refuse to start.
-  local self="${BASHPID:-$$}" d pid cmdline
+  local self="${BASHPID:-$$}" d pid a1 cwd cand canon_pat canon
+  canon_pat="$(readlink -f "$SCRIPT_DIR/run-termux.sh" 2>/dev/null)"
+  [ -z "$canon_pat" ] && canon_pat="$SCRIPT_DIR/run-termux.sh"
   for d in /proc/[0-9]*; do
     pid="${d#/proc/}"
     [ "$pid" = "$$" ] && continue
     [ "$pid" = "$self" ] && continue
-    cmdline="$( { tr '\0' ' ' < "$d/cmdline"; } 2>/dev/null )" || continue
-    [ -z "$cmdline" ] && continue
-    case "$cmdline" in
-      *"$SCRIPT_DIR/run-termux.sh"*) printf '%s\n' "$pid" ;;
+    a1="$( { tr '\0' '\n' < "$d/cmdline"; } 2>/dev/null | sed -n 2p )" || continue
+    [ -z "$a1" ] && continue
+    case "$a1" in
+      "$SCRIPT_DIR/run-termux.sh") printf '%s\n' "$pid"; continue ;;
     esac
+    [ "${a1##*/}" = "run-termux.sh" ] || continue
+    cand="$a1"
+    case "$a1" in
+      /*) ;;
+      *) cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)"
+         [ -n "$cwd" ] && cand="$cwd/$a1" ;;
+    esac
+    canon="$(readlink -f "$cand" 2>/dev/null)"
+    [ -n "$canon" ] && [ "$canon" = "$canon_pat" ] && printf '%s\n' "$pid"
   done
 }
 

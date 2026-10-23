@@ -1540,12 +1540,51 @@ pids_for() {  # $1 = literal string to find in process command lines
   done
 }
 
+pids_for_script() {  # $1 = script path — pids whose argv[1] IS that script
+  # Precise variant of pids_for: only a process EXECUTING the script counts
+  # (bash /path/run-termux.sh). A recovery launcher whose argv merely
+  # MENTIONS the path — bash -c "cd … && setsid nohup bash …/run-termux.sh"
+  # — is not a supervisor. The substring match counted it, so the real
+  # instance refused to start ("another supervisor is already running")
+  # while no engine existed, and the engine guard "waited for a supervisor
+  # that does not exist" instead of restarting a dead engine.
+  # argv[1] either IS the path verbatim, or resolves (relative argv[1]
+  # against the process's OWN cwd) to the same canonical file — this
+  # covers ./run-termux.sh and the /data/user/0 vs /data/data spellings
+  # WITHOUT cross-counting a different install's run-termux.sh basename.
+  local pat="$1" base="${1##*/}" canon_pat self="$$" sub="${BASHPID:-$$}"
+  local d pid a1 cwd cand canon
+  canon_pat="$(canonical_path "$pat")"
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    [ "$pid" = "$self" ] && continue
+    [ "$pid" = "$sub" ] && continue
+    a1="$( { tr '\0' '\n' < "$d/cmdline"; } 2>/dev/null | sed -n 2p )" || continue
+    [ -z "$a1" ] && continue
+    case "$a1" in
+      "$pat") printf '%s\n' "$pid"; continue ;;
+    esac
+    [ "${a1##*/}" = "$base" ] || continue
+    cand="$a1"
+    case "$a1" in
+      /*) ;;
+      *) cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)"
+         [ -n "$cwd" ] && cand="$cwd/$a1" ;;
+    esac
+    canon="$(canonical_path "$cand")"
+    [ -n "$canon" ] && [ -n "$canon_pat" ] && [ "$canon" = "$canon_pat" ] && printf '%s\n' "$pid"
+  done
+}
+
 # Both the launcher and the engine can be reached through a symlinked home
 # on Android (`/data/user/0` -> `/data/data`). The JVM records the REAL path
 # in its classpath, so matching only the un-resolved $DEST made `stop`,
 # `status` and `doctor` blind to their own process. Try both spellings.
 supervisor_pids() {
-  { pids_for "$RUN"; pids_for "$(canonical_path "$RUN")"; } | sort -u
+  # argv[1] precision (see pids_for_script): a process that merely mentions
+  # the path in its argv is not the supervisor. The suffix match covers
+  # both /data/data and /data/user/0 spellings of the home.
+  pids_for_script "$RUN"
 }
 supervisor_running() { [ -n "$(supervisor_pids)" ]; }
 
@@ -3671,7 +3710,7 @@ cf_engine_guard() {  # $1 = engine port — restart the engine side, not the tun
   fi
   CF_ENGINE_RETRIES=$(( ${CF_ENGINE_RETRIES:-0} + 1 ))
   if [ -f "$run" ]; then
-    sup_pids="$(pids_for "$run" 2>/dev/null)"
+    sup_pids="$(pids_for_script "$run" 2>/dev/null)"
   else
     sup_pids=""
   fi

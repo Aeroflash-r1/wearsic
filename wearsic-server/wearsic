@@ -2367,6 +2367,12 @@ cf_lock_dir()    { printf '%s/cloudflare.lock' "$(cf_state_dir)"; }
 cf_log() {
   local f; f="$(cf_log_file)"
   mkdir -p "$(dirname "$f")" 2>/dev/null
+  # Self-cap: the supervisor log used to grow without bound for the whole
+  # lifetime of a running supervisor (~140 KB/day in a failure loop). One
+  # generation at 512 KB is plenty for post-mortem.
+  if [ -f "$f" ] && [ "$(wc -c < "$f" 2>/dev/null || echo 0)" -gt 524288 ]; then
+    mv -f "$f" "$f.old" 2>/dev/null || true
+  fi
   printf '[wearsic %s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$f"
 }
 
@@ -3620,7 +3626,10 @@ cf_http_code() {  # url [timeout]
 CF_HEALTH_LAST="no answer"  # observed result of the last probe, for error texts
 cf_health_ok() {  # url [timeout]
   local tf code found=1
-  tf="$(mktemp "${TMPDIR:-/tmp}/wearsic-h.XXXXXX")" || return 1
+  # Every exit path must set CF_HEALTH_LAST: a caller that breaks on the
+  # return code but reads a STALE "HTTP 200 ok" from an earlier probe would
+  # deploy to a tunnel that never answered.
+  tf="$(mktemp "${TMPDIR:-/tmp}/wearsic-h.XXXXXX")" || { CF_HEALTH_LAST="probe error (no temp file)"; return 1; }
   code="$(curl -sS -o "$tf" -w '%{http_code}' --max-time "${2:-15}" "$1" 2>/dev/null)" || true
   case "$code" in
     200)
@@ -3650,6 +3659,16 @@ cf_local_origin_ok() {  # $1 = engine port -> rc 0 if the local engine answers
 
 cf_engine_guard() {  # $1 = engine port — restart the engine side, not the tunnel
   local port="${1:-8080}" run="${RUN:-$DEST/run-termux.sh}" sup_pids
+  # Confirm before touching anything: a single failed probe is often a
+  # transient stall — observed firing while the engine was ACTIVELY
+  # STREAMING (a 3.8 MB track), which killed a healthy engine and set off
+  # a restart cascade. Two failures ~5 s apart is the bar.
+  sleep 5
+  if cf_local_origin_ok "$port"; then
+    cf_log "the engine answered a second probe — the first failure was a transient stall"
+    CF_ENGINE_RETRIES=0
+    return 0
+  fi
   CF_ENGINE_RETRIES=$(( ${CF_ENGINE_RETRIES:-0} + 1 ))
   if [ -f "$run" ]; then
     sup_pids="$(pids_for "$run" 2>/dev/null)"
@@ -3983,6 +4002,29 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
     return 0
   fi
 
+  # The lock is the single source of truth — enforce it. A second
+  # supervisor that slipped past the start-time check (a /proc visibility
+  # race, a path-spelling mismatch) runs WITHOUT the lock and creates
+  # split-brain: one supervisor owns the tunnel while the other pokes the
+  # engine and overwrites the state file. Observed live on a real phone:
+  # two supervisors, one freshly restarted engine, a "degraded" state
+  # neither side agreed on. Anything matching this install's supervisor
+  # pattern that is not THIS process is by definition a lockless orphan.
+  cf_kill_lockless_supervisors() {
+    local dir pid cmdline
+    for dir in /proc/[0-9]*; do
+      pid="${dir#/proc/}"
+      [ "$pid" = "$$" ] && continue
+      cmdline="$( { tr '\0' ' ' < "$dir/cmdline"; } 2>/dev/null )" || continue
+      case "$cmdline" in
+        *"__cf_supervise"*"$DEST"*) cf_kill_tree_k "$pid" && printf '%s ' "$pid" ;;
+      esac
+    done
+  }
+  local dup
+  dup="$(cf_kill_lockless_supervisors)"
+  case "$dup" in ?*) cf_log "reaped lockless duplicate supervisor(s): $dup" ;; esac
+
   # Reap tunnels left over from an earlier supervisor generation, before
   # the first launch. A previous supervisor was killed or hung while its
   # (proot+cloudflared) tunnel survived; that orphan keeps its announce
@@ -4190,19 +4232,43 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
       fi
       # The tunnel is alive. Keep watching it on a slow cadence and deploy
       # the instant /health answers; log progress once a minute.
-      local wpoll=0
+      # The wait is BOUNDED. A tunnel whose edge route never serves must be
+      # replaced, not watched forever: the Worker would otherwise stay
+      # pointed at a dead origin with no escalation (a real phone sat in
+      # exactly that state, front door dead, supervisor "waiting" patiently).
+      # 300s on top of the 180s readiness budget — warm-up routinely takes
+      # 1-3 minutes, and quick-tunnel mint pressure stays one attempt per
+      # restart cycle.
+      local wpoll=0 wait_deadline=$(( $(date +%s) + 300 )) tun_last
       while :; do
         sleep 10
-        cf_health_ok "$origin/health" 8 || true
-        if [ "${CF_HEALTH_LAST:-}" = "HTTP 200 ok" ]; then
+        # Break on the RETURN CODE, not on the shared string global: a
+        # probe failure that skips the assignment would otherwise leave the
+        # previous value ("HTTP 200 ok" from the local-engine probe!) and
+        # deploy to an unverified tunnel.
+        if cf_health_ok "$origin/health" 8; then
           cf_log "tunnel $origin started serving /health after $(( $(date +%s) - started_at ))s"
           break
         fi
+        # Capture the TUNNEL probe result now: the local-engine probe below
+        # overwrites CF_HEALTH_LAST, which made the old log line claim
+        # "still not serving /health (last: HTTP 200 ok)" — the 200 was the
+        # engine's, the tunnel had actually timed out.
+        tun_last="$CF_HEALTH_LAST"
         if ! cf_tunnel_alive "$tunnel_pid"; then
           wait "$tunnel_pid" 2>/dev/null || true
           cf_log "tunnel exited before serving; restarting"
           cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "tunnel not serving and exited; restarting" "$acc"
           cf_sleep_backoff "$restart_delay" "tunnel restart"
+          restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
+          continue 2
+        fi
+        if [ "$(date +%s)" -ge "$wait_deadline" ]; then
+          cf_log "tunnel $origin never served /health within 300s (${tun_last:-no answer}) — replacing the tunnel"
+          cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" \
+            "The tunnel came up but never served /health — replacing it" "$acc"
+          cf_tunnel_stop "$tunnel_pid"
+          cf_sleep_backoff "$restart_delay" "tunnel readiness"
           restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
           continue 2
         fi
@@ -4217,7 +4283,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
               "The engine behind the tunnel is not answering — bringing it back" "$acc"
             sleep 45
           fi
-          cf_log "tunnel $origin still not serving /health (last: ${CF_HEALTH_LAST:-no answer}) — keeping the tunnel and waiting"
+          cf_log "tunnel $origin still not serving /health (last: ${tun_last:-no answer}) — keeping the tunnel and waiting"
         fi
       done
     fi
@@ -4842,7 +4908,15 @@ cf_start() {
   cfbin="$(cf_ensure_cloudflared)" || return 1
   export PATH="$(dirname "$cfbin"):$PATH"
 
-  if [ -n "$(cf_pids)" ]; then
+  # Two independent "already running" channels: the /proc scan AND the
+  # lock. The scan alone once let a second `wearsic cloudflare` past it
+  # (split-brain: two supervisors, one tunnel, one engine). The lock's
+  # recorded pid is authoritative — if its holder is alive, someone owns
+  # this install's front door no matter what /proc visibility says.
+  local _lock_dir _lock_pid
+  _lock_dir="$(cf_lock_dir)"
+  _lock_pid="$(cat "$_lock_dir/pid" 2>/dev/null || true)"
+  if [ -n "$(cf_pids)" ] || { [ -n "$_lock_pid" ] && kill -0 "$_lock_pid" 2>/dev/null; }; then
     say "Already running — permanent URL:"
     say "  $perm"
     if [ "$no_verify" -eq 1 ]; then

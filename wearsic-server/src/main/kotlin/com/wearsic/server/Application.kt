@@ -393,14 +393,15 @@ fun Application.module(
                 )
             }
             val update = engineUpdater?.let {
+                val snap = it.updateSnapshot()
                 UpdateStatusDto(
-                    status = if (it.hasStagedUpdate()) "staged" else "idle",
+                    status = if (snap.staged) "staged" else "idle",
                     latestKnownVersion = it.latestKnownVersion,
                     lastCheckAtMillis = it.lastCheckAtMillis,
                     lastError = it.lastCheckError,
-                    stagedVersion = it.stagedState()?.version,
-                    updateAttempt = it.currentAttemptCount(),
-                    rollbackReason = it.rollbackInfo()?.reason,
+                    stagedVersion = snap.stagedVersion,
+                    updateAttempt = snap.attemptCount,
+                    rollbackReason = snap.rollbackReason,
                 )
             }
             call.respond(

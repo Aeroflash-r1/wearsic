@@ -40,6 +40,13 @@ interface EngineUpdateController {
     fun hasStagedUpdate(): Boolean
     suspend fun checkForUpdate(): RemoteUpdate?
     suspend fun downloadAndStage(update: RemoteUpdate): String?
+
+    /**
+     * Last discovery error (transport failures, unsigned releases). The
+     * orchestrator uses it to choose the next retry cadence: a transport
+     * error retries in minutes, not hours.
+     */
+    val lastCheckError: String? get() = null
 }
 
 /**
@@ -120,7 +127,7 @@ class EngineUpdater(
     // Observability for /health.
     @Volatile var lastCheckAtMillis: Long = 0
         private set
-    @Volatile var lastCheckError: String? = null
+    @Volatile override var lastCheckError: String? = null
         private set
     @Volatile var latestKnownVersion: String? = null
         private set
@@ -129,6 +136,22 @@ class EngineUpdater(
     private val attemptsFile: File get() = File(stateDir, "update-attempts.json")
     private val rollbackFile: File get() = File(stateDir, "rollback.json")
     val stageDir: File get() = File(stateDir, "staging")
+
+    init {
+        // Kill-window orphans: a SIGKILL between "download" and "verify",
+        // or between "extract to staging/" and the update.json status flip,
+        // left tens of MB behind FOREVER (nothing ever cleaned them).
+        // Remove them at startup — NEVER when a verified staged update is
+        // waiting for the supervisor to apply it.
+        try {
+            File(stateDir, "update.zip.tmp").delete()
+            val state = readState()
+            if (state == null || state.status != "staged") {
+                stageDir.deleteRecursively()
+            }
+        } catch (_: Exception) {
+        }
+    }
 
     /**
      * How many times [version] has been staged by this updater. Persisted
@@ -141,6 +164,33 @@ class EngineUpdater(
     fun currentAttemptCount(): Int {
         val version = stagedState()?.version ?: latestKnownVersion ?: return 0
         return readAttempts()[version] ?: 0
+    }
+
+    /**
+     * One consistent snapshot of everything /health reports about updates.
+     * /health is probed every 5-30s and used to read update.json up to
+     * THREE times per request (hasStagedUpdate + stagedState +
+     * currentAttemptCount) — on a phone's proot filesystem those reads are
+     * the bulk of /health's measured 9-20ms. One read per request instead.
+     */
+    data class UpdateSnapshot(
+        val staged: Boolean,
+        val stagedVersion: String?,
+        val attemptCount: Int,
+        val rollbackReason: String?,
+    )
+
+    fun updateSnapshot(): UpdateSnapshot {
+        val state = readState()
+        val attempts = readAttempts()
+        val version = state?.version ?: latestKnownVersion
+        val rollback = rollbackInfo()
+        return UpdateSnapshot(
+            staged = state?.status == "staged",
+            stagedVersion = state?.version,
+            attemptCount = version?.let { attempts[it] } ?: 0,
+            rollbackReason = rollback?.reason,
+        )
     }
 
     /** Supervisor-recorded rollback info, if a rollback ever happened. */

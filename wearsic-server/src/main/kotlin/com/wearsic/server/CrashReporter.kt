@@ -63,7 +63,12 @@ class CrashReporter(
             )
             val file = File(dir, "crash-${info.atMillis}.json")
             file.writeText(json.encodeToString(info))
+            // Prune BEFORE bumping the counter: the bump is what forces the
+            // next reader to re-scan, so it has to come after the directory
+            // has settled to its final state — otherwise a reader can cache
+            // the pre-prune count and never see another bump to correct it.
             prune()
+            mutations++
             logger.warn("Recorded crash {} in {}", file.name, dir)
             file
         } catch (e: Exception) {
@@ -72,19 +77,46 @@ class CrashReporter(
         }
     }
 
-    fun crashCount(): Int = try {
-        dir.listFiles { f -> f.isFile && f.name.startsWith("crash-") }?.size ?: 0
-    } catch (_: Exception) {
-        0
+    fun crashCount(): Int {
+        refreshCacheIfStale()
+        return cachedCount
     }
 
-    fun lastCrash(): CrashInfo? = try {
-        dir.listFiles { f -> f.isFile && f.name.startsWith("crash-") }
-            ?.maxByOrNull { it.name }
-            ?.readText()
-            ?.let { json.decodeFromString<CrashInfo>(it) }
-    } catch (_: Exception) {
-        null
+    fun lastCrash(): CrashInfo? {
+        refreshCacheIfStale()
+        return cachedLast
+    }
+
+    // /health probes every 5-30s; these two methods listed the directory
+    // and parsed JSON on EVERY call. The values are archival, so a short
+    // cache keeps /health's file I/O minimal. Invalidation is driven by a
+    // mutation counter rather than wall-clock time: any write bumps it, so
+    // a fresh crash is always visible immediately, and staleness never
+    // depends on the clock (which tests inject, and which can be stubbed
+    // not to advance).
+    @Volatile private var mutations = 0L
+    @Volatile private var cachedMutations = -1L
+    @Volatile private var cachedCount = 0
+    @Volatile private var cachedLast: CrashInfo? = null
+
+    private fun refreshCacheIfStale() {
+        if (cachedMutations == mutations) return
+        synchronized(this) {
+            if (cachedMutations == mutations) return
+            val files = try {
+                dir.listFiles { f -> f.isFile && f.name.startsWith("crash-") }
+            } catch (_: Exception) {
+                null
+            }
+            cachedCount = files?.size ?: 0
+            cachedLast = try {
+                files?.maxByOrNull { it.name }?.readText()
+                    ?.let { json.decodeFromString<CrashInfo>(it) }
+            } catch (_: Exception) {
+                null
+            }
+            cachedMutations = mutations
+        }
     }
 
     private fun prune() {

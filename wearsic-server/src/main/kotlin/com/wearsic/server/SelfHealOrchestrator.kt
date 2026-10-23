@@ -63,6 +63,12 @@ class SelfHealOrchestrator(
         private const val UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L
 
         /**
+         * A transport failure (DNS blip, network down) must NOT cost a full
+         * 6-hour delay: the next discovery attempt comes in 10 minutes.
+         */
+        private const val UPDATE_CHECK_RETRY_ON_ERROR_MS = 10 * 60 * 1000L
+
+        /**
          * Real restart: short grace period for in-flight responses, then exit
          * 0 so the supervisor re-launches and applies the staged update.
          */
@@ -116,6 +122,9 @@ class SelfHealOrchestrator(
     /** Last update-discovery run; touched only by the single loop coroutine. */
     private var lastUpdateCheckMillis: Long = 0L
 
+    /** Next discovery cadence: 6h normally, 10 min after a transport error. */
+    private var discoveryIntervalMs: Long = UPDATE_CHECK_INTERVAL_MS
+
     internal suspend fun tick() {
         // 1) Engine-broken path: sustained failures + failing canary.
         //    Runs on the FAST cadence so a broken engine is noticed
@@ -133,11 +142,23 @@ class SelfHealOrchestrator(
         //    once per slow cadence even though tick() runs every minute.
         val now = System.currentTimeMillis()
         if (autoUpdate && !updater.hasStagedUpdate()
-            && now - lastUpdateCheckMillis >= UPDATE_CHECK_INTERVAL_MS
+            && now - lastUpdateCheckMillis >= discoveryIntervalMs
         ) {
-            lastUpdateCheckMillis = now
             updater.checkForUpdate()?.let { remote ->
                 updater.downloadAndStage(remote)
+            }
+            // Stamp AFTER the call. The old code stamped BEFORE it, so a
+            // single DNS blip (UnresolvedAddressException — seen live in
+            // /health on a real phone) postponed the next attempt by a
+            // full 6 hours with the error pinned in /health the whole
+            // time. A transport failure now retries in 10 minutes.
+            lastUpdateCheckMillis = System.currentTimeMillis()
+            val err = updater.lastCheckError
+            discoveryIntervalMs = if (err != null && !err.startsWith("release ")) {
+                log.warn("update discovery failed ($err) — retrying in 10 minutes, not 6 hours")
+                UPDATE_CHECK_RETRY_ON_ERROR_MS
+            } else {
+                UPDATE_CHECK_INTERVAL_MS
             }
         }
     }

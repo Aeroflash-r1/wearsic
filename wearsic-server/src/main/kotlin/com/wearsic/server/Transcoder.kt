@@ -160,6 +160,16 @@ class Transcoder(
     private fun evictCache() {
         val dir = cacheDir ?: return
         try {
+            // A SIGKILL/OOM mid-transcode orphans its .aac.part file: the
+            // in-flight cleanup never ran, and eviction below deliberately
+            // ignores .part (an ACTIVE transcode must not be deleted).
+            // Unbounded across crashes — so reclaim any .part older than an
+            // hour: no live ffmpeg survives that long (the pipeline has
+            // hard timeouts far below it).
+            val now = System.currentTimeMillis()
+            dir.listFiles()
+                ?.filter { it.isFile && it.name.endsWith(".part") && now - it.lastModified() > 3600_000L }
+                ?.forEach { runCatching { it.delete() } }
             var total = dir.listFiles()?.filter { it.isFile && !it.name.endsWith(".part") }
                 ?.sumOf { it.length() } ?: 0L
             if (total <= maxCacheBytes) return

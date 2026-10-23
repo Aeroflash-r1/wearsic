@@ -76,7 +76,14 @@ fi
 # SQLite), so C2's peak-throughput win never materializes while its slow
 # optimizing compiles stretch cold boots on little phone CPUs by ~30%.
 # Drop -Xmx512m to -Xmx384m on phones with <3-4GB free RAM.
-export JAVA_OPTS="${JAVA_OPTS:--Xms64m -Xmx512m -XX:+UseG1GC -XX:TieredStopAtLevel=1 -XX:MaxGCPauseMillis=150 -Dhttp.keepAlive=true -Dhttp.maxConnections=10}"
+# -Djava.net.preferIPv4Stack=true: this network resolves AAAA records that
+# are NOT routable (documented for the Gradle daemon in gradle.properties;
+# the engine JVM was missing it). The dual-stack stall it causes showed up
+# as update.lastError=UnresolvedAddressException in /health.
+# -XX:+ExitOnOutOfMemoryError: a half-alive JVM wedged after OOM is worse
+# than a dead one — the supervisor's restart loop IS the recovery path.
+# GC log: bounded (2×2MB) for post-mortem, always on disk when it matters.
+export JAVA_OPTS="${JAVA_OPTS:--Xms64m -Xmx512m -XX:+UseG1GC -XX:TieredStopAtLevel=1 -XX:MaxGCPauseMillis=150 -Dhttp.keepAlive=true -Dhttp.maxConnections=10 -Djava.net.preferIPv4Stack=true -XX:+ExitOnOutOfMemoryError -Xlog:gc:file=$SCRIPT_DIR/wearsic-gc.log:filecount=2,filesize=2M}"
 export PORT="${PORT:-8080}"
 export WEARSIC_DB_PATH="${WEARSIC_DB_PATH:-$SCRIPT_DIR/wearsic.db}"
 
@@ -126,6 +133,39 @@ health_ok() {
     wget -q -T 10 -O /dev/null "$(health_url)"
   else
     return 0   # no probe tool available: treat as OK (crash-restart still active)
+  fi
+}
+
+# --- Front-door watchdog ----------------------------------------------------
+# The Cloudflare supervisor (permanent URL) is a separate process from this
+# engine supervisor, and NOTHING used to watch it: when it died (lmkd kill,
+# fatal Worker error, phone reboot) the public URL stayed dead until a human
+# noticed and ran `wearsic cloudflare` by hand — observed live: hours of a
+# dead front door. Termux:Boot starts only THIS script, so boot persistence
+# for the front door must live here too. Idempotent: it starts the
+# supervisor only when one is configured but not running.
+ensure_front_door() {
+  local state="$SCRIPT_DIR/wearsic-state/cloudflare.json" cli status dir p cmdline
+  [ -f "$state" ] || return 0            # cloudflare was never configured
+  status="$(sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state" 2>/dev/null | head -1)"
+  case "$status" in
+    stopped|error) return 0 ;;           # explicitly stopped, or fatal config error: needs a human, not a loop
+  esac
+  cli="$SCRIPT_DIR/wearsic"
+  [ -f "$cli" ] || return 0
+  for dir in /proc/[0-9]*; do
+    p="${dir#/proc/}"
+    [ "$p" = "$$" ] && continue
+    cmdline="$( { tr '\0' ' ' < "$dir/cmdline"; } 2>/dev/null )" || continue
+    case "$cmdline" in
+      *"__cf_supervise"*"$SCRIPT_DIR"*) return 0 ;;   # already supervised
+    esac
+  done
+  log "front door supervisor is not running — starting it"
+  if command -v setsid >/dev/null 2>&1; then
+    ( cd "$SCRIPT_DIR" && setsid nohup bash "$cli" __cf_supervise "$PORT" "$SCRIPT_DIR" >/dev/null 2>&1 </dev/null & )
+  else
+    ( cd "$SCRIPT_DIR" && nohup bash "$cli" __cf_supervise "$PORT" "$SCRIPT_DIR" >/dev/null 2>&1 </dev/null & )
   fi
 }
 
@@ -370,6 +410,7 @@ MAX_RESTART_DELAY=60
 
 while true; do
   rotate_log
+  ensure_front_door
   apply_staged_update
   CYCLE_START_MS="$(date +%s)000"
   "$APP" >> "$LOG" 2>&1 &
@@ -378,8 +419,17 @@ while true; do
 
   FAILS=0
   EVER_HEALTHY=0
+  TICK=0
   while kill -0 "$CHILD" 2>/dev/null; do
     sleep 30
+    TICK=$((TICK+1))
+    if [ $((TICK % 10)) -eq 0 ]; then
+      # A long-healthy engine must not grow the log without bound (the
+      # /health probe alone is ~160 KB/day), and the front door must be
+      # re-checked even while everything else is quiet.
+      rotate_log
+      ensure_front_door
+    fi
     if ! kill -0 "$CHILD" 2>/dev/null; then
       break   # process died on its own; outer loop handles restart
     fi

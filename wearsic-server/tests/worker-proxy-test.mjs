@@ -28,7 +28,13 @@ let fail = 0;
 const ok = (name) => { console.log(`  ok   ${name}`); pass++; };
 const bad = (name, detail) => { console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ""}`); fail++; };
 
-const mod = await import(pathToFileURL(WORKER).href);
+// Import the Worker through a data: URL. A plain file import only works on
+// Node versions with automatic ESM syntax detection (20.19+/22+); on older
+// Node the .js extension forces CommonJS and `export default` throws. The
+// Worker is a self-contained module (no relative imports), so a data: URL
+// loads it identically on every version.
+const src = readFileSync(WORKER, "utf8");
+const mod = await import("data:text/javascript;base64," + Buffer.from(src).toString("base64"));
 const worker = mod.default;
 
 assert.equal(typeof worker, "object", "the Worker must export an object");

@@ -60,6 +60,7 @@ import coil.request.ImageRequest
 import com.wearsic.app.data.db.DownloadState
 import com.wearsic.app.data.db.WearsicDownloadEntity
 import com.wearsic.app.model.Track
+import com.wearsic.app.ui.components.WearsicActionTile
 import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSecondaryPillButton
@@ -125,9 +126,15 @@ fun DownloadsScreen(
         ) {
             // Header
             item {
+                val completedCount = downloads.count { it.isCompleted() }
+                val totalBytes = downloads.filter { it.isCompleted() }.sumOf { it.fileSizeBytes }
                 WearsicScreenHeader(
                     title = "Downloads",
-                    subtitle = "${downloads.count { it.isCompleted() }} Offline Tracks",
+                    subtitle = if (completedCount > 0) {
+                        "$completedCount tracks · %.1f MB".format(totalBytes / (1024.0 * 1024.0))
+                    } else {
+                        "${completedCount} Offline Tracks"
+                    },
                     icon = Icons.Rounded.Download
                 )
             }
@@ -135,7 +142,7 @@ fun DownloadsScreen(
             // Play all: one tap to run the whole offline library.
             if (completedTracks.isNotEmpty()) {
                 item {
-                    WearsicSecondaryPillButton(
+                    WearsicActionTile(
                         label = "Play all",
                         icon = Icons.Rounded.PlayArrow,
                         onClick = { onPlayAll(completedTracks) },

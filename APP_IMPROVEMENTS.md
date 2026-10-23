@@ -84,6 +84,14 @@ left for a separate, focused effort.
   API key instantly (e.g. Home-LAN ↔ Cloudflare front door), delete with
   confirmation. Persisted as JSON in DataStore; applying reuses the existing
   validated writers so the HTTP client mirrors the key immediately.
+- **High-standard Wear OS design pass.** Library no longer reads as a menu:
+  it is now a content-forward home (hero → search → recently played →
+  "Browse" 2×2 destination grid with count badges → artists/settings row).
+  New `WearsicActionTile` component (gradient icon medallion + label + count
+  badge) replaces stacked full-width pills across the home, Favorites
+  (play-all/shuffle-all) and Downloads (play-all). Albums get larger 96dp
+  artwork; artists get gradient medallions; playlist/album detail headers no
+  longer show the track count; Downloads header shows total offline size.
 
 ## Roadmap (follow-up work — not in this pass)
 

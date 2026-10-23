@@ -286,7 +286,7 @@ private fun AlbumCard(
         WearsicSongRowArtwork(
             artworkUrl = album.thumbnailUrl,
             contentDescription = album.name,
-            size = 88.dp
+            size = 96.dp
         )
         Spacer(Modifier.height(8.dp))
         Text(

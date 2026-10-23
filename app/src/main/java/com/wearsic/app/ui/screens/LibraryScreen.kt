@@ -406,38 +406,56 @@ private fun NowPlayingMiniCard(
                 // Real album art (or the music-note chip when there is none).
                 val artShape = RoundedCornerShape(WearsicDimens.ArtRadius)
                 val artModifier = Modifier
-                    .size(42.dp)
+                    .size(48.dp)
                     .clip(artShape)
                     .then(
                         if (isPlaying) Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), artShape)
                         else Modifier.border(1.dp, WearsicSurfaceBorderSubtle, artShape)
                     )
-                if (!artworkUrl.isNullOrBlank()) {
-                    val artRequest = remember(artworkUrl) {
-                        ImageRequest.Builder(context)
-                            .data(artworkUrl)
-                            .size(96)
-                            .build()
-                    }
-                    AsyncImage(
-                        model = artRequest,
-                        contentDescription = "Now Playing",
-                        contentScale = ContentScale.Crop,
-                        modifier = artModifier
-                    )
-                } else {
-                    Box(
-                        modifier = artModifier.background(
-                            if (isPlaying) Color.Black.copy(alpha = 0.25f) else WearsicLavenderContainer
-                        ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = WearsicVibrantLavender,
-                            modifier = Modifier.size(17.dp)
+                Box(contentAlignment = Alignment.Center) {
+                    if (isPlaying) {
+                        Box(
+                            modifier = Modifier
+                                .size(60.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.radialGradient(
+                                        listOf(
+                                            LocalWearsicAccent.current.copy(alpha = 0.30f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
                         )
+                    }
+                    if (!artworkUrl.isNullOrBlank()) {
+                        val artRequest = remember(artworkUrl) {
+                            ImageRequest.Builder(context)
+                                .data(artworkUrl)
+                                .size(112)
+                                .build()
+                        }
+                        AsyncImage(
+                            model = artRequest,
+                            contentDescription = "Now Playing",
+                            contentScale = ContentScale.Crop,
+                            modifier = artModifier
+                        )
+                    } else {
+                        Box(
+                            modifier = artModifier.background(
+                                if (isPlaying) LocalWearsicAccent.current.copy(alpha = 0.25f)
+                                else WearsicLavenderContainer
+                            ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MusicNote,
+                                contentDescription = null,
+                                tint = WearsicVibrantLavender,
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.width(10.dp))

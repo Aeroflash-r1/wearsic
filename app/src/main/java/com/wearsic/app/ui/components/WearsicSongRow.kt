@@ -95,9 +95,9 @@ fun WearsicSongRow(
         modifier = modifier
             .fillMaxWidth()
             // Rows enter with the list, not every time lazy scrolling recycles them.
-            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
+            .clip(RoundedCornerShape(16.dp))
             .background(WearsicSurface)
-            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
+            .border(1.dp, WearsicSurfaceBorder, RoundedCornerShape(16.dp))
             .wearsicClickable(pressedScale = 0.975f, onLongClick = onLongClick, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 10.dp)
             .testTag(testTag)
@@ -154,7 +154,7 @@ fun WearsicSongRowArtwork(
 ) {
     val context = LocalContext.current
     val shape = RoundedCornerShape(WearsicDimens.ArtRadius)
-    val ring = Modifier.border(1.dp, WearsicSurfaceBorderSubtle, shape)
+    val ring = Modifier.border(1.dp, WearsicSurfaceBorder, shape)
     if (!artworkUrl.isNullOrBlank()) {
         // Built once per URL: a fresh ImageRequest on every row recomposition
         // (rows redraw during a press and on list updates) makes Coil restart

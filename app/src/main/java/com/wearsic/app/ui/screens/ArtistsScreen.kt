@@ -99,11 +99,13 @@ fun ArtistsScreen(
                     WearsicScreenHeader(
                         title = "Artists",
                         subtitle = "From your saved songs",
+                        icon = Icons.Rounded.Person
                     )
                 } else {
                     WearsicScreenHeader(
                         title = selected!!.name,
                         subtitle = "${selected!!.songs.size} songs • tap Clear to go back",
+                        icon = Icons.Rounded.Person
                     )
                     // Clear button — exits the artist detail back to the full list
                     Row(

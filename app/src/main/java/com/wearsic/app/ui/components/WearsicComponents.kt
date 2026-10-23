@@ -392,7 +392,8 @@ fun WearsicScreenHeader(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
-    accentColor: Color = wearsicSectionAccent(title)
+    accentColor: Color = wearsicSectionAccent(title),
+    icon: ImageVector? = null
 ) {
     Column(
         modifier = modifier
@@ -400,10 +401,39 @@ fun WearsicScreenHeader(
             .padding(top = 6.dp, bottom = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(
-            Modifier.width(22.dp).height(3.dp).clip(CircleShape).background(accentColor)
-        )
-        Spacer(Modifier.height(6.dp))
+        if (icon != null) {
+            // Screen identity medallion: a soft radial tint of the screen's
+            // accent with a hairline ring, so each screen reads as its own
+            // place rather than a list with a coloured bar.
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            listOf(
+                                accentColor.copy(alpha = 0.55f),
+                                accentColor.copy(alpha = 0.16f)
+                            )
+                        )
+                    )
+                    .border(1.dp, accentColor.copy(alpha = 0.35f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.92f),
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+            Spacer(Modifier.height(5.dp))
+        } else {
+            Box(
+                Modifier.width(22.dp).height(3.dp).clip(CircleShape).background(accentColor)
+            )
+            Spacer(Modifier.height(6.dp))
+        }
         Text(
             text = title,
             color = WearsicTextPrimary,

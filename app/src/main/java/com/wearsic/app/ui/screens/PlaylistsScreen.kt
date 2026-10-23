@@ -1,10 +1,8 @@
 package com.wearsic.app.ui.screens
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -111,6 +109,7 @@ fun PlaylistsScreen(
                 WearsicScreenHeader(
                     title = "Playlists",
                     subtitle = "Your Library",
+                    icon = Icons.AutoMirrored.Rounded.QueueMusic
                 )
             }
 
@@ -322,7 +321,6 @@ fun PlaylistsScreen(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PlaylistRow(
     playlist: Playlist,
@@ -335,7 +333,11 @@ private fun PlaylistRow(
         artist = "${playlist.trackCount} tracks",
         artworkUrl = playlist.thumbnailUrl,
         onClick = onClick,
-        modifier = modifier.combinedClickable(onClick = onClick, onLongClick = onLongPress),
+        // The row already provides press physics + haptics via its own
+        // clickable; do NOT wrap it in a second clickable (the previous
+        // combinedClickable competed with the row's internal one).
+        modifier = modifier,
+        onLongClick = onLongPress,
         testTag = "playlist_${playlist.id}",
         trailing = {
             Icon(

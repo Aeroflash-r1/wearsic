@@ -121,6 +121,7 @@ fun QueueScreen(
                 WearsicScreenHeader(
                     title = "Queue",
                     subtitle = "${upcoming.size} Up Next",
+                    icon = Icons.AutoMirrored.Rounded.QueueMusic
                 )
             }
 
@@ -218,28 +219,25 @@ fun QueueScreen(
                     )
                 }
             } else {
-                // Now Playing card
-                item {
-                    QueueCurrentCard(
-                        track = queue.getOrNull(currentIndex) ?: queue.first(),
-                        isPlaying = playbackState.isPlaying
-                    )
-                }
-
-                // Up Next items. Keyed by ABSOLUTE queue position: relative
-                // offsets shift every time the current track advances or an
-                // item is removed, which would break lazy-item identity and
-                // reuse (items re-animate / state is lost on each advance).
-                itemsIndexed(
-                    upcoming,
-                    key = { offset, track -> "queue_${currentIndex + 1 + offset}_${track.id}" }
-                ) { offset, _ ->
-                    val absoluteIndex = currentIndex + 1 + offset
-                    QueueTrackItem(
-                        track = upcoming[offset],
-                        onClick = { onPlayItem(absoluteIndex) },
-                        onRemove = { onRemoveItem(absoluteIndex) }
-                    )
+                // The queue is rendered as ONE stable-keyed list: each row
+                // keeps its identity by ABSOLUTE queue index, so advancing to
+                // the next track never remounts the whole list (rows keep
+                // their state and don't re-animate on every advance). The
+                // current track is a highlighted card; everything after it is
+                // an Up Next row with its own remove action.
+                itemsIndexed(queue, key = { index, _ -> "queue_index_$index" }) { index, track ->
+                    if (index == currentIndex) {
+                        QueueCurrentCard(
+                            track = track,
+                            isPlaying = playbackState.isPlaying
+                        )
+                    } else {
+                        QueueTrackItem(
+                            track = track,
+                            onClick = { onPlayItem(index) },
+                            onRemove = { onRemoveItem(index) }
+                        )
+                    }
                 }
 
                 // Clear Queue action

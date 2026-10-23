@@ -12,12 +12,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +50,7 @@ import com.wearsic.app.ui.components.WearsicLibraryTrackRow
 import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicLavenderContainer
@@ -60,6 +63,7 @@ import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistDetailUiState
 
+import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
 
@@ -78,6 +82,8 @@ fun PlaylistDetailScreen(
     playlists: List<com.wearsic.app.model.Playlist> = emptyList(),
     onCreatePlaylistAndAdd: (String, Track) -> Unit = { _, _ -> },
     onAddToPlaylist: (String, Track) -> Unit = { _, _ -> },
+    downloadedTrackIds: Set<String> = emptySet(),
+    onDownloadAllTracks: (List<Track>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val listState = rememberScalingLazyListState()
@@ -126,12 +132,67 @@ fun PlaylistDetailScreen(
                 }
             }
 
+            if (detailState.tracks.isNotEmpty() && !detailState.isLoading) {
+                item {
+                    // "Download all" — one tap to pull the whole album/playlist
+                    // offline. Idempotent: tracks already saved are skipped.
+                    val notDownloaded = detailState.tracks.count { it.id !in downloadedTrackIds }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(CircleShape)
+                            .background(WearsicVibrantLavender.copy(alpha = 0.16f))
+                            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.45f), CircleShape)
+                            .wearsicClickable {
+                                if (notDownloaded > 0) {
+                                    onDownloadAllTracks(detailState.tracks)
+                                }
+                            }
+                            .heightIn(min = WearsicDimens.TouchTarget)
+                            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 9.dp)
+                            .testTag("playlist_download_all"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Rounded.Download,
+                                contentDescription = null,
+                                tint = if (notDownloaded > 0) {
+                                    WearsicVibrantLavender
+                                } else {
+                                    WearsicTextMuted
+                                },
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = when {
+                                    notDownloaded == 0 -> "All songs saved offline"
+                                    notDownloaded == detailState.tracks.size -> "Download all (${notDownloaded})"
+                                    else -> "Download remaining (${notDownloaded})"
+                                },
+                                color = if (notDownloaded > 0) {
+                                    WearsicTextPrimary
+                                } else {
+                                    WearsicTextMuted
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+
             itemsIndexed(detailState.tracks, key = { _, track -> track.id }) { index, track ->
                 WearsicLibraryTrackRow(
                     track = track,
                     onPlay = { onPlayTrack(detailState.tracks, index) },
                     onLongPress = { actionTrack = track },
                     onMore = { actionTrack = track },
+                    isDownloaded = track.id in downloadedTrackIds,
                     testTagPrefix = "playlist_track"
                 )
             }

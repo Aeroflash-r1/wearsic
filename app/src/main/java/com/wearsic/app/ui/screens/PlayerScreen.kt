@@ -54,15 +54,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -173,11 +176,15 @@ fun PlayerScreen(
     Box(modifier = modifier.fillMaxSize()) {
 
         // ── The artwork IS the background ────────────────────────────────
-        ArtworkBackdrop(artworkUrl = track.artworkUrl, onColors = { artworkColors = it })
+        ArtworkBackdrop(
+            artworkUrl = track.artworkUrl,
+            glowColor = artworkColors.accent,
+            onColors = { artworkColors = it }
+        )
+
+        val pagerState = rememberPagerState(pageCount = { 2 })
 
         ScreenScaffold(modifier = Modifier.fillMaxSize()) { contentPadding: PaddingValues ->
-            val pagerState = rememberPagerState(pageCount = { 2 })
-
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -220,37 +227,39 @@ fun PlayerScreen(
                     }
                 }
 
-                // Page dots live on the trailing edge, NOT over the transport:
-                // the old bottom-center row sat exactly on the play/pause
-                // button's touch area on short viewports. One generous touch
-                // target for the sub-screen, vertical to match the edge.
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .widthIn(min = WearsicDimens.TouchTarget)
-                        .semantics {
-                            contentDescription =
-                                if (pagerState.currentPage == 0) "Show player actions" else "Show now playing"
-                        }
-                        .wearsicClickable {
-                            scope.launch { pagerState.animateScrollToPage(1 - pagerState.currentPage) }
-                        }
-                        .testTag("player_page_switch"),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    repeat(2) { index ->
-                        val active = pagerState.currentPage == index
-                        Box(
-                            modifier = Modifier
-                                .size(width = 4.dp, height = if (active) 11.dp else 5.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (active) artworkColors.accent else Color.White.copy(alpha = 0.32f)
-                                )
-                        )
-                    }
+            }
+        }
+
+        // Page dots live on the VERY EDGE of the round face — outside the
+        // scaffold's inset so they hug the display's curved boundary instead
+        // of floating mid-screen. One generous touch target for the
+        // sub-screen, vertical to match the edge.
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 2.dp)
+                .widthIn(min = WearsicDimens.TouchTarget)
+                .semantics {
+                    contentDescription =
+                        if (pagerState.currentPage == 0) "Show player actions" else "Show now playing"
                 }
+                .wearsicClickable {
+                    scope.launch { pagerState.animateScrollToPage(1 - pagerState.currentPage) }
+                }
+                .testTag("player_page_switch"),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            repeat(2) { index ->
+                val active = pagerState.currentPage == index
+                Box(
+                    modifier = Modifier
+                        .size(width = 4.dp, height = if (active) 11.dp else 5.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (active) artworkColors.accent else Color.White.copy(alpha = 0.32f)
+                        )
+                )
             }
         }
     }
@@ -480,6 +489,11 @@ private fun ArtworkDisc(
                     .size(size)
                     .clip(CircleShape)
                     .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                    // The record spins slowly over the song (one revolution per
+                    // track). The angle is read in the layer phase from the
+                    // same animated progress the ring uses, so this never
+                    // adds recompositions — and it freezes when paused.
+                    .graphicsLayer { rotationZ = discRotation(progress.value) }
             )
         } else {
             Box(
@@ -487,7 +501,8 @@ private fun ArtworkDisc(
                     .size(size)
                     .clip(CircleShape)
                     .background(colors.accent.copy(alpha = 0.18f))
-                    .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape),
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                    .graphicsLayer { rotationZ = discRotation(progress.value) },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -583,7 +598,11 @@ private fun ActionsPage(
  * Decoded once per artwork at 256 px — cheap on memory, no blur passes.
  */
 @Composable
-private fun ArtworkBackdrop(artworkUrl: String?, onColors: (ArtworkColors) -> Unit) {
+private fun ArtworkBackdrop(
+    artworkUrl: String?,
+    glowColor: Color,
+    onColors: (ArtworkColors) -> Unit
+) {
     var bitmap by remember(artworkUrl) { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(bitmap, artworkUrl) {
         onColors(withContext(Dispatchers.Default) { extractArtworkColors(bitmap) })
@@ -619,6 +638,28 @@ private fun ArtworkBackdrop(artworkUrl: String?, onColors: (ArtworkColors) -> Un
                 )
             )
     )
+    // A soft, hue-matched "aurora" glow behind the middle of the screen so
+    // the flat black scrim reads as depth instead of a dead void. The centre
+    // sits above the disc (the visual focus), and it is drawn from the same
+    // artwork accent as the ring and controls — one cheap radial pass.
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val center = with(density) {
+            Offset((maxWidth * 0.5f).toPx(), (maxHeight * 0.32f).toPx())
+        }
+        val radius = with(density) { (maxWidth * 0.95f).toPx() }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(glowColor.copy(alpha = 0.15f), Color.Transparent),
+                        center = center,
+                        radius = radius
+                    )
+                )
+        )
+    }
 }
 
 /**
@@ -801,6 +842,9 @@ private fun ActionRow(
         )
     }
 }
+
+/** One clockwise revolution of the disc per full track. */
+private fun discRotation(progress: Float): Float = progress.coerceIn(0f, 1f) * 360f
 
 /** m:ss (or h:mm:ss) for the player's elapsed/total read-out. */
 private fun formatTime(ms: Long): String {

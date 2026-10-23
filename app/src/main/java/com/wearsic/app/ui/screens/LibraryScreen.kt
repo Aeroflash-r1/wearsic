@@ -124,7 +124,8 @@ fun LibraryScreen(
             item {
                 WearsicScreenHeader(
                     title = "Library",
-                    subtitle = "Your music, everywhere"
+                    subtitle = "Your music, everywhere",
+                    icon = Icons.Rounded.MusicNote
                 )
             }
 

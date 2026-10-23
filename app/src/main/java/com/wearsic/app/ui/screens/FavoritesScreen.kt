@@ -74,6 +74,7 @@ fun FavoritesScreen(
     playlists: List<com.wearsic.app.model.Playlist> = emptyList(),
     onCreatePlaylistAndAdd: (String, Track) -> Unit = { _, _ -> },
     onAddToPlaylist: (String, Track) -> Unit = { _, _ -> },
+    downloadedTrackIds: Set<String> = emptySet(),
     modifier: Modifier = Modifier
 ) {
     val listState = rememberScalingLazyListState()
@@ -103,6 +104,7 @@ fun FavoritesScreen(
                 WearsicScreenHeader(
                     title = "Favorites",
                     subtitle = "${favoritesState.tracks.size} Loved Songs",
+                    icon = Icons.Rounded.Favorite
                 )
             }
 
@@ -130,6 +132,7 @@ fun FavoritesScreen(
                     onPlay = { onPlayTrack(favoritesState.tracks, index) },
                     onLongPress = { actionTrack = track },
                     onMore = { actionTrack = track },
+                    isDownloaded = track.id in downloadedTrackIds,
                     testTagPrefix = "favorite_track"
                 )
             }

@@ -65,6 +65,13 @@ fun WearsicApp(
     val serverUrl by settingsVM.serverUrl.collectAsStateWithLifecycle()
     val connectionTestState by settingsVM.connectionTestState.collectAsStateWithLifecycle()
     val downloadsHolder = downloadsVM.allDownloads.collectAsStateWithLifecycle()
+    // Track ids with a completed local file — used to show the "saved
+    // offline" indicator on library rows and to power "Download remaining".
+    val downloadedTrackIds by remember {
+        derivedStateOf {
+            downloadsHolder.value.filter { it.isCompleted() }.mapTo(mutableSetOf()) { it.trackId }
+        }
+    }
     val autoCacheEnabled by settingsVM.autoCacheEnabled.collectAsStateWithLifecycle()
     val offlineLimit by settingsVM.offlineLimit.collectAsStateWithLifecycle()
     val radioState by libraryVM.radioState.collectAsStateWithLifecycle()
@@ -425,7 +432,8 @@ fun WearsicApp(
                     },
                     onAddToPlaylist = { playlistId, track ->
                         libraryVM.addToPlaylist(playlistId, track)
-                    }
+                    },
+                    downloadedTrackIds = downloadedTrackIds
                 )
             }
 
@@ -463,6 +471,10 @@ fun WearsicApp(
                     },
                     onAddToPlaylist = { playlistId, track ->
                         libraryVM.addToPlaylist(playlistId, track)
+                    },
+                    downloadedTrackIds = downloadedTrackIds,
+                    onDownloadAllTracks = { tracks ->
+                        downloadsVM.startDownloadBatch(tracks)
                     }
                 )
             }

@@ -150,6 +150,7 @@ fun AlbumsScreen(
                 WearsicScreenHeader(
                     title = "Albums",
                     subtitle = "Find full albums",
+                    icon = Icons.Rounded.Album
                 )
             }
 

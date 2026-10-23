@@ -82,6 +82,7 @@ fun StorageStatsContent(
                 WearsicScreenHeader(
                     title = "Storage",
                     subtitle = "Total local music • %.1f MB".format(totalMb),
+                    icon = Icons.Rounded.SdStorage
                 )
             }
 

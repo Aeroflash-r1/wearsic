@@ -152,6 +152,7 @@ fun SearchScreen(
                 WearsicScreenHeader(
                     title = "Search",
                     subtitle = "Find your next favorite",
+                    icon = Icons.Rounded.Search
                 )
             }
 

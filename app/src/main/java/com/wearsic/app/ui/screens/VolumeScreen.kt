@@ -157,6 +157,7 @@ fun VolumeScreen(
                 WearsicScreenHeader(
                     title = "Sound",
                     subtitle = activeDeviceLabel,
+                    icon = Icons.AutoMirrored.Rounded.VolumeUp
                 )
             }
 

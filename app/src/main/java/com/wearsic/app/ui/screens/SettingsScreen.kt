@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material.icons.rounded.SdStorage
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -234,6 +235,7 @@ fun SettingsScreen(
                 WearsicScreenHeader(
                     title = "Settings",
                     subtitle = "Server & Storage",
+                    icon = Icons.Rounded.Settings
                 )
             }
 

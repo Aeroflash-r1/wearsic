@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.runtime.Composable
@@ -98,6 +99,7 @@ fun ServerDashboardScreen(
                 WearsicScreenHeader(
                     title = "Engine",
                     subtitle = state.health?.serverName ?: "Server diagnostics",
+                    icon = Icons.Rounded.MonitorHeart
                 )
             }
 

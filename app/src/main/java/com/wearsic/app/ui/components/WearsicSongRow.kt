@@ -228,7 +228,7 @@ fun WearsicSongRowActionButton(
         modifier = modifier
             .size(WearsicDimens.TouchTarget)
             .clickable(interactionSource = interaction, indication = null) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
             .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
@@ -278,7 +278,7 @@ fun WearsicSongRowPlayButton(
         modifier = modifier
             .size(WearsicDimens.TouchTarget)
             .clickable(interactionSource = interaction, indication = null) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
             .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),

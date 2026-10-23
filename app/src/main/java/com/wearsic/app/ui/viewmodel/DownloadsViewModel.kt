@@ -69,6 +69,20 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
         downloadManager.startDownload(track, autoCached)
     }
 
+    /**
+     * Requests a whole album/playlist for offline use. Duplicate track ids
+     * are skipped and the manager itself ignores tracks that are already
+     * downloaded or already downloading, so this is safe to re-run.
+     */
+    fun startDownloadBatch(tracks: List<Track>) {
+        val seen = mutableSetOf<String>()
+        for (track in tracks) {
+            if (track.id.isBlank()) continue
+            if (!seen.add(track.id)) continue
+            downloadManager.startDownload(track)
+        }
+    }
+
     fun cancelDownload(trackId: String) {
         downloadManager.cancelDownload(trackId)
     }

@@ -19,6 +19,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +50,7 @@ import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicLibraryTrackRow
 import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicScreenHeader
+import com.wearsic.app.ui.components.WearsicSecondaryPillButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
@@ -75,6 +78,8 @@ fun FavoritesScreen(
     onCreatePlaylistAndAdd: (String, Track) -> Unit = { _, _ -> },
     onAddToPlaylist: (String, Track) -> Unit = { _, _ -> },
     downloadedTrackIds: Set<String> = emptySet(),
+    onPlayAll: (List<Track>) -> Unit = {},
+    onShuffleAll: (List<Track>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val listState = rememberScalingLazyListState()
@@ -106,6 +111,31 @@ fun FavoritesScreen(
                     subtitle = "${favoritesState.tracks.size} Loved Songs",
                     icon = Icons.Rounded.Favorite
                 )
+            }
+
+            // Play all / Shuffle all — whole-library shortcuts.
+            if (favoritesState.tracks.isNotEmpty() && !favoritesState.isLoading) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        WearsicSecondaryPillButton(
+                            label = "Play all",
+                            icon = Icons.Rounded.PlayArrow,
+                            onClick = { onPlayAll(favoritesState.tracks) },
+                            modifier = Modifier.weight(1f),
+                            testTag = "favorites_play_all"
+                        )
+                        WearsicSecondaryPillButton(
+                            label = "Shuffle",
+                            icon = Icons.Rounded.Shuffle,
+                            onClick = { onShuffleAll(favoritesState.tracks) },
+                            modifier = Modifier.weight(1f),
+                            testTag = "favorites_shuffle_all"
+                        )
+                    }
+                }
             }
 
             if (favoritesState.isLoading && favoritesState.tracks.isEmpty()) {

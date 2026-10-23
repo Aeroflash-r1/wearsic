@@ -19,8 +19,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.datastore.preferences.core.emptyPreferences
 import kotlinx.coroutines.flow.catch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.IOException
 import java.net.URI
+import java.util.UUID
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "wearsic_settings")
 
@@ -38,6 +41,20 @@ class WearsicPreferencesRepository(private val context: Context) {
          * never changes how playback sounds or what it costs on battery.
          */
         val KEY_CROSSFADE_MS = intPreferencesKey("crossfade_ms")
+        /**
+         * Opt-in dynamic accent: when enabled, the app's accent colour follows
+         * the current track's artwork hue (extracted on the player). Falls
+         * back to the fixed lavender whenever there is no artwork.
+         */
+        val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color_enabled")
+        /**
+         * Whether the player's album-art disc rotates slowly with the song.
+         * The motion is free (drawn in the layer phase), but some users find
+         * any motion distracting, so it is a setting.
+         */
+        val KEY_ROTATING_ARTWORK = booleanPreferencesKey("rotating_artwork_enabled")
+        /** Saved server profiles, serialized as a JSON array. */
+        val KEY_SERVER_PROFILES = stringPreferencesKey("server_profiles")
         /** No server is preconfigured; users enter their own URL in Settings. */
         const val DEFAULT_SERVER_URL = ""
         const val DEFAULT_OFFLINE_LIMIT = 15
@@ -142,6 +159,70 @@ class WearsicPreferencesRepository(private val context: Context) {
             preferences[KEY_CROSSFADE_MS] = CrossfadeLengths.sanitize(ms).toInt()
         }
     }
+
+    val dynamicColorFlow: Flow<Boolean> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_DYNAMIC_COLOR] ?: false
+        }
+
+    suspend fun setDynamicColorEnabled(enabled: Boolean) {
+        editPreferences { preferences ->
+            preferences[KEY_DYNAMIC_COLOR] = enabled
+        }
+    }
+
+    val rotatingArtworkFlow: Flow<Boolean> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_ROTATING_ARTWORK] ?: true
+        }
+
+    suspend fun setRotatingArtworkEnabled(enabled: Boolean) {
+        editPreferences { preferences ->
+            preferences[KEY_ROTATING_ARTWORK] = enabled
+        }
+    }
+
+    // ============================================================================
+    // Server profiles (multi-server switching)
+    // ============================================================================
+
+    val serverProfilesFlow: Flow<List<ServerProfile>> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            val raw = preferences[KEY_SERVER_PROFILES]
+            if (raw.isNullOrBlank()) {
+                emptyList()
+            } else {
+                runCatching { Json.decodeFromString<List<ServerProfile>>(raw) }
+                    .getOrElse { emptyList() }
+            }
+        }
+
+    private suspend fun writeProfiles(profiles: List<ServerProfile>) {
+        editPreferences { preferences ->
+            if (profiles.isEmpty()) {
+                preferences.remove(KEY_SERVER_PROFILES)
+            } else {
+                preferences[KEY_SERVER_PROFILES] = Json.encodeToString(profiles)
+            }
+        }
+    }
+
+    /** Upserts a profile (same id replaces). */
+    suspend fun saveProfile(profile: ServerProfile) {
+        val current = serverProfilesFlow.first()
+        val next = current.filterNot { it.id == profile.id } + profile
+        writeProfiles(next)
+    }
+
+    suspend fun deleteProfile(id: String) {
+        val next = serverProfilesFlow.first().filterNot { it.id == id }
+        writeProfiles(next)
+    }
+
+    fun newProfileId(): String = UUID.randomUUID().toString()
 
     val apiKeyFlow: Flow<String> = context.dataStore.data
         .catch { exception ->

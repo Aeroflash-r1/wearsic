@@ -15,12 +15,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.runtime.Composable
@@ -66,6 +68,7 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.model.Album
 import com.wearsic.app.ui.components.WearsicSongRow
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
@@ -161,10 +164,10 @@ fun AlbumsScreen(
                         .fillMaxWidth()
                         .heightIn(min = WearsicDimens.TouchTarget)
                         .clip(CircleShape)
-                        .background(if (isFocused) WearsicVibrantLavender.copy(alpha = 0.12f) else WearsicGlassFill)
+                        .background(if (isFocused) LocalWearsicAccent.current.copy(alpha = 0.12f) else WearsicGlassFill)
                         .border(
                             1.dp,
-                            if (isFocused) WearsicVibrantLavender else WearsicGlassBorder,
+                            if (isFocused) LocalWearsicAccent.current else WearsicGlassBorder,
                             CircleShape
                         )
                         .padding(horizontal = 12.dp),
@@ -174,7 +177,7 @@ fun AlbumsScreen(
                         Icon(
                             imageVector = Icons.Rounded.Search,
                             contentDescription = null,
-                            tint = if (isFocused) WearsicVibrantLavender else WearsicTextMuted,
+                            tint = if (isFocused) LocalWearsicAccent.current else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.size(8.dp))
@@ -186,7 +189,7 @@ fun AlbumsScreen(
                             },
                             singleLine = true,
                             textStyle = TextStyle(color = WearsicTextPrimary, fontSize = 12.sp),
-                            cursorBrush = SolidColor(WearsicVibrantLavender),
+                            cursorBrush = SolidColor(LocalWearsicAccent.current),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                             keyboardActions = KeyboardActions(
                                 onSearch = { submitAlbumSearch() },
@@ -207,12 +210,41 @@ fun AlbumsScreen(
 
             if (albumsState.errorMessage != null && !albumsState.isLoading) {
                 item {
-                    Text(
-                        text = albumsState.errorMessage,
-                        color = WearsicError,
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Center
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = albumsState.errorMessage,
+                            color = WearsicError,
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(WearsicGlassFill)
+                                .border(1.dp, WearsicGlassBorder, CircleShape)
+                                .wearsicClickable { submitAlbumSearch() }
+                                .padding(horizontal = 14.dp, vertical = 7.dp)
+                                .testTag("albums_retry"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = null,
+                                    tint = WearsicVibrantLavender,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Retry",
+                                    color = WearsicTextPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

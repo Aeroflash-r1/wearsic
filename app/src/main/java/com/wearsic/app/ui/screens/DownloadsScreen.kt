@@ -62,10 +62,12 @@ import com.wearsic.app.data.db.WearsicDownloadEntity
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicScreenHeader
+import com.wearsic.app.ui.components.WearsicSecondaryPillButton
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.components.WearsicSongRowPlayButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
@@ -95,11 +97,15 @@ fun DownloadsScreen(
     onCancelDownload: (String) -> Unit,
     onRetryDownload: (Track) -> Unit = {},
     onClearAllDownloads: () -> Unit,
+    onPlayAll: (List<Track>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val listState = rememberScalingLazyListState()
     var trackToDeleteId by remember { mutableStateOf<String?>(null) }
     var showClearAllConfirmation by remember { mutableStateOf(false) }
+    val completedTracks = remember(downloads) {
+        downloads.filter { it.isCompleted() }.map { it.toDomainTrack() }
+    }
 
     ScreenScaffold(
         scrollState = listState,
@@ -124,6 +130,19 @@ fun DownloadsScreen(
                     subtitle = "${downloads.count { it.isCompleted() }} Offline Tracks",
                     icon = Icons.Rounded.Download
                 )
+            }
+
+            // Play all: one tap to run the whole offline library.
+            if (completedTracks.isNotEmpty()) {
+                item {
+                    WearsicSecondaryPillButton(
+                        label = "Play all",
+                        icon = Icons.Rounded.PlayArrow,
+                        onClick = { onPlayAll(completedTracks) },
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "downloads_play_all"
+                    )
+                }
             }
 
             // Empty State
@@ -363,7 +382,7 @@ private fun DownloadingItemCard(
             .fillMaxWidth()
             .clip(CircleShape)
             .background(WearsicSurface)
-            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.4f), CircleShape)
+            .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.4f), CircleShape)
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag("downloading_track_${entity.trackId}")
     ) {
@@ -386,6 +405,7 @@ private fun DownloadingItemCard(
                     // Circular progress ring around the hourglass: the arc is
                     // drawn in the draw phase from the live progress value so a
                     // % update never recomposes the whole card.
+                    val accent = LocalWearsicAccent.current
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val stroke = 3.dp.toPx()
                         val inset = stroke / 2f
@@ -403,7 +423,7 @@ private fun DownloadingItemCard(
                         val fraction = (entity.progress.coerceIn(0, 100)) / 100f
                         if (fraction > 0.004f) {
                             drawArc(
-                                color = WearsicVibrantLavender,
+                                color = accent,
                                 startAngle = -90f,
                                 sweepAngle = 360f * fraction,
                                 useCenter = false,
@@ -416,7 +436,7 @@ private fun DownloadingItemCard(
                     Icon(
                         imageVector = Icons.Rounded.HourglassEmpty,
                         contentDescription = "Downloading",
-                        tint = WearsicVibrantLavender,
+                        tint = accent,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -434,7 +454,7 @@ private fun DownloadingItemCard(
                     )
                     Text(
                         text = "Downloading ${entity.progress}%",
-                        color = WearsicVibrantLavender,
+                        color = LocalWearsicAccent.current,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -507,8 +527,8 @@ private fun FailedDownloadItemCard(
                     modifier = Modifier
                         .size(26.dp)
                         .clip(CircleShape)
-                        .background(WearsicVibrantLavender.copy(alpha = 0.15f))
-                        .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.4f), CircleShape)
+                        .background(LocalWearsicAccent.current.copy(alpha = 0.15f))
+                        .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.4f), CircleShape)
                         .wearsicClickable(onClick = onRetry)
                         .testTag("retry_download_${entity.trackId}"),
                     contentAlignment = Alignment.Center
@@ -516,7 +536,7 @@ private fun FailedDownloadItemCard(
                     Icon(
                         imageVector = Icons.Rounded.Download,
                         contentDescription = "Retry",
-                        tint = WearsicVibrantLavender,
+                        tint = LocalWearsicAccent.current,
                         modifier = Modifier.size(14.dp)
                     )
                 }

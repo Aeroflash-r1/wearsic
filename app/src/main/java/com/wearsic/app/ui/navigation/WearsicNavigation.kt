@@ -5,7 +5,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -35,6 +37,9 @@ import com.wearsic.app.ui.screens.ServerDashboardScreen
 import com.wearsic.app.ui.screens.SettingsScreen
 import com.wearsic.app.ui.screens.VolumeScreen
 import com.wearsic.app.model.ArtistGroup
+import com.wearsic.app.ui.theme.LocalWearsicAccent
+import com.wearsic.app.ui.theme.WearsicVibrantLavender
+import com.wearsic.app.ui.util.ArtworkColors
 import com.wearsic.app.ui.viewmodel.WearsicPlayerViewModel
 
 @Composable
@@ -74,6 +79,17 @@ fun WearsicApp(
     }
     val autoCacheEnabled by settingsVM.autoCacheEnabled.collectAsStateWithLifecycle()
     val offlineLimit by settingsVM.offlineLimit.collectAsStateWithLifecycle()
+    val dynamicColorEnabled by settingsVM.dynamicColorEnabled.collectAsStateWithLifecycle()
+    val rotatingArtworkEnabled by settingsVM.rotatingArtworkEnabled.collectAsStateWithLifecycle()
+    val serverProfiles by settingsVM.serverProfiles.collectAsStateWithLifecycle()
+
+    // Dynamic accent: the player hoists the artwork palette here; when the
+    // opt-in setting is on and real artwork colours exist, the whole app's
+    // accent follows the album art. Falls back to fixed lavender otherwise.
+    var artworkColors by remember { mutableStateOf(ArtworkColors.Default) }
+    val effectiveAccent =
+        if (dynamicColorEnabled && artworkColors.fromArtwork) artworkColors.accent
+        else WearsicVibrantLavender
     val radioState by libraryVM.radioState.collectAsStateWithLifecycle()
     val apiKey by settingsVM.apiKey.collectAsStateWithLifecycle()
     val storageStats by downloadsVM.storageStats.collectAsStateWithLifecycle()
@@ -83,6 +99,8 @@ fun WearsicApp(
     val albumsState by libraryVM.albumsState.collectAsStateWithLifecycle()
     val artistsState by libraryVM.artistsState.collectAsStateWithLifecycle()
     val recentTracks by libraryVM.recentTracks.collectAsStateWithLifecycle()
+    val serverReachable by libraryVM.serverReachable.collectAsStateWithLifecycle()
+    val offlineDownloads by downloadsVM.completedTracks.collectAsStateWithLifecycle()
     val startupHealth by settingsVM.startupHealth.collectAsStateWithLifecycle()
     val favoritesState by libraryVM.favoritesState.collectAsStateWithLifecycle()
     val playlistsState by libraryVM.playlistsState.collectAsStateWithLifecycle()
@@ -137,11 +155,12 @@ fun WearsicApp(
         }
     }
 
-    AppScaffold(
-        timeText = timeText,
-        modifier = modifier
-    ) {
-        SwipeDismissableNavHost(
+    CompositionLocalProvider(LocalWearsicAccent provides effectiveAccent) {
+        AppScaffold(
+            timeText = timeText,
+            modifier = modifier
+        ) {
+            SwipeDismissableNavHost(
             navController = navController,
             startDestination = Screen.Library.route
         ) {
@@ -154,6 +173,13 @@ fun WearsicApp(
                         playerViewModel.playTracksFromList(tracks, index)
                         navController.navigate(Screen.Player.route)
                     },
+                    isServerReachable = serverReachable,
+                    offlineDownloads = offlineDownloads,
+                    onPlayOfflineTrack = { tracks, index ->
+                        playerViewModel.playTracksFromList(tracks, index)
+                        navController.navigate(Screen.Player.route)
+                    },
+                    favoritesCount = favoritesState.tracks.size,
                     onNavigateToSearch = {
                         navController.navigate(Screen.Search.route)
                     },
@@ -255,7 +281,9 @@ fun WearsicApp(
                     },
                     isDownloaded = isCurrentTrackDownloaded,
                     isDownloading = isCurrentTrackDownloading,
-                    downloadProgress = currentTrackDownloadProgress
+                    downloadProgress = currentTrackDownloadProgress,
+                    onArtworkColor = { artworkColors = it },
+                    rotateArtwork = rotatingArtworkEnabled
                 )
             }
 
@@ -300,6 +328,24 @@ fun WearsicApp(
                     onOpenServerDashboard = {
                         navController.navigate(Screen.ServerDashboard.route)
                     },
+                    dynamicColorEnabled = dynamicColorEnabled,
+                    onDynamicColorToggled = { enabled ->
+                        settingsVM.setDynamicColorEnabled(enabled)
+                    },
+                    rotatingArtworkEnabled = rotatingArtworkEnabled,
+                    onRotatingArtworkToggled = { enabled ->
+                        settingsVM.setRotatingArtworkEnabled(enabled)
+                    },
+                    profiles = serverProfiles,
+                    onSaveProfile = { name ->
+                        settingsVM.addCurrentAsProfile(name)
+                    },
+                    onApplyProfile = { profile ->
+                        settingsVM.applyProfile(profile)
+                    },
+                    onRemoveProfile = { id ->
+                        settingsVM.removeProfile(id)
+                    },
                     autoCacheEnabled = autoCacheEnabled,
                     onAutoCacheToggled = { enabled ->
                         settingsVM.setAutoCacheEnabled(enabled)
@@ -324,6 +370,9 @@ fun WearsicApp(
                     },
                     onRemoveItem = { index ->
                         playbackVM.removeFromQueue(index)
+                    },
+                    onMoveItem = { from, to ->
+                        playbackVM.moveQueueItem(from, to)
                     },
                     onClearQueue = {
                         playbackVM.clearQueue()
@@ -357,6 +406,10 @@ fun WearsicApp(
                     },
                     onClearAllDownloads = {
                         downloadsVM.clearAllDownloads()
+                    },
+                    onPlayAll = { tracks ->
+                        playerViewModel.playTracksFromList(tracks, 0)
+                        navController.navigate(Screen.Player.route)
                     }
                 )
             }
@@ -425,6 +478,14 @@ fun WearsicApp(
                     },
                     onRemoveFavorite = { trackId ->
                         libraryVM.removeFavorite(trackId)
+                    },
+                    onPlayAll = { tracks ->
+                        playerViewModel.playTracksFromList(tracks, 0)
+                        navController.navigate(Screen.Player.route)
+                    },
+                    onShuffleAll = { tracks ->
+                        playerViewModel.playTracksShuffled(tracks)
+                        navController.navigate(Screen.Player.route)
                     },
                     playlists = playlistsState.playlists,
                     onCreatePlaylistAndAdd = { name, track ->
@@ -503,6 +564,7 @@ fun WearsicApp(
                     }
                 )
             }
+        }
         }
     }
 }

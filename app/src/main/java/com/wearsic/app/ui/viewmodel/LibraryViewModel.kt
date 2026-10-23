@@ -6,7 +6,11 @@ import androidx.lifecycle.viewModelScope
 import com.wearsic.app.WearsicApp
 import com.wearsic.app.model.Album
 import com.wearsic.app.model.ArtistGroup
+import com.wearsic.app.model.DnsError
+import com.wearsic.app.model.HostUnreachableError
+import com.wearsic.app.model.NetworkError
 import com.wearsic.app.model.Playlist
+import com.wearsic.app.model.TimeoutError
 import com.wearsic.app.model.Track
 import com.wearsic.app.model.displayMessage
 import com.wearsic.app.network.model.ConnectionTestState
@@ -42,6 +46,29 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     val recentTracks: StateFlow<List<Track>> = recentRepository.recentTracksFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // ============================================================================
+    // Server reachability (drives the offline surface)
+    // ============================================================================
+
+    /**
+     * True while the last server round-trip succeeded. Network-shaped failures
+     * (timeout, DNS, unreachable host) flip it to false so the UI can switch
+     * to an offline-friendly surface. Optimistic by default — it only turns
+     * false on a real network error, never on data/validation errors.
+     */
+    private val _serverReachable = MutableStateFlow(true)
+    val serverReachable: StateFlow<Boolean> = _serverReachable.asStateFlow()
+
+    private fun reportServerResult(result: Result<*>) {
+        val e = result.exceptionOrNull()
+        _serverReachable.value = e == null || !isNetworkFailure(e)
+    }
+
+    private fun isNetworkFailure(e: Throwable): Boolean = when (e) {
+        is TimeoutError, is HostUnreachableError, is DnsError, is NetworkError -> true
+        else -> false
+    }
 
     // ============================================================================
     // Favorites State
@@ -83,6 +110,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         _favoritesState.update { it.copy(isLoading = true, errorMessage = null) }
         viewModelScope.launch {
             val result = musicRepository.getFavorites()
+            reportServerResult(result)
             result.onSuccess { tracks ->
                 _favoritesState.update { it.copy(tracks = tracks, isLoading = false, errorMessage = null) }
                 prewarmFavorites(tracks)
@@ -128,6 +156,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val favoritesResult = musicRepository.getFavorites()
             val playlistsResult = musicRepository.getPlaylists()
+            reportServerResult(favoritesResult)
+            reportServerResult(playlistsResult)
 
             var errorMessage: String? = null
             val favorites = favoritesResult.getOrNull()
@@ -285,6 +315,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         _albumsState.update { it.copy(query = query, isLoading = true, errorMessage = null) }
         albumsJob = viewModelScope.launch {
             val result = musicRepository.searchAlbums(query.trim())
+            reportServerResult(result)
             result.onSuccess { albums ->
                 _albumsState.update { it.copy(albums = albums, isLoading = false) }
             }.onFailure { err ->
@@ -352,6 +383,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         searchJob = viewModelScope.launch {
             _searchState.update { it.copy(query = query, isSearching = true, errorMessage = null) }
             val result = musicRepository.searchMusic(query)
+            reportServerResult(result)
             result.onSuccess { tracks ->
                 _searchState.update {
                     it.copy(

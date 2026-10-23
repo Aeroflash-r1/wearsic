@@ -45,6 +45,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
@@ -188,7 +189,7 @@ fun WearsicSongRowArtwork(
             Icon(
                 imageVector = Icons.Rounded.MusicNote,
                 contentDescription = null,
-                tint = WearsicVibrantLavender,
+                tint = LocalWearsicAccent.current,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -292,7 +293,7 @@ fun WearsicSongRowPlayButton(
                     scaleY = pressScale
                 }
                 .clip(CircleShape)
-                .background(WearsicVibrantLavender),
+                .background(LocalWearsicAccent.current),
             contentAlignment = Alignment.Center
         ) {
             Icon(

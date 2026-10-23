@@ -317,6 +317,15 @@ class WearsicPlayerViewModel(
         }
     }
 
+    /**
+     * Plays a whole list in shuffled order. Used by the "Shuffle all"
+     * shortcuts on Favorites/Downloads.
+     */
+    fun playTracksShuffled(tracks: List<Track>) {
+        if (tracks.isEmpty()) return
+        playTracksFromList(tracks.shuffled(), 0)
+    }
+
     fun playTracksFromList(tracks: List<Track>, startIndex: Int = 0) {
         viewModelScope.launch {
             val container = (getApplication<WearsicApp>()).container

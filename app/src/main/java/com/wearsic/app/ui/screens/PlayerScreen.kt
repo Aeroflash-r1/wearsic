@@ -146,6 +146,13 @@ fun PlayerScreen(
     isDownloaded: Boolean = false,
     isDownloading: Boolean = false,
     downloadProgress: Int = 0,
+    /**
+     * Hoists the extracted artwork palette (used by the dynamic-accent
+     * feature). When null the palette stays internal to the player.
+     */
+    onArtworkColor: ((ArtworkColors) -> Unit)? = null,
+    /** Whether the album-art disc rotates slowly with the song (setting). */
+    rotateArtwork: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val track = playbackState.currentTrack
@@ -179,7 +186,10 @@ fun PlayerScreen(
         ArtworkBackdrop(
             artworkUrl = track.artworkUrl,
             glowColor = artworkColors.accent,
-            onColors = { artworkColors = it }
+            onColors = {
+                artworkColors = it
+                onArtworkColor?.invoke(it)
+            }
         )
 
         val pagerState = rememberPagerState(pageCount = { 2 })
@@ -210,7 +220,8 @@ fun PlayerScreen(
                             onSeekBack = onSeekBack,
                             haptic = haptic,
                             colors = artworkColors,
-                            active = pagerState.currentPage == 0
+                            active = pagerState.currentPage == 0,
+                            rotateArtwork = rotateArtwork
                         )
                         else -> ActionsPage(
                             hasTrack = hasTrack,
@@ -285,7 +296,8 @@ private fun NowPlayingPage(
     onSeekBack: () -> Unit,
     haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
     colors: ArtworkColors,
-    active: Boolean
+    active: Boolean,
+    rotateArtwork: Boolean = true
 ) {
     val focusRequester = remember { FocusRequester() }
     // Rotary seek needs focus. The pager may not have attached this page's
@@ -338,6 +350,7 @@ private fun NowPlayingPage(
                 progress = progress,
                 colors = colors,
                 size = discSize,
+                rotateArtwork = rotateArtwork,
                 // One-shot entrance, replayed only when the track changes:
                 // `key` recreates the composable (and its entrance state) per
                 // track instead of replaying on every recomposition.
@@ -419,7 +432,8 @@ private fun ArtworkDisc(
     progress: State<Float>,
     colors: ArtworkColors,
     size: Dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    rotateArtwork: Boolean = true
 ) {
     val ringStroke = 3f
     val context = LocalContext.current
@@ -492,8 +506,11 @@ private fun ArtworkDisc(
                     // The record spins slowly over the song (one revolution per
                     // track). The angle is read in the layer phase from the
                     // same animated progress the ring uses, so this never
-                    // adds recompositions — and it freezes when paused.
-                    .graphicsLayer { rotationZ = discRotation(progress.value) }
+                    // adds recompositions — and it freezes when paused. The
+                    // motion is a setting (rotateArtwork).
+                    .graphicsLayer {
+                        rotationZ = if (rotateArtwork) discRotation(progress.value) else 0f
+                    }
             )
         } else {
             Box(
@@ -502,7 +519,9 @@ private fun ArtworkDisc(
                     .clip(CircleShape)
                     .background(colors.accent.copy(alpha = 0.18f))
                     .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
-                    .graphicsLayer { rotationZ = discRotation(progress.value) },
+                    .graphicsLayer {
+                        rotationZ = if (rotateArtwork) discRotation(progress.value) else 0f
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

@@ -112,7 +112,6 @@ fun PlaylistDetailScreen(
             item {
                 WearsicScreenHeader(
                     title = playlistName,
-                    subtitle = "${detailState.tracks.size} Tracks",
                 )
             }
 

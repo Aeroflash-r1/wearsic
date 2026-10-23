@@ -63,6 +63,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val crossfadeMs: StateFlow<Long> = preferencesRepository.crossfadeMsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CrossfadeLengths.DEFAULT_MS)
 
+    /** Opt-in dynamic accent: theme the app from the current track's artwork. */
+    val dynamicColorEnabled: StateFlow<Boolean> = preferencesRepository.dynamicColorFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    /** Rotating album-art disc on the player (motion is opt-out). */
+    val rotatingArtworkEnabled: StateFlow<Boolean> = preferencesRepository.rotatingArtworkFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    /** Saved server profiles; the active one matches [serverUrl] + [apiKey]. */
+    val serverProfiles: StateFlow<List<com.wearsic.app.data.ServerProfile>> =
+        preferencesRepository.serverProfilesFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     init {
         // `wearsic pair` may have run while this process was already alive
         // (a watch app is rarely killed). The app-start import only covers
@@ -133,6 +146,58 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setAutoCacheEnabled(enabled: Boolean) {
         viewModelScope.launch {
             preferencesRepository.setAutoCacheEnabled(enabled)
+        }
+    }
+
+    fun setDynamicColorEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setDynamicColorEnabled(enabled)
+        }
+    }
+
+    fun setRotatingArtworkEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setRotatingArtworkEnabled(enabled)
+        }
+    }
+
+    // ============================================================================
+    // Server Profiles
+    // ============================================================================
+
+    /** Saves the CURRENT url/key pair as a named profile. */
+    fun addCurrentAsProfile(name: String) {
+        val cleanName = name.trim()
+        if (cleanName.isBlank()) return
+        val currentUrl = serverUrl.value
+        if (currentUrl.isBlank()) return
+        viewModelScope.launch {
+            preferencesRepository.saveProfile(
+                com.wearsic.app.data.ServerProfile(
+                    id = preferencesRepository.newProfileId(),
+                    name = cleanName,
+                    url = currentUrl,
+                    apiKey = apiKey.value
+                )
+            )
+        }
+    }
+
+    /** Switches the watch to [profile] (URL + key + connection-test reset). */
+    fun applyProfile(profile: com.wearsic.app.data.ServerProfile) {
+        viewModelScope.launch {
+            if (profile.url != serverUrl.value) {
+                preferencesRepository.saveServerUrl(profile.url)
+            }
+            if (profile.apiKey != apiKey.value) {
+                musicRepository.saveApiKey(profile.apiKey)
+            }
+        }
+    }
+
+    fun removeProfile(id: String) {
+        viewModelScope.launch {
+            preferencesRepository.deleteProfile(id)
         }
     }
 

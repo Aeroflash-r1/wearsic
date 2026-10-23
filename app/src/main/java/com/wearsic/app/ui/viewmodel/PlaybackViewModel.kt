@@ -49,6 +49,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         playbackController.seekToQueueItem(index)
     }
 
+    fun moveQueueItem(fromIndex: Int, toIndex: Int) {
+        playbackController.moveQueueItem(fromIndex, toIndex)
+    }
+
     fun clearQueue() {
         playbackController.clearQueue()
     }

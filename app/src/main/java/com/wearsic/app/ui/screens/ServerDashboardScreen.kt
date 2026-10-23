@@ -44,6 +44,7 @@ import com.wearsic.app.network.model.ReadyResponseDto
 import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.network.model.ServerUpdateStatusDto
 import com.wearsic.app.ui.components.WearsicScreenHeader
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAccentSky
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicAppBackground
@@ -317,7 +318,7 @@ private fun RefreshChip(loading: Boolean, onRefresh: () -> Unit) {
             Icon(
                 imageVector = Icons.Rounded.Refresh,
                 contentDescription = null,
-                tint = if (loading) WearsicTextMuted else WearsicVibrantLavender,
+                tint = if (loading) WearsicTextMuted else LocalWearsicAccent.current,
                 modifier = Modifier.size(15.dp)
             )
             Spacer(modifier = Modifier.width(6.dp))

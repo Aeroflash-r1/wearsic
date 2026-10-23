@@ -3,6 +3,7 @@ package com.wearsic.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,7 +21,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Radio
@@ -64,6 +70,7 @@ import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
@@ -86,6 +93,7 @@ fun QueueScreen(
     playbackState: PlaybackUiState,
     onPlayItem: (Int) -> Unit,
     onRemoveItem: (Int) -> Unit,
+    onMoveItem: (Int, Int) -> Unit = { _, _ -> },
     onClearQueue: () -> Unit,
     shuffleEnabled: Boolean = false,
     repeatMode: Int = 0,
@@ -100,6 +108,7 @@ fun QueueScreen(
     val currentIndex = playbackState.currentTrackIndex
     val upcoming = queue.drop(currentIndex + 1)
     var showClearConfirmation by remember { mutableStateOf(false) }
+    var menuIndex by remember { mutableStateOf<Int?>(null) }
 
     ScreenScaffold(
         scrollState = listState,
@@ -137,12 +146,12 @@ fun QueueScreen(
                             .size(44.dp)
                             .clip(CircleShape)
                             .background(
-                                if (shuffleEnabled) WearsicVibrantLavender.copy(alpha = 0.25f)
+                                if (shuffleEnabled) LocalWearsicAccent.current.copy(alpha = 0.25f)
                                 else WearsicGlassFill
                             )
                             .border(
                                 1.dp,
-                                if (shuffleEnabled) WearsicVibrantLavender else WearsicGlassBorder,
+                                if (shuffleEnabled) LocalWearsicAccent.current else WearsicGlassBorder,
                                 CircleShape
                             )
                             .wearsicClickable(onClick = onToggleShuffle),
@@ -151,7 +160,7 @@ fun QueueScreen(
                         Icon(
                             imageVector = Icons.Rounded.Shuffle,
                             contentDescription = if (shuffleEnabled) "Shuffle on" else "Shuffle off",
-                            tint = if (shuffleEnabled) WearsicVibrantLavender else WearsicTextMuted,
+                            tint = if (shuffleEnabled) LocalWearsicAccent.current else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -185,12 +194,12 @@ fun QueueScreen(
                             .size(44.dp)
                             .clip(CircleShape)
                             .background(
-                                if (repeatMode != 0) WearsicVibrantLavender.copy(alpha = 0.25f)
+                                if (repeatMode != 0) LocalWearsicAccent.current.copy(alpha = 0.25f)
                                 else WearsicGlassFill
                             )
                             .border(
                                 1.dp,
-                                if (repeatMode != 0) WearsicVibrantLavender else WearsicGlassBorder,
+                                if (repeatMode != 0) LocalWearsicAccent.current else WearsicGlassBorder,
                                 CircleShape
                             )
                             .wearsicClickable(onClick = onCycleRepeat),
@@ -203,7 +212,7 @@ fun QueueScreen(
                                 androidx.compose.material.icons.Icons.Rounded.Repeat
                             },
                             contentDescription = when (repeatMode) { 1 -> "Repeat One"; 2 -> "Repeat All"; else -> "Repeat off" },
-                            tint = if (repeatMode != 0) WearsicVibrantLavender else WearsicTextMuted,
+                            tint = if (repeatMode != 0) LocalWearsicAccent.current else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -235,7 +244,8 @@ fun QueueScreen(
                         QueueTrackItem(
                             track = track,
                             onClick = { onPlayItem(index) },
-                            onRemove = { onRemoveItem(index) }
+                            onRemove = { onRemoveItem(index) },
+                            onMore = { menuIndex = index }
                         )
                     }
                 }
@@ -290,6 +300,91 @@ fun QueueScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+
+        // Row action menu: tap ⋯ (or long-press) on an Up Next row to move
+        // it around the queue. Overlay stays inside the circular safe area.
+        menuIndex?.let { index ->
+            val target = queue.getOrNull(index)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .clickable { menuIndex = null },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .clip(RoundedCornerShape(WearsicDimens.CardRadius))
+                        .background(WearsicSurfaceRaised)
+                        .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {},
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = target?.title.orEmpty(),
+                        color = WearsicTextPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    QueueMenuRow(Icons.Rounded.ArrowUpward, "Move to top") {
+                        onMoveItem(index, 0)
+                        menuIndex = null
+                    }
+                    QueueMenuRow(Icons.Rounded.ArrowDownward, "Move to bottom") {
+                        onMoveItem(index, queue.lastIndex)
+                        menuIndex = null
+                    }
+                    QueueMenuRow(Icons.Rounded.Delete, "Remove from queue", destructive = true) {
+                        onRemoveItem(index)
+                        menuIndex = null
+                    }
+                    QueueMenuRow(Icons.Rounded.Close, "Close") { menuIndex = null }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueueMenuRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    destructive: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = WearsicDimens.SheetRowMinHeight)
+            .clip(CircleShape)
+            .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (destructive) WearsicError else LocalWearsicAccent.current,
+            modifier = Modifier.size(15.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            color = if (destructive) WearsicError else WearsicTextPrimary,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -379,6 +474,7 @@ private fun QueueTrackItem(
     track: Track,
     onClick: () -> Unit,
     onRemove: () -> Unit,
+    onMore: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     WearsicSongRow(
@@ -389,13 +485,22 @@ private fun QueueTrackItem(
         modifier = modifier,
         testTag = "queue_track_${track.id}",
         trailing = {
-            WearsicSongRowActionButton(
-                icon = Icons.Rounded.Close,
-                contentDescription = "Remove from Queue",
-                onClick = onRemove,
-                testTag = "queue_remove_${track.id}",
-                tint = WearsicTextMuted
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                WearsicSongRowActionButton(
+                    icon = Icons.Rounded.MoreHoriz,
+                    contentDescription = "Queue actions",
+                    onClick = onMore,
+                    testTag = "queue_more_${track.id}",
+                    tint = WearsicTextMuted
+                )
+                WearsicSongRowActionButton(
+                    icon = Icons.Rounded.Close,
+                    contentDescription = "Remove from Queue",
+                    onClick = onRemove,
+                    testTag = "queue_remove_${track.id}",
+                    tint = WearsicTextMuted
+                )
+            }
         }
     )
 }

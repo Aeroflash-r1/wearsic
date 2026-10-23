@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.runtime.Composable
@@ -74,6 +75,7 @@ import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.components.WearsicSongRowPlayButton
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
@@ -167,7 +169,7 @@ fun SearchScreen(
                         .background(if (isFocused) WearsicSurfaceActive else WearsicGlassFill)
                         .border(
                             1.dp,
-                            if (isFocused) WearsicVibrantLavender else WearsicSurfaceBorderSubtle,
+                            if (isFocused) LocalWearsicAccent.current else WearsicSurfaceBorderSubtle,
                             CircleShape
                         )
                         .padding(horizontal = 12.dp),
@@ -180,7 +182,7 @@ fun SearchScreen(
                         Icon(
                             imageVector = Icons.Rounded.Search,
                             contentDescription = "Search Icon",
-                            tint = if (isFocused) WearsicVibrantLavender else WearsicTextMuted,
+                            tint = if (isFocused) LocalWearsicAccent.current else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
 
@@ -208,7 +210,7 @@ fun SearchScreen(
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Normal
                                 ),
-                                cursorBrush = SolidColor(WearsicVibrantLavender),
+                                cursorBrush = SolidColor(LocalWearsicAccent.current),
                                 keyboardOptions = KeyboardOptions(
                                     imeAction = ImeAction.Search
                                 ),
@@ -288,17 +290,50 @@ fun SearchScreen(
             // instead of hiding it behind a misleading "No results found".
             if (searchState.hasSearched && searchState.results.isEmpty() && !searchState.isSearching) {
                 item {
-                    Text(
-                        text = if (searchState.errorMessage != null) {
-                            "Search failed: ${searchState.errorMessage}"
-                        } else {
-                            "No tracks found for \"${searchState.query}\""
-                        },
-                        color = if (searchState.errorMessage != null) com.wearsic.app.ui.theme.WearsicError else WearsicTextMuted,
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = if (searchState.errorMessage != null) {
+                                "Search failed: ${searchState.errorMessage}"
+                            } else {
+                                "No tracks found for \"${searchState.query}\""
+                            },
+                            color = if (searchState.errorMessage != null) com.wearsic.app.ui.theme.WearsicError else WearsicTextMuted,
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                        if (searchState.errorMessage != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(WearsicGlassFill)
+                                    .border(1.dp, WearsicGlassBorder, CircleShape)
+                                    .wearsicClickable {
+                                        submitSearch()
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 7.dp)
+                                    .testTag("search_retry"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = null,
+                                        tint = WearsicVibrantLavender,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Retry",
+                                        color = WearsicTextPrimary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -360,7 +395,7 @@ fun SearchScreen(
                     ) {
                         Text(
                             text = "Show more",
-                            color = WearsicVibrantLavender,
+                            color = LocalWearsicAccent.current,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )

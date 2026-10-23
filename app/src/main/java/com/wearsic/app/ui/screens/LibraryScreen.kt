@@ -25,7 +25,12 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.CloudOff
+import com.wearsic.app.ui.theme.WearsicAccentAmber
+import com.wearsic.app.ui.theme.WearsicAccentMint
+import com.wearsic.app.ui.theme.WearsicAccentPeach
 import com.wearsic.app.ui.theme.WearsicAccentRose
+import com.wearsic.app.ui.theme.WearsicAccentSky
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -61,12 +66,14 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.layout.ContentScale
 import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track
+import com.wearsic.app.ui.components.WearsicActionTile
 import com.wearsic.app.ui.components.WearsicPrimaryPillButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSectionTitle
 import com.wearsic.app.ui.components.WearsicSecondaryPillButton
 import com.wearsic.app.ui.components.WearsicSettingsActionPill
 import com.wearsic.app.ui.components.WearsicSongRow
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
@@ -76,6 +83,7 @@ import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicLavenderContainer
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
+import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
@@ -99,6 +107,10 @@ fun LibraryScreen(
     playbackState: PlaybackUiState = PlaybackUiState(),
     recentTracks: List<Track> = emptyList(),
     onPlayRecentTrack: (List<Track>, Int) -> Unit = { _, _ -> },
+    isServerReachable: Boolean = true,
+    offlineDownloads: List<Track> = emptyList(),
+    onPlayOfflineTrack: (List<Track>, Int) -> Unit = { _, _ -> },
+    favoritesCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberScalingLazyListState()
@@ -127,6 +139,41 @@ fun LibraryScreen(
                     subtitle = "Your music, everywhere",
                     icon = Icons.Rounded.MusicNote
                 )
+            }
+
+            // Offline banner — the server is unreachable, so the home screen
+            // surfaces saved music first instead of failing silently.
+            if (!isServerReachable) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(CircleShape)
+                            .background(WearsicGlassFill)
+                            .border(1.dp, WearsicGlassBorder, CircleShape)
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .testTag("library_offline_banner"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Rounded.CloudOff,
+                                contentDescription = null,
+                                tint = WearsicAccentAmber,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Offline — showing saved music",
+                                color = WearsicTextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
             }
 
             // Now Playing hero — always the first thing on the home screen so
@@ -184,71 +231,122 @@ fun LibraryScreen(
                 }
             }
 
-            // Downloads Action
-            item {
-                WearsicSecondaryPillButton(
-                    label = "Downloads",
-                    icon = Icons.Rounded.Download,
-                    onClick = onNavigateToDownloads,
-                    modifier = Modifier.fillMaxWidth(),
-                    testTag = "library_downloads_button"
-                )
+            // Saved-offline section: shown when the server is unreachable so
+            // the home screen stays useful as an offline library.
+            if (!isServerReachable && offlineDownloads.isNotEmpty()) {
+                item {
+                    WearsicSectionTitle(
+                        label = "Saved offline",
+                        icon = Icons.Rounded.Download,
+                        trailing = {
+                            Text(
+                                text = "${offlineDownloads.size} songs",
+                                color = WearsicTextSecondary,
+                                fontSize = 10.sp
+                            )
+                        }
+                    )
+                }
+                items(offlineDownloads.take(8), key = { it.id }) { track ->
+                    val index = offlineDownloads.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+                    WearsicSongRow(
+                        title = track.title,
+                        artist = track.artist,
+                        artworkUrl = track.artworkUrl,
+                        onClick = { onPlayOfflineTrack(offlineDownloads, index) },
+                        testTag = "library_offline_${track.id}"
+                    )
+                }
             }
 
-            // Secondary Actions: Playlists & Albums
+            // Downloads & Favorites — one glanceable row with live counts.
+            // (Counts are hidden while zero so the home screen stays quiet.)
+            if (onNavigateToFavorites != null) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        WearsicActionTile(
+                            label = "Downloads",
+                            icon = Icons.Rounded.Download,
+                            onClick = onNavigateToDownloads,
+                            modifier = Modifier.weight(1f),
+                            testTag = "library_downloads_tile",
+                            badgeText = offlineDownloads.size.takeIf { it > 0 }?.toString()
+                        )
+                        WearsicActionTile(
+                            label = "Favorites",
+                            icon = Icons.Rounded.Favorite,
+                            onClick = onNavigateToFavorites,
+                            modifier = Modifier.weight(1f),
+                            testTag = "library_favorites_tile",
+                            badgeText = favoritesCount.takeIf { it > 0 }?.toString(),
+                            accentColor = WearsicAccentRose
+                        )
+                    }
+                }
+            } else {
+                item {
+                    WearsicActionTile(
+                        label = "Downloads",
+                        icon = Icons.Rounded.Download,
+                        onClick = onNavigateToDownloads,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "library_downloads_tile",
+                        badgeText = offlineDownloads.size.takeIf { it > 0 }?.toString()
+                    )
+                }
+            }
+
+            // Playlists & Albums
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    WearsicSecondaryPillButton(
+                    WearsicActionTile(
                         label = "Playlists",
                         icon = Icons.AutoMirrored.Rounded.QueueMusic,
                         onClick = onNavigateToPlaylists,
                         modifier = Modifier.weight(1f),
-                        testTag = "library_playlists_button"
+                        testTag = "library_playlists_tile",
+                        accentColor = WearsicAccentSky
                     )
-                    WearsicSecondaryPillButton(
+                    WearsicActionTile(
                         label = "Albums",
                         icon = Icons.Rounded.Album,
                         onClick = onNavigateToAlbums,
                         modifier = Modifier.weight(1f),
-                        testTag = "library_albums_button"
+                        testTag = "library_albums_tile",
+                        accentColor = WearsicAccentMint
                     )
                 }
             }
 
-            // Artists
+            // Artists & Settings — secondary actions, one row.
             item {
-                WearsicSecondaryPillButton(
-                    label = "Artists",
-                    icon = Icons.Rounded.Person,
-                    onClick = onNavigateToArtists,
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    testTag = "library_artists_button"
-                )
-            }
-
-            if (onNavigateToFavorites != null) {
-                item {
-                    WearsicSecondaryPillButton(
-                        label = "Favorites",
-                        icon = Icons.Rounded.Favorite,
-                        onClick = onNavigateToFavorites,
-                        modifier = Modifier.fillMaxWidth(),
-                        testTag = "library_favorites_button"
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    WearsicActionTile(
+                        label = "Artists",
+                        icon = Icons.Rounded.Person,
+                        onClick = onNavigateToArtists,
+                        modifier = Modifier.weight(1f),
+                        testTag = "library_artists_tile",
+                        accentColor = WearsicAccentPeach
+                    )
+                    WearsicActionTile(
+                        label = "Settings",
+                        icon = Icons.Rounded.Settings,
+                        onClick = onNavigateToSettings,
+                        modifier = Modifier.weight(1f),
+                        testTag = "library_settings_tile",
+                        accentColor = WearsicTextMuted
                     )
                 }
-            }
-
-            // Settings Action Pill
-            item {
-                WearsicSettingsActionPill(
-                    label = "Settings",
-                    icon = Icons.Rounded.Settings,
-                    onClick = onNavigateToSettings,
-                    testTag = "library_settings_button"
-                )
             }
 
             // Bottom Spacing
@@ -383,7 +481,7 @@ private fun NowPlayingMiniCard(
                     .size(26.dp)
                     .clip(CircleShape)
                     .background(
-                        if (isPlaying) Color.White.copy(alpha = 0.9f) else WearsicVibrantLavender
+                        if (isPlaying) Color.White.copy(alpha = 0.9f) else LocalWearsicAccent.current
                     ),
                 contentAlignment = Alignment.Center
             ) {
@@ -417,7 +515,7 @@ private fun RecentTrackRow(
                 modifier = Modifier
                     .size(28.dp)
                     .clip(CircleShape)
-                    .background(WearsicVibrantLavender),
+                    .background(LocalWearsicAccent.current),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

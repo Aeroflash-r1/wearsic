@@ -560,6 +560,47 @@ class WearsicPlaybackController(
         }
     }
 
+    /**
+     * Moves a queue item from [fromIndex] to [toIndex] (both absolute indexes
+     * into the visible playlist). The current item keeps playing and the
+     * current-track index is recomputed for the shift. A manual edit
+     * invalidates any retained pre-shuffle order so shuffle-off restores the
+     * original list, not a stale one.
+     */
+    fun moveQueueItem(fromIndex: Int, toIndex: Int) {
+        val controller = mediaController ?: return
+        val list = _uiState.value.playlist
+        if (fromIndex == toIndex) return
+        if (fromIndex !in list.indices || toIndex !in list.indices) return
+
+        val newList = list.toMutableList()
+        val moved = newList.removeAt(fromIndex)
+        newList.add(toIndex, moved)
+
+        val oldCurrent = _uiState.value.currentTrackIndex
+        val newCurrent = when {
+            fromIndex == oldCurrent -> toIndex
+            fromIndex < oldCurrent && toIndex >= oldCurrent -> oldCurrent - 1
+            fromIndex > oldCurrent && toIndex <= oldCurrent -> oldCurrent + 1
+            else -> oldCurrent
+        }
+
+        try {
+            controller.moveMediaItem(fromIndex, toIndex)
+        } catch (_: Exception) {
+            return
+        }
+
+        if (originalQueueOrder.isNotEmpty()) originalQueueOrder = emptyList()
+
+        _uiState.update {
+            it.copy(
+                playlist = newList,
+                currentTrackIndex = newCurrent
+            )
+        }
+    }
+
     fun seekToQueueItem(index: Int) {
         val controller = mediaController ?: return
         if (index !in 0 until controller.mediaItemCount) return

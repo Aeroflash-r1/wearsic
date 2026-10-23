@@ -9,6 +9,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
@@ -62,6 +64,7 @@ import com.wearsic.app.media.AudioOutputHelper
 import com.wearsic.app.media.crossfade.CrossfadeLengths
 import com.wearsic.app.ui.components.WearsicCircularIconButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAccentSky
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicDimens
@@ -274,26 +277,71 @@ fun VolumeScreen(
                 val approxActiveMinutes =
                     if (sleepRemainingMs > 0) (sleepRemainingMs / 60000).toInt() else 0
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        options.forEach { mins ->
-                            val isActive = sleepRemainingMs > 0 && if (sleepSetMinutes > 0) {
-                                sleepSetMinutes == mins
-                            } else {
-                                approxActiveMinutes in (mins - 14)..mins
-                            }
+                    // Five chips cannot fit inside a 240dp round viewport — the
+                    // last option used to get clipped at the curved edge. The
+                    // row scrolls horizontally instead so every option stays
+                    // reachable (touch-swipe; the crown still adjusts volume).
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        item {
                             OptionChip(
-                                label = "${mins}m",
-                                isActive = isActive,
-                                onClick = { onSleepTimerSet(mins) },
-                                testTag = "sleep_timer_${mins}m"
+                                label = "15m",
+                                isActive = sleepRemainingMs > 0 && if (sleepSetMinutes > 0) {
+                                    sleepSetMinutes == 15
+                                } else {
+                                    approxActiveMinutes in 1..15
+                                },
+                                onClick = { onSleepTimerSet(15) },
+                                testTag = "sleep_timer_15m"
                             )
                         }
-                        OptionChip(
-                            label = "Off",
-                            isActive = sleepRemainingMs == 0L,
-                            onClick = { onSleepTimerSet(0) },
-                            testTag = "sleep_timer_off"
-                        )
+                        item {
+                            OptionChip(
+                                label = "30m",
+                                isActive = sleepRemainingMs > 0 && if (sleepSetMinutes > 0) {
+                                    sleepSetMinutes == 30
+                                } else {
+                                    approxActiveMinutes in 16..30
+                                },
+                                onClick = { onSleepTimerSet(30) },
+                                testTag = "sleep_timer_30m"
+                            )
+                        }
+                        item {
+                            OptionChip(
+                                label = "45m",
+                                isActive = sleepRemainingMs > 0 && if (sleepSetMinutes > 0) {
+                                    sleepSetMinutes == 45
+                                } else {
+                                    approxActiveMinutes in 31..45
+                                },
+                                onClick = { onSleepTimerSet(45) },
+                                testTag = "sleep_timer_45m"
+                            )
+                        }
+                        item {
+                            OptionChip(
+                                label = "60m",
+                                isActive = sleepRemainingMs > 0 && if (sleepSetMinutes > 0) {
+                                    sleepSetMinutes == 60
+                                } else {
+                                    approxActiveMinutes >= 46
+                                },
+                                onClick = { onSleepTimerSet(60) },
+                                testTag = "sleep_timer_60m"
+                            )
+                        }
+                        item {
+                            OptionChip(
+                                label = "Off",
+                                isActive = sleepRemainingMs == 0L,
+                                onClick = { onSleepTimerSet(0) },
+                                testTag = "sleep_timer_off"
+                            )
+                        }
                     }
                     if (sleepRemainingMs > 0) {
                         Spacer(modifier = Modifier.height(6.dp))
@@ -318,14 +366,22 @@ fun VolumeScreen(
             }
             item {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Same scrollable treatment as the sleep-timer row: five
+                    // chips overflow the round viewport, so the row scrolls.
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         CrossfadeLengths.SELECTABLE_MS.forEach { ms ->
-                            OptionChip(
-                                label = CrossfadeLengths.label(ms),
-                                isActive = ms == crossfadeMs,
-                                onClick = { onCrossfadeMsChanged(ms) },
-                                testTag = "crossfade_${ms}ms"
-                            )
+                            item(key = "crossfade_$ms") {
+                                OptionChip(
+                                    label = CrossfadeLengths.label(ms),
+                                    isActive = ms == crossfadeMs,
+                                    onClick = { onCrossfadeMsChanged(ms) },
+                                    testTag = "crossfade_${ms}ms"
+                                )
+                            }
                         }
                     }
                     if (crossfadeMs > CrossfadeLengths.OFF_MS) {
@@ -381,7 +437,7 @@ private fun VolumeDial(
     val arcColor = when {
         !enabled -> WearsicTextMuted.copy(alpha = 0.4f)
         isMuted -> WearsicTextMuted
-        else -> WearsicVibrantLavender
+        else -> LocalWearsicAccent.current
     }
     val trackColor = Color.White.copy(alpha = 0.08f)
 
@@ -469,9 +525,9 @@ private fun DeviceChip(
     testTag: String,
     modifier: Modifier = Modifier
 ) {
-    val fill = if (isSelected) WearsicVibrantLavender else WearsicGlassFill
+    val fill = if (isSelected) LocalWearsicAccent.current else WearsicGlassFill
     val contentTint = if (isSelected) WearsicTextPrimaryDark else WearsicTextPrimary
-    val iconTint = if (isSelected) WearsicTextPrimaryDark else WearsicVibrantLavender
+    val iconTint = if (isSelected) WearsicTextPrimaryDark else LocalWearsicAccent.current
 
     Box(
         modifier = modifier
@@ -524,7 +580,7 @@ private fun OptionChip(
         modifier = Modifier
             .heightIn(min = WearsicDimens.TouchTarget)
             .clip(CircleShape)
-            .background(if (isActive) WearsicVibrantLavender else WearsicGlassFill)
+            .background(if (isActive) LocalWearsicAccent.current else WearsicGlassFill)
             .border(
                 width = 1.dp,
                 color = if (isActive) Color.Transparent else WearsicGlassBorder,

@@ -6,8 +6,11 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.test.core.app.ApplicationProvider
 import com.wearsic.app.data.WearsicPreferencesRepository
 import com.wearsic.app.data.db.DownloadState
@@ -216,11 +219,21 @@ class RelaunchWithDataTest {
         // the fold regardless of this test's own seed data.
         composeTestRule.waitUntil(15_000) {
             composeTestRule.onAllNodesWithTag(
-                "library_downloads_button", useUnmergedTree = true
+                "library_downloads_tile", useUnmergedTree = true
             ).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true)
-            .performClick()
+        // Swipe until the tile is on-screen: with recents seeded, the Browse
+        // grid sits below the fold (ScalingLazyColumn has no ScrollToNode
+        // semantics). The loop exits at once when the tile is already visible.
+        val downloadsTile =
+            composeTestRule.onNodeWithTag("library_downloads_tile", useUnmergedTree = true)
+        var scrolls = 5
+        while (scrolls > 0 && runCatching { downloadsTile.assertIsDisplayed() }.isFailure) {
+            composeTestRule.onRoot().performTouchInput { swipeUp() }
+            composeTestRule.waitForIdle()
+            scrolls--
+        }
+        downloadsTile.performClick()
         composeTestRule.onNodeWithText("Downloads").assertIsDisplayed()
 
         // And the persisted downloads render on top of the reconciled DB.

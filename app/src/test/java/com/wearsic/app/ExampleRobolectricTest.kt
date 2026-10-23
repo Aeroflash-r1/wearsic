@@ -1,6 +1,7 @@
 package com.wearsic.app
 
 import android.content.Context
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -178,7 +179,7 @@ class ExampleRobolectricTest {
         // Verify Library Header and buttons with unmerged tree
         composeTestRule.onNodeWithText("Library").assertExists()
         composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).assertExists()
-        composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("library_downloads_tile", useUnmergedTree = true).assertExists()
 
         // Navigate to Search
         composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).performClick()
@@ -193,8 +194,19 @@ class ExampleRobolectricTest {
             }
         }
 
-        // Navigate to Downloads
-        composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true).performClick()
+        // Navigate to Downloads. The destination now lives in the Browse
+        // grid, below the fold on the round default viewport — swipe until
+        // it is on-screen (no ScrollToNode semantics on ScalingLazyColumn),
+        // then tap.
+        val downloadsTile =
+            composeTestRule.onNodeWithTag("library_downloads_tile", useUnmergedTree = true)
+        var scrolls = 5
+        while (scrolls > 0 && runCatching { downloadsTile.assertIsDisplayed() }.isFailure) {
+            composeTestRule.onRoot().performTouchInput { swipeUp() }
+            composeTestRule.waitForIdle()
+            scrolls--
+        }
+        downloadsTile.performClick()
         composeTestRule.onNodeWithText("Downloads").assertExists()
     }
 
@@ -207,8 +219,21 @@ class ExampleRobolectricTest {
             }
         }
 
-        // Navigate to Settings from Library (fully visible in high-height viewport without scrolling)
-        composeTestRule.onNodeWithTag("library_settings_button", useUnmergedTree = true).performClick()
+        // Navigate to Settings from Library. The entry is the Settings tile
+        // at the end of the Browse grid — it may sit below the fold even on
+        // the tall w480-h800 viewport, so swipe until it is on-screen, then
+        // tap (the loop exits immediately when it is already visible).
+        val settingsTile =
+            composeTestRule.onNodeWithTag("library_settings_tile", useUnmergedTree = true)
+        var settingsScrolls = 5
+        while (settingsScrolls > 0 &&
+            runCatching { settingsTile.assertIsDisplayed() }.isFailure
+        ) {
+            composeTestRule.onRoot().performTouchInput { swipeUp() }
+            composeTestRule.waitForIdle()
+            settingsScrolls--
+        }
+        settingsTile.performClick()
         
         // Wait for Datastore state flow emissions and layout transition to settle
         composeTestRule.waitForIdle()

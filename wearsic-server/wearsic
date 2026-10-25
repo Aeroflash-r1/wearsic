@@ -6509,12 +6509,14 @@ usage() {
       st="not running"
     fi
   fi
-  local l r lp rp gap tw tag
+  local l r lp rp gap tw tag tag_mid
   tw="$(box_tw)"
   l="$(printf '%s♪%s %s' "$C_ACC" "$C_RESET" "$(grad_word 'wearsic')")"
+  tag_mid=""
   if [ "$st" = "running" ]; then
     r="$(pill ok running)${ver:+ $(printf '%s v%s %s' "$C_DIM" "$ver" "$C_RESET")}"
     tag="music for your watch · v${ver:-?} · port $(port)"
+    tag_mid="music for your watch · port $(port)"
   elif [ "$st" = "not running" ]; then
     r="$(pill off 'not running')"
     tag="music for your watch · port $(port)"
@@ -6522,6 +6524,12 @@ usage() {
     r="$(pill off 'not installed')"
     tag="music for your watch"
   fi
+  # The subtitle shares the header rule's width. On a phone at 34/40 columns
+  # the full "· v<ver> · port <n>" caption is wider than the rule and used to
+  # print past the terminal edge, so drop the version first, then the port —
+  # a one-line caption is part of the layout contract (ui-layout-test.sh).
+  if [ ${#tag} -gt "$tw" ] && [ -n "$tag_mid" ]; then tag="$tag_mid"; fi
+  if [ ${#tag} -gt "$tw" ]; then tag="music for your watch"; fi
   lp="$(vis "$l")"; rp="$(vis "$r")"
   printf '\n'
   if [ $(( tw - ${#lp} - ${#rp} )) -ge 3 ]; then

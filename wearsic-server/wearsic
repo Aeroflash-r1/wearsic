@@ -1642,9 +1642,75 @@ default_iface() {
     "${WEARSIC_PROC_NET:-/proc/net}/route" 2>/dev/null
 }
 
+# How suitable an interface is for the address the WATCH must reach. The
+# watch lives on Wi-Fi or on the phone's hotspot; cellular and VPN links are
+# never reachable from it, even when they carry the default route (Android
+# often prefers mobile data while Wi-Fi is still connected). Lower is better;
+# 99 means "never". Wi-Fi names vary: wlan0, wlan1, swlan0, wifi0...
+lan_iface_score() {
+  case "${1%%@*}" in
+    wlan*|swlan*|wifi*) echo 0 ;;
+    ap*|softap*) echo 1 ;;
+    eth*|usb*|rndis*|en*) echo 2 ;;
+    rmnet*|ccmni*|pdp*|wwan*|seth*|v4-*|clat*|tun*|tap*|wg*|tailscale*|ppp*|dummy*) echo 99 ;;
+    *) echo 5 ;;
+  esac
+}
+
+# stdin: "iface address" pairs. Print the best watch-reachable address, or
+# nothing. Private (RFC1918) addresses break ties over public ones.
+lan_ip_best() {
+  local iface addr s best="" best_score=1000
+  while read -r iface addr; do
+    [ -n "$iface" ] || continue
+    case "$addr" in ''|*[!0-9.]*) continue ;; esac
+    s="$(lan_iface_score "$iface")"
+    [ "$s" -ge 99 ] && continue
+    case "$addr" in
+      10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) : ;;
+      *) s=$((s + 10)) ;;
+    esac
+    if [ "$s" -lt "$best_score" ]; then best="$addr"; best_score="$s"; fi
+  done
+  printf '%s' "$best"
+}
+
+# stdin: `ip -4 -o addr show` -> "iface address" pairs.
+lan_ip_pairs_ip() {
+  awk '{ iface=$2; sub(/:$/,"",iface); sub(/@.*/,"",iface)
+         for (i=3;i<=NF;i++) if ($i=="inet") {
+           a=$(i+1); sub(/\/.*/,"",a); print iface, a } }'
+}
+
+# stdin: `ifconfig -a` -> "iface address" pairs (net-tools + busybox forms).
+lan_ip_pairs_ifconfig() {
+  awk '/^[^ \t]/ { iface=$1; sub(/:$/,"",iface); sub(/@.*/,"",iface) }
+       { for (i=1;i<=NF;i++) if ($i=="inet") {
+           a=$(i+1); sub(/^addr:/,"",a); sub(/\/.*/,"",a)
+           if (a ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) print iface, a } }'
+}
+
+# Best-effort LAN IP of this device — the address to enter on the watch.
+# Termux ships neither iproute2 nor net-tools, and recent Android removed
+# the old `dhcp.wlan0.ipaddress` property, so every probe we know is tried
+# in order until one answers:
+#   1. termux-wifi-connectioninfo (termux-api add-on; exact Wi-Fi address)
+#   2. ip / iproute2             (all interfaces, ranked — see below)
+#   3. ifconfig / net-tools      (same ranking)
+#   4. Android's own tools       (/system/bin/ip, /system/bin/ifconfig —
+#      absolute paths because Termux's PATH never contains /system/bin)
+#   5. getprop                   (older Androids expose dhcp.*.ipaddress)
+#   6. /proc/net/fib_trie        (last resort, legacy domains only)
+# The ranking is the part that matters on a phone: Wi-Fi (wlan*/wlan1/
+# swlan*) beats the hotspot (ap*) which beats wired/tether (eth*/usb*);
+# rmnet/ccmni/pdp (mobile data) and tun/wg/tailscale (VPN) are discarded.
+# Picking the default-route NIC was wrong: Android keeps the mobile default
+# route while Wi-Fi is connected, which handed users a 10.x carrier address.
+# Prints NOTHING when every probe fails: callers print guidance instead of
+# a fake `http://<phone-IP>` placeholder (users typed it verbatim).
+
 lan_ip() {
-  local ip="" iface sys
-  iface="$(default_iface)"
+  local ip="" sys route dev
   sys="${WEARSIC_SYS_BIN:-/system/bin}"
 
   # 0. Explicit override. Modern Android hides most interface information
@@ -1665,50 +1731,26 @@ lan_ip() {
   if [ -z "$ip" ] && command -v termux-wifi-connectioninfo >/dev/null 2>&1; then
     ip="$(termux-wifi-connectioninfo 2>/dev/null \
       | sed -n 's/.*"ip"[[:space:]]*:[[:space:]]*"\([0-9.]\{7,\}\)".*/\1/p' | head -1)"
+    case "$ip" in 0.*) ip="" ;; esac
   fi
 
-  # 2. iproute2: wlan0 first, then the default-route NIC, then ANY
-  #    non-loopback interface (Android also uses wlan1/swlan0/ap0) and
-  #    finally the kernel's own source-address lookup.
+  # 2. iproute2: enumerate EVERY interface and rank it. This is what makes
+  #    wlan1/swlan0 and a hotspot work, and what keeps rmnet_data0 out.
   if [ -z "$ip" ] && command -v ip >/dev/null 2>&1; then
-    ip="$(ip -4 -o addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
-    if [ -z "$ip" ] && [ -n "$iface" ]; then
-      ip="$(ip -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
-    fi
+    ip="$(ip -4 -o addr show 2>/dev/null | lan_ip_pairs_ip | lan_ip_best)"
     if [ -z "$ip" ]; then
-      # Prefer the interface that actually carries the default route; the
-      # "first non-loopback" grab was picking hotspot/mobile-data addresses
-      # (e.g. 10.26.202.168) over the Wi-Fi NIC. "wlan*" is the usual
-      # Wi-Fi name; anything else with the default route wins next.
-      if [ -n "$iface" ]; then
-        ip="$(ip -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+      # Kernel source-address lookup, only when its interface is LAN-class.
+      route="$(ip route get 1.1.1.1 2>/dev/null | head -1)"
+      dev="$(printf '%s' "$route" | sed -n 's/.* dev \([^ ]*\).*/\1/p')"
+      if [ -n "$dev" ] && [ "$(lan_iface_score "$dev")" -lt 99 ]; then
+        ip="$(printf '%s' "$route" | sed -n 's/.* src \([0-9.]\+\).*/\1/p' | head -1)"
       fi
-      if [ -z "$ip" ]; then
-        ip="$(ip -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' \
-          | grep -Ev '^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
-      fi
-      if [ -z "$ip" ]; then
-        ip="$(ip -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
-      fi
-    fi
-    if [ -z "$ip" ]; then
-      ip="$(ip route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]\+\).*/\1/p' | head -1)"
     fi
   fi
 
   # 3. net-tools ifconfig (present only when the user installed it).
   if [ -z "$ip" ] && command -v ifconfig >/dev/null 2>&1; then
-    ip="$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
-    if [ -z "$ip" ] && [ -n "$iface" ]; then
-      ip="$(ifconfig "$iface" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
-    fi
-    if [ -z "$ip" ]; then
-      ip="$(ifconfig -a 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' \
-        | grep -Ev '^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
-    fi
-    if [ -z "$ip" ]; then
-      ip="$(ifconfig -a 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
-    fi
+    ip="$(ifconfig -a 2>/dev/null | lan_ip_pairs_ifconfig | lan_ip_best)"
   fi
 
   # 4. Android's own tools, by absolute path. Termux's linker environment
@@ -1717,29 +1759,17 @@ lan_ip() {
   #    identical command with the system library path when the first run
   #    yields nothing. Harmless where the direct run already works.
   if [ -z "$ip" ] && [ -x "$sys/ip" ]; then
-    ip="$("$sys/ip" -4 -o addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
-    if [ -z "$ip" ] && [ -n "$iface" ]; then
-      ip="$("$sys/ip" -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
-    fi
+    ip="$("$sys/ip" -4 -o addr show 2>/dev/null | lan_ip_pairs_ip | lan_ip_best)"
     if [ -z "$ip" ]; then
-      ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ip" -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' \
-        | grep -Ev '^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
-    fi
-    if [ -z "$ip" ]; then
-      ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ip" -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
+      ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ip" -4 -o addr show 2>/dev/null \
+        | lan_ip_pairs_ip | lan_ip_best)"
     fi
   fi
   if [ -z "$ip" ] && [ -x "$sys/ifconfig" ]; then
-    ip="$("$sys/ifconfig" wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
-    if [ -z "$ip" ] && [ -n "$iface" ]; then
-      ip="$("$sys/ifconfig" "$iface" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
-    fi
+    ip="$("$sys/ifconfig" -a 2>/dev/null | lan_ip_pairs_ifconfig | lan_ip_best)"
     if [ -z "$ip" ]; then
-      ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ifconfig" -a 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' \
-        | grep -Ev '^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
-    fi
-    if [ -z "$ip" ]; then
-      ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ifconfig" -a 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
+      ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ifconfig" -a 2>/dev/null \
+        | lan_ip_pairs_ifconfig | lan_ip_best)"
     fi
   fi
 
@@ -1749,6 +1779,7 @@ lan_ip() {
   elif [ -x "$sys/getprop" ]; then gp="$sys/getprop"; fi
   if [ -z "$ip" ] && [ -n "$gp" ]; then
     ip="$("$gp" dhcp.wlan0.ipaddress 2>/dev/null | tr -d '\r\n')"
+    case "$ip" in 0.*) ip="" ;; esac
     if [ -z "$ip" ]; then
       ip="$("$gp" 2>/dev/null \
         | sed -n 's/^\[[^]]*[Ww][Ll][Aa][Nn][^]]*\.ipaddress\]: \[\([0-9.]*\)\]$/\1/p' | head -1)"
@@ -5113,7 +5144,19 @@ cf_start() {
       cf_watch_box "$perm"
       return 0
     fi
-    return 1
+    # A failing verify is not always a dead tunnel (a bad
+    # WEARSIC_CF_PLAYBACK_ID, for example). Probe the front door once more:
+    # only an unreachable /health warrants tearing the tunnel down.
+    if cf_health_ok "$perm/health" 20; then
+      return 1
+    fi
+    # The supervisor process is alive, but the front door is not: Cloudflare
+    # answers 530 when the edge cannot reach the tunnel origin. A tunnel that
+    # survived a CLI upgrade (or a network change) keeps its old socket/DNS
+    # state, so merely re-checking can never fix it. Stop this generation and
+    # fall through to a clean start instead of exiting with diagnostics only.
+    warn "The supervisor is running, but the public URL is unreachable — restarting the tunnel…"
+    cf_cloudflare_stop >/dev/null 2>&1 || true
   fi
 
   cf_state_clear

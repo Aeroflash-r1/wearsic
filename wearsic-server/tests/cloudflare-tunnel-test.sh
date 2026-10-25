@@ -850,6 +850,11 @@ printf '%s' "$START" | grep -q 'ensure_api_key' \
   && pass "requires or creates an engine API key before exposing a public URL" \
   || fail "no API key requirement for the public URL"
 
+printf '%s' "$START" | grep -q 'restarting the tunnel' \
+  && printf '%s' "$START" | grep -q 'cf_cloudflare_stop' \
+  && pass "a running-but-unreachable tunnel is restarted (530 self-heals)" \
+  || fail "an alive supervisor with a dead front door only prints diagnostics"
+
 printf '%s' "$KEY_HELPER" | grep -q '/dev/urandom' \
   && pass "generates a strong API key when none exists" \
   || fail "no API-key generator"

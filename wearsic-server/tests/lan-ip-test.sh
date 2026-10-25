@@ -45,10 +45,18 @@ mkdir -p "$WORK/bin" "$WORK/sysbin" "$WORK/procnet" "$WORK/util"
 # never drift from the code users actually run.
 {
   sed -n '/^default_iface() {/,/^}/p' "$CLI"
+  sed -n '/^lan_iface_score() {/,/^}/p' "$CLI"
+  sed -n '/^lan_ip_best() {/,/^}/p' "$CLI"
+  sed -n '/^lan_ip_pairs_ip() {/,/^}/p' "$CLI"
+  sed -n '/^lan_ip_pairs_ifconfig() {/,/^}/p' "$CLI"
   sed -n '/^lan_ip() {/,/^}/p' "$CLI"
   sed -n '/^server_url() {/,/^}/p' "$CLI"
 } > "$WORK/fn.sh"
 grep -q '^default_iface() {' "$WORK/fn.sh" || { echo "FAIL could not extract default_iface from the CLI"; exit 1; }
+grep -q '^lan_iface_score() {' "$WORK/fn.sh" || { echo "FAIL could not extract lan_iface_score from the CLI"; exit 1; }
+grep -q '^lan_ip_best() {' "$WORK/fn.sh" || { echo "FAIL could not extract lan_ip_best from the CLI"; exit 1; }
+grep -q '^lan_ip_pairs_ip() {' "$WORK/fn.sh" || { echo "FAIL could not extract lan_ip_pairs_ip from the CLI"; exit 1; }
+grep -q '^lan_ip_pairs_ifconfig() {' "$WORK/fn.sh" || { echo "FAIL could not extract lan_ip_pairs_ifconfig from the CLI"; exit 1; }
 grep -q '^lan_ip() {' "$WORK/fn.sh" || { echo "FAIL could not extract lan_ip from the CLI"; exit 1; }
 grep -q '^server_url() {' "$WORK/fn.sh" || { echo "FAIL could not extract server_url from the CLI"; exit 1; }
 # server_url() also needs port(); pin 8080 (the default) so this test does
@@ -82,11 +90,11 @@ stub() { # $1 = full path; body on stdin
   cat > "$1"
   chmod +x "$1"
 }
-run_fn() { # $1 = function name
+run_fn() { # $1 = function name, remaining args are passed through
   PATH="$WORK/bin:$WORK/util" \
   WEARSIC_SYS_BIN="$WORK/sysbin" WEARSIC_PROC_NET="$WORK/procnet" \
   ENV_FILE="$WORK/env" \
-  "$BASH_BIN" -c 'source "$1"; shift; "$@"' bash "$WORK/fn.sh" "$1" 2>/dev/null
+  "$BASH_BIN" -c 'source "$1"; shift; "$@"' bash "$WORK/fn.sh" "$@" 2>/dev/null
 }
 run_fn_lan_ip_env() { # $1 = WEARSIC_LAN_IP value
   PATH="$WORK/bin:$WORK/util" \
@@ -120,7 +128,8 @@ printf '2: wlan0    inet 192.168.7.7/24 brd 192.168.7.255 scope global wlan0\n'
 EOF
 expect lan_ip "192.168.7.7" "ip -o addr on wlan0"
 
-# 3. wlan0 absent -> the default-route interface taken from /proc/net/route.
+# 3. wlan0 absent -> the only real LAN interface (eth0) is used. It no longer
+#    matters whether /proc/net/route names it: interface ranking decides.
 reset
 printf 'lo\t00000000\t00000000\t0003\t0\t0\t0\t00000000\t0\t0\t0\n' > "$WORK/procnet/route"
 printf 'eth0\t00000000\t0101A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n' >> "$WORK/procnet/route"
@@ -131,7 +140,7 @@ case "$*" in
   *) printf '3: eth0    inet 10.9.9.9/24 scope global eth0\n' ;;
 esac
 EOF
-expect lan_ip "10.9.9.9" "ip falls back to the default-route interface"
+expect lan_ip "10.9.9.9" "ip uses the only LAN interface (eth0)"
 
 # 4. net-tools ifconfig, "inet addr:" flavour.
 reset
@@ -159,10 +168,12 @@ printf '2: wlan0    inet 10.222.1.1/24 scope global wlan0\n'
 EOF
 expect lan_ip "10.222.1.1" "system/bin ip (absolute path)"
 
-# 7. /system/bin/ifconfig by absolute path.
+# 7. /system/bin/ifconfig by absolute path. The interface name comes from the
+#    header line — a bare `inet addr:` line cannot be attributed to a NIC.
 reset
 stub "$WORK/sysbin/ifconfig" <<'EOF'
 #!/bin/sh
+printf 'wlan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n'
 printf '        inet addr:10.33.3.3  Bcast:10.33.3.255  Mask:255.255.255.0\n'
 EOF
 expect lan_ip "10.33.3.3" "system/bin ifconfig (absolute path)"
@@ -273,7 +284,91 @@ EOF
 expect lan_ip "192.168.11.11" "ip all-interfaces fallback (wlan1, no default route)"
 
 # 17. Syntax check of the shipped CLI.
-if bash -n "$CLI" 2>/dev/null; then pass "wearsic CLI parses"; else fail "wearsic CLI has a syntax error"; fi
+# 22. THE REPORTED BUG: Android keeps mobile data as the default route while
+#     Wi-Fi is connected, so ranking by default route handed users the carrier
+#     address (10.26.202.168) instead of the Wi-Fi one. Wi-Fi must win even
+#     when it is not the default route and is not named `wlan0`.
+reset
+stub "$WORK/bin/ip" <<'EOF'
+#!/bin/sh
+printf '4: rmnet_data0    inet 10.26.202.168/24 scope global rmnet_data0\n'
+printf '7: wlan1          inet 192.168.1.77/24 scope global wlan1\n'
+EOF
+expect lan_ip "192.168.1.77" "Wi-Fi (wlan1) beats the cellular default route"
+
+# 23. Cellular only: there is no watch-reachable address, so emit NOTHING
+#     rather than a plausible-looking carrier IP.
+reset
+stub "$WORK/bin/ip" <<'EOF'
+#!/bin/sh
+printf '4: rmnet_data0    inet 10.26.202.168/24 scope global rmnet_data0\n'
+printf '5: ccmni0         inet 10.31.4.9/24 scope global ccmni0\n'
+EOF
+expect lan_ip "" "cellular-only device yields no LAN address"
+
+# 24. A VPN tunnel never wins, even with a lower-looking address.
+reset
+stub "$WORK/bin/ip" <<'EOF'
+#!/bin/sh
+printf '9: tun0          inet 10.8.0.2/24 scope global tun0\n'
+printf '7: wlan0         inet 192.168.1.5/24 scope global wlan0\n'
+EOF
+expect lan_ip "192.168.1.5" "VPN (tun0) is ignored in favour of Wi-Fi"
+
+# 25. Phone hotspot: the watch connects to ap0, not to mobile data.
+reset
+stub "$WORK/bin/ip" <<'EOF'
+#!/bin/sh
+printf '4: rmnet_data0    inet 10.26.202.168/24 scope global rmnet_data0\n'
+printf '8: ap0            inet 192.168.43.1/24 scope global ap0\n'
+EOF
+expect lan_ip "192.168.43.1" "hotspot (ap0) is used when Wi-Fi is down"
+
+# 26. The same ranking applies to ifconfig output.
+reset
+stub "$WORK/bin/ifconfig" <<'EOF'
+#!/bin/sh
+printf 'rmnet_data0: flags=4163<UP,RUNNING>  mtu 1500\n'
+printf '        inet addr:10.26.202.168  Bcast:10.26.202.255  Mask:255.255.255.0\n'
+printf 'wlan1: flags=4163<UP,RUNNING>  mtu 1500\n'
+printf '        inet addr:192.168.1.9  Bcast:192.168.1.255  Mask:255.255.255.0\n'
+EOF
+expect lan_ip "192.168.1.9" "ifconfig ranking skips rmnet_data0 for wlan1"
+
+# 27. `ip route get` is only consulted when enumeration found nothing, and
+#     only when its device is LAN-class. A Wi-Fi source address is accepted.
+reset
+stub "$WORK/bin/ip" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *"route get"*) printf '1.1.1.1 via 192.168.1.1 dev wlan0 src 192.168.1.60 uid 0\n' ;;
+  *) printf '4: rmnet_data0    inet 10.26.202.168/24 scope global rmnet_data0\n' ;;
+esac
+EOF
+expect lan_ip "192.168.1.60" "ip route get accepts a Wi-Fi source address"
+
+# 28. ...but a cellular source address from `ip route get` is discarded too.
+reset
+stub "$WORK/bin/ip" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *"route get"*) printf '1.1.1.1 via 10.26.202.1 dev rmnet_data0 src 10.26.202.168 uid 0\n' ;;
+  *) printf '4: rmnet_data0    inet 10.26.202.168/24 scope global rmnet_data0\n' ;;
+esac
+EOF
+expect lan_ip "" "ip route get rejects a cellular source address"
+
+echo "lan_iface_score:"
+check "wlan0 scored as Wi-Fi" "0" "$(run_fn lan_iface_score wlan0)"
+check "wlan1 scored as Wi-Fi" "0" "$(run_fn lan_iface_score wlan1)"
+check "swlan0 scored as Wi-Fi" "0" "$(run_fn lan_iface_score swlan0)"
+check "ap0 scored as hotspot" "1" "$(run_fn lan_iface_score ap0)"
+check "eth0 scored as wired" "2" "$(run_fn lan_iface_score eth0)"
+check "rmnet_data0 scored as unusable" "99" "$(run_fn lan_iface_score rmnet_data0)"
+check "ccmni0 scored as unusable" "99" "$(run_fn lan_iface_score ccmni0)"
+check "tun0 scored as unusable" "99" "$(run_fn lan_iface_score tun0)"
+check "tailscale0 scored as unusable" "99" "$(run_fn lan_iface_score tailscale0)"
+
 
 echo
 if [ "$fails" -eq 0 ]; then echo "lan-ip-test: PASSED"; exit 0; fi

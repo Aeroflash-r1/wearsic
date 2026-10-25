@@ -3757,6 +3757,24 @@ cf_pids() {  # pids of THIS install's cloudflare supervisor
   done
 }
 
+# Seconds since the Cloudflare state file or one of its logs was last
+# touched — how RECENTLY ACTIVE a running supervisor is. The supervisor
+# rewrites the state on every retry cycle and appends to its log while it
+# works, so a small number means "mid-retry, leave it alone". 999999 when
+# nothing is readable.
+cf_supervisor_idle() {
+  local now f t idle=999999 m
+  now="$(date +%s)"
+  for f in "$(cf_state_file)" "$(cf_log_file)" "$(cf_tunnel_log)"; do
+    [ -f "$f" ] || continue
+    t="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+    case "$t" in ''|*[!0-9]*) t=0 ;; esac
+    m=$(( now - t ))
+    [ "$m" -lt "$idle" ] && idle="$m"
+  done
+  printf '%s' "$idle"
+}
+
 # --- Reachability probes ----------------------------------------------------
 cf_http_code() {  # url [timeout]
   curl -sS -o /dev/null -w '%{http_code}' --max-time "${2:-15}" "$1" 2>/dev/null || true
@@ -5146,16 +5164,62 @@ cf_start() {
     fi
     # A failing verify is not always a dead tunnel (a bad
     # WEARSIC_CF_PLAYBACK_ID, for example). Probe the front door once more:
-    # only an unreachable /health warrants tearing the tunnel down.
+    # only an unreachable /health warrants intervention.
     if cf_health_ok "$perm/health" 20; then
       return 1
     fi
-    # The supervisor process is alive, but the front door is not: Cloudflare
-    # answers 530 when the edge cannot reach the tunnel origin. A tunnel that
-    # survived a CLI upgrade (or a network change) keeps its old socket/DNS
-    # state, so merely re-checking can never fix it. Stop this generation and
-    # fall through to a clean start instead of exiting with diagnostics only.
-    warn "The supervisor is running, but the public URL is unreachable — restarting the tunnel…"
+    # The supervisor is alive but the front door is down. Before tearing it
+    # down, ask whether it is still WORKING: every fresh generation mints a
+    # NEW quick tunnel, and repeated mints are exactly what trips Cloudflare's
+    # rate limit (HTTP 429, "error code: 1015") — after which no tunnel can
+    # be created at all for a while. The state file is rewritten on every
+    # retry cycle, so a recently-touched state/log means the supervisor is
+    # mid-retry: wait WITH it instead of restarting it.
+    local _idle
+    _idle="$(cf_supervisor_idle)"
+    case "$_idle" in ''|*[!0-9]*) _idle=999999 ;; esac
+    if [ "$_idle" -le 600 ]; then
+      say "The tunnel supervisor is already retrying on its own — waiting with it…"
+      shim_wait "Cloudflare  waiting for the tunnel (the supervisor is retrying)…" 900 \
+        cf_state_settled "Cloudflare  waiting for the tunnel…"
+      local _st _err
+      _st="$(cf_state_get status || true)"
+      case "$_st" in
+        live)
+          say ""
+          if cf_verify "$perm"; then
+            say ""
+            cf_watch_box "$perm"
+            return 0
+          fi
+          return 1
+          ;;
+        error)
+          _err="$(cf_state_get last_error || true)"
+          say ""
+          say "The tunnel supervisor stopped with an error:"
+          [ -n "$_err" ] && say "  $_err"
+          tail -20 "$(cf_log_file)" 2>/dev/null | sed 's/^/  /'
+          return 1
+          ;;
+        *)
+          _err="$(cf_state_get last_error || true)"
+          say ""
+          say "Still down — the supervisor keeps retrying in the background."
+          [ -n "$_err" ] && say "  $_err"
+          say "Check progress:  wearsic cloudflare status"
+          say "Rerunning 'wearsic cloudflare' will not speed it up: it waits with the"
+          say "running supervisor instead of restarting it, so the rate limit recovers."
+          return 1
+          ;;
+      esac
+    fi
+    # The supervisor has gone quiet (no state or log activity for 10+
+    # minutes) while the front door is down: it is wedged, not retrying. A
+    # tunnel that survived a CLI upgrade (or a network change) keeps its old
+    # socket/DNS state, which only a fresh generation can fix. Stop it and
+    # fall through to a clean start.
+    warn "The supervisor is running, but the public URL is unreachable and it has gone quiet — restarting the tunnel…"
     cf_cloudflare_stop >/dev/null 2>&1 || true
   fi
 
@@ -5180,10 +5244,24 @@ cf_start() {
   if [ "$st" != "live" ]; then
     err="$(cf_state_get last_error || true)"
     say ""
-    say "The front door did not come up."
+    say "The front door did not come up yet."
     [ -n "$err" ] && say "  $err"
-    tail -20 "$(cf_log_file)" 2>/dev/null | sed 's/^/  /'
-    die "Cloudflare setup failed (the supervisor may still be retrying — check: wearsic cloudflare status)"
+    case "$err" in
+      *"429"*|*rate-limit*)
+        say ""
+        say "Cloudflare rate-limits quick-tunnel creation per network. The supervisor"
+        say "keeps retrying on its own (backoff grows to ~5 minutes between attempts)"
+        say "and will bring the URL up when the limit clears — no action needed."
+        say "Check progress:  wearsic cloudflare status"
+        say "Rerunning 'wearsic cloudflare' will NOT speed it up: it waits with the"
+        say "running supervisor instead of restarting it, so the limit can recover."
+        return 1
+        ;;
+      *)
+        tail -20 "$(cf_log_file)" 2>/dev/null | sed 's/^/  /'
+        die "Cloudflare setup failed (the supervisor may still be retrying — check: wearsic cloudflare status)"
+        ;;
+    esac
   fi
 
   say ""

@@ -850,10 +850,55 @@ printf '%s' "$START" | grep -q 'ensure_api_key' \
   && pass "requires or creates an engine API key before exposing a public URL" \
   || fail "no API key requirement for the public URL"
 
-printf '%s' "$START" | grep -q 'restarting the tunnel' \
+printf '%s' "$START" | grep -q 'cf_supervisor_idle' \
+  && printf '%s' "$START" | grep -q 'waiting with it' \
+  && pass "an actively-retrying supervisor is waited with, not restarted (no extra 429 mints)" \
+  || fail "every start tears down a retrying supervisor and re-mints a tunnel"
+
+printf '%s' "$START" | grep -q 'gone quiet' \
   && printf '%s' "$START" | grep -q 'cf_cloudflare_stop' \
-  && pass "a running-but-unreachable tunnel is restarted (530 self-heals)" \
-  || fail "an alive supervisor with a dead front door only prints diagnostics"
+  && pass "a wedged (quiet) supervisor is still restarted" \
+  || fail "a wedged supervisor is never restarted"
+
+printf '%s' "$START" | grep -q 'rate-limits quick-tunnel creation' \
+  && pass "the 429 timeout explains itself instead of a bare failure" \
+  || fail "the rate-limit failure gives no explanation"
+
+# cf_supervisor_idle itself: file mtimes decide "actively working" vs "quiet".
+extract cf_supervisor_idle
+. "$WORK/fn_cf_supervisor_idle.sh"
+_prev_dest="$DEST"
+DEST="$WORK/inst"
+mkdir -p "$DEST/wearsic-state"
+state="$DEST/wearsic-state/cloudflare.json"
+log="$DEST/wearsic-state/cloudflare.log"
+tlog="$DEST/wearsic-state/cloudflare-tunnel.log"
+printf '{}' > "$state"; printf 'log' > "$log"; printf 'tlog' > "$tlog"
+idle="$(cf_supervisor_idle)"
+case "$idle" in
+  0|1|2|3) pass "a just-touched state is reported active (idle=$idle)" ;;
+  *) fail "a just-touched state should be idle=0..3 (got '$idle')" ;;
+esac
+# An hour-old state with a fresh tunnel log: the FRESHEST file wins.
+touch -d '1 hour ago' "$state"
+idle="$(cf_supervisor_idle)"
+case "$idle" in
+  0|1|2|3) pass "a fresh log keeps the supervisor 'active' even with a stale state" ;;
+  *) fail "fresh log ignored (idle='$idle')" ;;
+esac
+# Everything an hour old -> quiet.
+touch -d '1 hour ago' "$log" "$tlog"
+idle="$(cf_supervisor_idle)"
+case "$idle" in
+  35*|36*) pass "hour-old files read as quiet (idle='$idle')" ;;
+  *) fail "old files should read ~3600s (got '$idle')" ;;
+esac
+# No files at all -> 999999 (never seen as active).
+rm -f "$state" "$log" "$tlog"
+[ "$(cf_supervisor_idle)" = "999999" ] \
+  && pass "no state/log files read as quiet (999999)" \
+  || fail "missing files must not read as active"
+DEST="$_prev_dest"
 
 printf '%s' "$KEY_HELPER" | grep -q '/dev/urandom' \
   && pass "generates a strong API key when none exists" \

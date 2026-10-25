@@ -15,8 +15,8 @@ android {
     applicationId = "com.wearsic.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 53
-    versionName = "1.9.23"
+    versionCode = 54
+    versionName = "1.9.24"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

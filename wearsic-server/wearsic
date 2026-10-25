@@ -3346,15 +3346,27 @@ cf_ensure_subdomain() {  # $1 = account id
       printf '%s' "$sub"
       return 0
     fi
+    local fresh_hint=0
     case "${CF_HTTP_STATUS:-0}" in
       401|403)
         cf_api_explain "Could not create the workers.dev subdomain"
-        err "Opening https://dash.cloudflare.com/?to=/:account/workers/workers-and-pages once also creates one automatically; then run wearsic cloudflare again."
-        return 1
+        fresh_hint=1
         ;;
     esac
     cf_api_explain "Could not create the workers.dev subdomain '$cand'"
+    fresh_hint=1
   done
+  # A BRAND-NEW Cloudflare account has no workers.dev subdomain until the
+  # Workers page has been opened once in the dashboard; the create API is
+  # rejected until then. This is the #1 fresh-account failure — say
+  # exactly what to click instead of dumping a cryptic API error.
+  if [ "$fresh_hint" = "1" ]; then
+    err "Cloudflare has not provisioned workers.dev for this account yet."
+    err "Open this link ONCE in the browser that logged into Cloudflare:"
+    say "    ${C_ACC}https://dash.cloudflare.com/$acc/workers${C_RESET}"
+    say "    (or: https://dash.cloudflare.com/?to=/:account/workers/workers-and-pages)"
+    err "It provisions the subdomain automatically. Then run 'wearsic cloudflare' again."
+  fi
   err "Choose a different name:  CLOUDFLARE_SUBDOMAIN=<name> wearsic cloudflare"
   return 1
 }
@@ -5194,6 +5206,12 @@ ensure_engine() {
 cf_watch_box() {  # $1 = permanent URL
   local url="$1" key
   key="$(api_key)"
+  # The exact URL first, as a plain line — copyable, never wrapped inside a
+  # colored box on narrow screens.
+  say ""
+  say "  ${C_DIM}Your PERMANENT URL (exact):${C_RESET}"
+  say "  ${C_ACC}${url}${C_RESET}"
+  say "  ${C_DIM}Enter exactly this URL + the API key in Wearsic app → Settings.${C_RESET}"
   box_begin "ready for your watch" ok
   box_line ""
   box_line "   ${C_DIM}Server URL${C_RESET}"

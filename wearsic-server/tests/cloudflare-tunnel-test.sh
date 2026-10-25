@@ -835,6 +835,15 @@ grep -q 'command -v pkg' "$CLI" \
   && pass "finds pkg even when TERMUX_PREFIX is unset (non-login shells)" \
   || fail "pkg discovery depends on TERMUX_PREFIX being set"
 
+grep -q 'not provisioned workers.dev' "$CLI" \
+  && grep -q 'dash.cloudflare.com/$acc/workers' "$CLI" \
+  && pass "a brand-new account is told to open the Workers page once (with its exact link)" \
+  || fail "fresh-account subdomain failure is not explained"
+
+grep -q 'Your PERMANENT URL (exact)' "$CLI" \
+  && pass "the success screen prints the exact permanent URL as a plain copyable line" \
+  || fail "success screen lacks a plain exact-URL line"
+
 printf '%s' "$SUP" | grep -q 'retrying Worker deployment' \
   && pass "keeps retrying after a degraded deployment" \
   || fail "a degraded deployment is never retried"

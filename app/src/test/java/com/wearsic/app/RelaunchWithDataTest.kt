@@ -219,14 +219,14 @@ class RelaunchWithDataTest {
         // the fold regardless of this test's own seed data.
         composeTestRule.waitUntil(15_000) {
             composeTestRule.onAllNodesWithTag(
-                "library_downloads_tile", useUnmergedTree = true
+                "library_downloads_button", useUnmergedTree = true
             ).fetchSemanticsNodes().isNotEmpty()
         }
         // Swipe until the tile is on-screen: with recents seeded, the Browse
         // grid sits below the fold (ScalingLazyColumn has no ScrollToNode
         // semantics). The loop exits at once when the tile is already visible.
         val downloadsTile =
-            composeTestRule.onNodeWithTag("library_downloads_tile", useUnmergedTree = true)
+            composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true)
         var scrolls = 5
         while (scrolls > 0 && runCatching { downloadsTile.assertIsDisplayed() }.isFailure) {
             composeTestRule.onRoot().performTouchInput { swipeUp() }

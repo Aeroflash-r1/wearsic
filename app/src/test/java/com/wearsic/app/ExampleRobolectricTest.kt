@@ -179,7 +179,7 @@ class ExampleRobolectricTest {
         // Verify Library Header and buttons with unmerged tree
         composeTestRule.onNodeWithText("Library").assertExists()
         composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).assertExists()
-        composeTestRule.onNodeWithTag("library_downloads_tile", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true).assertExists()
 
         // Navigate to Search
         composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).performClick()
@@ -199,7 +199,7 @@ class ExampleRobolectricTest {
         // it is on-screen (no ScrollToNode semantics on ScalingLazyColumn),
         // then tap.
         val downloadsTile =
-            composeTestRule.onNodeWithTag("library_downloads_tile", useUnmergedTree = true)
+            composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true)
         var scrolls = 5
         while (scrolls > 0 && runCatching { downloadsTile.assertIsDisplayed() }.isFailure) {
             composeTestRule.onRoot().performTouchInput { swipeUp() }
@@ -224,7 +224,7 @@ class ExampleRobolectricTest {
         // the tall w480-h800 viewport, so swipe until it is on-screen, then
         // tap (the loop exits immediately when it is already visible).
         val settingsTile =
-            composeTestRule.onNodeWithTag("library_settings_tile", useUnmergedTree = true)
+            composeTestRule.onNodeWithTag("library_settings_button", useUnmergedTree = true)
         var settingsScrolls = 5
         while (settingsScrolls > 0 &&
             runCatching { settingsTile.assertIsDisplayed() }.isFailure

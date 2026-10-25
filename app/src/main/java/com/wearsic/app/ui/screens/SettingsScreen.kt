@@ -78,6 +78,8 @@ import kotlinx.coroutines.delay
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.wearsicAccentContainer
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
@@ -85,7 +87,6 @@ import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
-import com.wearsic.app.ui.theme.WearsicLavenderContainer
 import com.wearsic.app.ui.theme.WearsicSuccess
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceActive
@@ -95,7 +96,6 @@ import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -256,8 +256,7 @@ fun SettingsScreen(
             item {
                 WearsicScreenHeader(
                     title = "Settings",
-                    subtitle = "Server & Storage",
-                    icon = Icons.Rounded.Settings
+                    subtitle = "Server & Storage"
                 )
             }
 
@@ -265,7 +264,7 @@ fun SettingsScreen(
             item {
                 Text(
                     text = "Connection",
-                    color = WearsicVibrantLavender,
+                    color = LocalWearsicAccent.current,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(top = 4.dp)
@@ -284,7 +283,7 @@ fun SettingsScreen(
                                 1.dp,
                                 when {
                                     urlField.error != null -> WearsicError
-                                    urlField.focused -> WearsicVibrantLavender
+                                    urlField.focused -> LocalWearsicAccent.current
                                     else -> WearsicSurfaceBorderSubtle
                                 },
                                 CircleShape
@@ -302,7 +301,7 @@ fun SettingsScreen(
                                 contentDescription = "Server URL Icon",
                                 tint = when {
                                     urlField.error != null -> WearsicError
-                                    urlField.focused -> WearsicVibrantLavender
+                                    urlField.focused -> LocalWearsicAccent.current
                                     else -> WearsicTextSecondary
                                 },
                                 modifier = Modifier.size(16.dp)
@@ -347,7 +346,7 @@ fun SettingsScreen(
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Normal
                                         ),
-                                        cursorBrush = SolidColor(WearsicVibrantLavender),
+                                        cursorBrush = SolidColor(LocalWearsicAccent.current),
                                         keyboardOptions = KeyboardOptions(
                                             imeAction = ImeAction.Done
                                         ),
@@ -423,7 +422,7 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(CircleShape)
-                                .background(WearsicVibrantLavender)
+                                .background(LocalWearsicAccent.current)
                                 .wearsicClickable { testConnectionNow() }
                                 .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("settings_test_connection"),
@@ -452,7 +451,7 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .clip(CircleShape)
                                 .background(WearsicSurface)
-                                .border(1.dp, WearsicVibrantLavender, CircleShape)
+                                .border(1.dp, LocalWearsicAccent.current, CircleShape)
                                 .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("settings_test_connection_testing"),
                             contentAlignment = Alignment.Center
@@ -543,7 +542,7 @@ fun SettingsScreen(
                         "Tap to change (1024–65535)"
                     },
                     icon = Icons.Rounded.Lan,
-                    iconTint = WearsicVibrantLavender,
+                    iconTint = LocalWearsicAccent.current,
                     onClick = {
                         if (serverUrl.isNotBlank()) {
                             portField = currentPort
@@ -566,7 +565,7 @@ fun SettingsScreen(
                                 1.dp,
                                 when {
                                     keyField.error != null -> WearsicError
-                                    keyField.focused -> WearsicVibrantLavender
+                                    keyField.focused -> LocalWearsicAccent.current
                                     else -> WearsicSurfaceBorderSubtle
                                 },
                                 CircleShape
@@ -601,7 +600,7 @@ fun SettingsScreen(
                                         commitApiKey()
                                     }
                                 ),
-                                cursorBrush = SolidColor(WearsicVibrantLavender),
+                                cursorBrush = SolidColor(LocalWearsicAccent.current),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .onFocusChanged { focusState ->
@@ -670,7 +669,7 @@ fun SettingsScreen(
             item {
                 Text(
                     text = "Appearance",
-                    color = WearsicVibrantLavender,
+                    color = LocalWearsicAccent.current,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(top = 4.dp)
@@ -687,7 +686,7 @@ fun SettingsScreen(
                         "Use the fixed lavender accent"
                     },
                     icon = Icons.Rounded.Palette,
-                    iconTint = if (dynamicColorEnabled) WearsicVibrantLavender else WearsicTextMuted,
+                    iconTint = if (dynamicColorEnabled) LocalWearsicAccent.current else WearsicTextMuted,
                     onClick = { onDynamicColorToggled(!dynamicColorEnabled) },
                     testTag = "settings_dynamic_color"
                 )
@@ -703,7 +702,7 @@ fun SettingsScreen(
                         "Keep the artwork still"
                     },
                     icon = Icons.Rounded.Autorenew,
-                    iconTint = if (rotatingArtworkEnabled) WearsicVibrantLavender else WearsicTextMuted,
+                    iconTint = if (rotatingArtworkEnabled) LocalWearsicAccent.current else WearsicTextMuted,
                     onClick = { onRotatingArtworkToggled(!rotatingArtworkEnabled) },
                     testTag = "settings_rotating_artwork"
                 )
@@ -713,7 +712,7 @@ fun SettingsScreen(
             item {
                 Text(
                     text = "Server Profiles",
-                    color = WearsicVibrantLavender,
+                    color = LocalWearsicAccent.current,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(top = 4.dp)
@@ -745,7 +744,7 @@ fun SettingsScreen(
             item {
                 Text(
                     text = "Offline Audio",
-                    color = WearsicVibrantLavender,
+                    color = LocalWearsicAccent.current,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(top = 4.dp)
@@ -762,7 +761,7 @@ fun SettingsScreen(
                         "Songs will not be saved offline"
                     },
                     icon = Icons.Rounded.AutoAwesome,
-                    iconTint = if (autoCacheEnabled) WearsicVibrantLavender else WearsicTextMuted,
+                    iconTint = if (autoCacheEnabled) LocalWearsicAccent.current else WearsicTextMuted,
                     onClick = { onAutoCacheToggled(!autoCacheEnabled) },
                     testTag = "settings_auto_cache"
                 )
@@ -775,7 +774,7 @@ fun SettingsScreen(
                     title = "Keep ${offlineLimitSongs} Songs Offline",
                     subtitle = "Tap to cycle · oldest removed first",
                     icon = Icons.Rounded.DownloadDone,
-                    iconTint = WearsicVibrantLavender,
+                    iconTint = LocalWearsicAccent.current,
                     onClick = {
                         val idx = offlineLimits.indexOf(offlineLimitSongs)
                         val next = offlineLimits[(idx + 1).coerceAtLeast(0) % offlineLimits.size]
@@ -815,7 +814,7 @@ fun SettingsScreen(
                         title = if (downloadsClearedMessage != null) downloadsClearedMessage!! else "Clear Downloads",
                         subtitle = if (downloadsClearedMessage != null) "All offline files deleted" else "Remove offline files",
                         icon = Icons.Rounded.Delete,
-                        iconTint = if (downloadsClearedMessage != null) WearsicError else WearsicVibrantLavender,
+                        iconTint = if (downloadsClearedMessage != null) WearsicError else LocalWearsicAccent.current,
                         onClick = {
                             showClearDownloadsConfirm = true
                         },
@@ -875,7 +874,7 @@ fun SettingsScreen(
                         .padding(horizontal = 16.dp)
                         .clip(CircleShape)
                         .background(WearsicSurface)
-                        .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), CircleShape)
+                        .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.5f), CircleShape)
                         .padding(horizontal = 16.dp, vertical = 14.dp)
                 ) {
                     Text(
@@ -891,7 +890,7 @@ fun SettingsScreen(
                             .heightIn(min = WearsicDimens.TouchTarget)
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.35f))
-                            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.4f), CircleShape)
+                            .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.4f), CircleShape)
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         androidx.compose.foundation.text.BasicTextField(
@@ -902,7 +901,7 @@ fun SettingsScreen(
                                 color = WearsicTextPrimary,
                                 fontSize = 12.sp
                             ),
-                            cursorBrush = SolidColor(WearsicVibrantLavender),
+                            cursorBrush = SolidColor(LocalWearsicAccent.current),
                             modifier = Modifier.fillMaxWidth(),
                             decorationBox = { innerTextField ->
                                 if (newProfileName.isEmpty()) {
@@ -918,7 +917,7 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .heightIn(min = WearsicDimens.TouchTarget)
                                 .clip(CircleShape)
-                                .background(WearsicVibrantLavender)
+                                .background(LocalWearsicAccent.current)
                                 .wearsicClickable {
                                     val name = newProfileName.trim()
                                     if (name.isNotBlank()) {
@@ -1025,7 +1024,7 @@ fun SettingsScreen(
                         .padding(horizontal = 16.dp)
                         .clip(CircleShape)
                         .background(WearsicSurface)
-                        .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), CircleShape)
+                        .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.5f), CircleShape)
                         .padding(horizontal = 16.dp, vertical = 14.dp)
                 ) {
                     Text(
@@ -1049,7 +1048,7 @@ fun SettingsScreen(
                             .heightIn(min = WearsicDimens.TouchTarget)
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.35f))
-                            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.4f), CircleShape)
+                            .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.4f), CircleShape)
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         androidx.compose.foundation.text.BasicTextField(
@@ -1060,7 +1059,7 @@ fun SettingsScreen(
                                 color = WearsicTextPrimary,
                                 fontSize = 14.sp
                             ),
-                            cursorBrush = SolidColor(WearsicVibrantLavender),
+                            cursorBrush = SolidColor(LocalWearsicAccent.current),
                             keyboardOptions = KeyboardOptions(
                                 imeAction = ImeAction.Done,
                                 keyboardType = KeyboardType.Number
@@ -1085,7 +1084,7 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .heightIn(min = WearsicDimens.TouchTarget)
                                 .clip(CircleShape)
-                                .background(WearsicVibrantLavender)
+                                .background(LocalWearsicAccent.current)
                                 .wearsicClickable {
                                     val p = portField.trim().toIntOrNull()
                                     if (p != null && p in 1024..65535) {
@@ -1135,12 +1134,12 @@ private fun ServerProfileRow(
             .fillMaxWidth()
             .clip(shape)
             .background(
-                if (isActive) WearsicLavenderContainer.copy(alpha = 0.45f)
+                if (isActive) wearsicAccentContainer().copy(alpha = 0.45f)
                 else WearsicSurfaceRaised
             )
             .border(
                 1.dp,
-                if (isActive) WearsicVibrantLavender.copy(alpha = 0.5f)
+                if (isActive) LocalWearsicAccent.current.copy(alpha = 0.5f)
                 else WearsicSurfaceBorderSubtle,
                 shape
             )
@@ -1185,7 +1184,7 @@ private fun ServerProfileRow(
                         Icons.AutoMirrored.Rounded.KeyboardArrowRight
                     },
                     contentDescription = if (isActive) "Active profile" else "Switch to this profile",
-                    tint = if (isActive) WearsicVibrantLavender else WearsicTextMuted,
+                    tint = if (isActive) LocalWearsicAccent.current else WearsicTextMuted,
                     modifier = Modifier.size(if (isActive) 16.dp else 18.dp)
                 )
             }
@@ -1210,7 +1209,7 @@ private fun SettingsPillItem(
     icon: ImageVector,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    iconTint: androidx.compose.ui.graphics.Color = WearsicVibrantLavender,
+    iconTint: androidx.compose.ui.graphics.Color = LocalWearsicAccent.current,
     showChevron: Boolean = false,
     testTag: String = "settings_pill"
 ) {
@@ -1232,7 +1231,7 @@ private fun SettingsPillItem(
                 modifier = Modifier
                     .size(32.dp)
                     .clip(CircleShape)
-                    .background(WearsicLavenderContainer),
+                    .background(wearsicAccentContainer()),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

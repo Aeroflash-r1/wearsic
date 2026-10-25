@@ -33,11 +33,11 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.ScreenScaffold
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextSecondary
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.theme.WearsicViolet
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.wearsicClickable
@@ -81,8 +81,7 @@ fun StorageStatsContent(
             item {
                 WearsicScreenHeader(
                     title = "Storage",
-                    subtitle = "Total local music • %.1f MB".format(totalMb),
-                    icon = Icons.Rounded.SdStorage
+                    subtitle = "Total local music • %.1f MB".format(totalMb)
                 )
             }
 
@@ -92,7 +91,7 @@ fun StorageStatsContent(
                     detail = "$autoCount songs • %.1f MB".format(autoMb),
                     mb = autoMb,
                     totalMb = totalMb,
-                    color = WearsicVibrantLavender
+                    color = LocalWearsicAccent.current
                 )
             }
             item {
@@ -112,7 +111,7 @@ fun StorageStatsContent(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("Total local music", color = WearsicTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Text("%.1f MB".format(totalMb), color = WearsicVibrantLavender, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("%.1f MB".format(totalMb), color = LocalWearsicAccent.current, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
@@ -188,7 +187,7 @@ private fun ActionRow(
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, tint = WearsicVibrantLavender, modifier = Modifier.size(16.dp))
+        Icon(icon, contentDescription = null, tint = LocalWearsicAccent.current, modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.size(10.dp))
         Text(label, color = WearsicTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }

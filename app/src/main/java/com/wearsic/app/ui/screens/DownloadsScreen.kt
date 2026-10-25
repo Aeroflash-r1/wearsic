@@ -67,13 +67,14 @@ import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.components.WearsicSongRowPlayButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.wearsicAccentContainer
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
-import com.wearsic.app.ui.theme.WearsicLavenderContainer
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorder
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
@@ -82,7 +83,6 @@ import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -123,8 +123,7 @@ fun DownloadsScreen(
             item {
                 WearsicScreenHeader(
                     title = "Downloads",
-                    subtitle = "${downloads.count { it.isCompleted() }} Offline Tracks",
-                    icon = Icons.Rounded.Download
+                    subtitle = "${downloads.count { it.isCompleted() }} Offline Tracks"
                 )
             }
 
@@ -377,12 +376,13 @@ private fun DownloadingItemCard(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val accent = LocalWearsicAccent.current
     Box(
         modifier = modifier
             .fillMaxWidth()
             .clip(CircleShape)
             .background(WearsicSurface)
-            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.4f), CircleShape)
+            .border(1.dp, accent.copy(alpha = 0.4f), CircleShape)
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag("downloading_track_${entity.trackId}")
     ) {
@@ -399,7 +399,7 @@ private fun DownloadingItemCard(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(CircleShape)
-                        .background(WearsicLavenderContainer),
+                        .background(wearsicAccentContainer()),
                     contentAlignment = Alignment.Center
                 ) {
                     // Circular progress ring around the hourglass: the arc is
@@ -422,7 +422,7 @@ private fun DownloadingItemCard(
                         val fraction = (entity.progress.coerceIn(0, 100)) / 100f
                         if (fraction > 0.004f) {
                             drawArc(
-                                color = WearsicVibrantLavender,
+                                color = accent,
                                 startAngle = -90f,
                                 sweepAngle = 360f * fraction,
                                 useCenter = false,
@@ -435,7 +435,7 @@ private fun DownloadingItemCard(
                     Icon(
                         imageVector = Icons.Rounded.HourglassEmpty,
                         contentDescription = "Downloading",
-                        tint = WearsicVibrantLavender,
+                        tint = accent,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -453,7 +453,7 @@ private fun DownloadingItemCard(
                     )
                     Text(
                         text = "Downloading ${entity.progress}%",
-                        color = WearsicVibrantLavender,
+                        color = LocalWearsicAccent.current,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -526,8 +526,8 @@ private fun FailedDownloadItemCard(
                     modifier = Modifier
                         .size(26.dp)
                         .clip(CircleShape)
-                        .background(WearsicVibrantLavender.copy(alpha = 0.15f))
-                        .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.4f), CircleShape)
+                        .background(LocalWearsicAccent.current.copy(alpha = 0.15f))
+                        .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.4f), CircleShape)
                         .wearsicClickable(onClick = onRetry)
                         .testTag("retry_download_${entity.trackId}"),
                     contentAlignment = Alignment.Center
@@ -535,7 +535,7 @@ private fun FailedDownloadItemCard(
                     Icon(
                         imageVector = Icons.Rounded.Download,
                         contentDescription = "Retry",
-                        tint = WearsicVibrantLavender,
+                        tint = LocalWearsicAccent.current,
                         modifier = Modifier.size(14.dp)
                     )
                 }

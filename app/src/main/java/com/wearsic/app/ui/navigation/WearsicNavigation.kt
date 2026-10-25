@@ -15,6 +15,8 @@ import androidx.compose.ui.unit.Density
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.material3.AppScaffold
+import androidx.wear.compose.material3.MaterialTheme
+import com.wearsic.app.ui.theme.wearsicColorSchemeFor
 import androidx.wear.compose.material3.TimeText
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
@@ -156,6 +158,7 @@ fun WearsicApp(
     }
 
     CompositionLocalProvider(LocalWearsicAccent provides effectiveAccent) {
+        MaterialTheme(colorScheme = wearsicColorSchemeFor(effectiveAccent)) {
         AppScaffold(
             timeText = timeText,
             modifier = modifier
@@ -563,6 +566,7 @@ fun WearsicApp(
                     }
                 )
             }
+        }
         }
         }
     }

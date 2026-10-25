@@ -46,9 +46,9 @@ import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
-import com.wearsic.app.ui.theme.WearsicLavenderContainer
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorder
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
@@ -57,7 +57,6 @@ import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.LocalWearsicAccent
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.util.WearsicMotion
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
@@ -182,7 +181,7 @@ fun WearsicSongRowArtwork(
             modifier = modifier
                 .size(size)
                 .clip(shape)
-                .background(WearsicLavenderContainer)
+                .background(wearsicAccentContainer())
                 .then(ring),
             contentAlignment = Alignment.Center
         ) {

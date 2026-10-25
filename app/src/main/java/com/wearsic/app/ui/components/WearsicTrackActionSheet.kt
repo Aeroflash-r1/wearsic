@@ -21,7 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.util.wearsicEntrance
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -166,7 +166,7 @@ fun WearsicTrackActionSheet(
                             .fillMaxWidth()
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.35f))
-                            .border(1.dp, WearsicVibrantLavenderCompat, CircleShape)
+                            .border(1.dp, LocalWearsicAccent.current, CircleShape)
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -178,7 +178,7 @@ fun WearsicTrackActionSheet(
                                 color = WearsicTextPrimary,
                                 fontSize = 12.sp
                             ),
-                            cursorBrush = SolidColor(WearsicVibrantLavenderCompat),
+                            cursorBrush = SolidColor(LocalWearsicAccent.current),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(
                                 onDone = {
@@ -228,7 +228,7 @@ private fun SheetAction(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = WearsicVibrantLavenderCompat,
+            tint = LocalWearsicAccent.current,
             modifier = Modifier.size(15.dp)
         )
         Spacer(modifier = Modifier.width(8.dp))
@@ -242,4 +242,3 @@ private fun SheetAction(
     }
 }
 
-private val WearsicVibrantLavenderCompat = WearsicVibrantLavender

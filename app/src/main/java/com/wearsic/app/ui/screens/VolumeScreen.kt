@@ -65,6 +65,7 @@ import com.wearsic.app.media.crossfade.CrossfadeLengths
 import com.wearsic.app.ui.components.WearsicCircularIconButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAccentSky
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassBorder
@@ -74,7 +75,6 @@ import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.rememberSystemVolumeState
 import com.wearsic.app.ui.util.rotaryVolumeStep
@@ -158,8 +158,7 @@ fun VolumeScreen(
             item {
                 WearsicScreenHeader(
                     title = "Sound",
-                    subtitle = activeDeviceLabel,
-                    icon = Icons.AutoMirrored.Rounded.VolumeUp
+                    subtitle = activeDeviceLabel
                 )
             }
 
@@ -403,7 +402,7 @@ private fun VolumeDial(
     val arcColor = when {
         !enabled -> WearsicTextMuted.copy(alpha = 0.4f)
         isMuted -> WearsicTextMuted
-        else -> WearsicVibrantLavender
+        else -> LocalWearsicAccent.current
     }
     val trackColor = Color.White.copy(alpha = 0.08f)
 
@@ -491,9 +490,9 @@ private fun DeviceChip(
     testTag: String,
     modifier: Modifier = Modifier
 ) {
-    val fill = if (isSelected) WearsicVibrantLavender else WearsicGlassFill
+    val fill = if (isSelected) LocalWearsicAccent.current else WearsicGlassFill
     val contentTint = if (isSelected) WearsicTextPrimaryDark else WearsicTextPrimary
-    val iconTint = if (isSelected) WearsicTextPrimaryDark else WearsicVibrantLavender
+    val iconTint = if (isSelected) WearsicTextPrimaryDark else LocalWearsicAccent.current
 
     Box(
         modifier = modifier
@@ -546,7 +545,7 @@ private fun OptionChip(
         modifier = Modifier
             .heightIn(min = WearsicDimens.TouchTarget)
             .clip(CircleShape)
-            .background(if (isActive) WearsicVibrantLavender else WearsicGlassFill)
+            .background(if (isActive) LocalWearsicAccent.current else WearsicGlassFill)
             .border(
                 width = 1.dp,
                 color = if (isActive) Color.Transparent else WearsicGlassBorder,

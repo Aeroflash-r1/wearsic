@@ -1,5 +1,8 @@
 package com.wearsic.app.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -33,6 +36,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,7 +62,6 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
@@ -68,10 +71,13 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.components.WearsicScreenHeader
-import com.wearsic.app.ui.components.WearsicLoadingState
+import com.wearsic.app.ui.components.WearsicSearchShimmerRow
+import com.wearsic.app.ui.components.WearsicCompactShimmer
 import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicSectionTitle
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.wearsicAccentContainer
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.components.WearsicSongRowPlayButton
@@ -80,7 +86,6 @@ import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
-import com.wearsic.app.ui.theme.WearsicLavenderContainer
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceActive
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
@@ -89,7 +94,6 @@ import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.SearchUiState
 
 import com.wearsic.app.ui.util.wearsicClickable
@@ -152,8 +156,7 @@ fun SearchScreen(
             item {
                 WearsicScreenHeader(
                     title = "Search",
-                    subtitle = "Find your next favorite",
-                    icon = Icons.Rounded.Search
+                    subtitle = "Find your next favorite"
                 )
             }
 
@@ -168,7 +171,7 @@ fun SearchScreen(
                         .background(if (isFocused) WearsicSurfaceActive else WearsicGlassFill)
                         .border(
                             1.dp,
-                            if (isFocused) WearsicVibrantLavender else WearsicSurfaceBorderSubtle,
+                            if (isFocused) LocalWearsicAccent.current else WearsicSurfaceBorderSubtle,
                             CircleShape
                         )
                         .padding(horizontal = 12.dp),
@@ -181,7 +184,7 @@ fun SearchScreen(
                         Icon(
                             imageVector = Icons.Rounded.Search,
                             contentDescription = "Search Icon",
-                            tint = if (isFocused) WearsicVibrantLavender else WearsicTextMuted,
+                            tint = if (isFocused) LocalWearsicAccent.current else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
 
@@ -209,7 +212,7 @@ fun SearchScreen(
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Normal
                                 ),
-                                cursorBrush = SolidColor(WearsicVibrantLavender),
+                                cursorBrush = SolidColor(LocalWearsicAccent.current),
                                 keyboardOptions = KeyboardOptions(
                                     imeAction = ImeAction.Search
                                 ),
@@ -262,7 +265,7 @@ fun SearchScreen(
                             Icon(
                                 imageVector = Icons.Rounded.Search,
                                 contentDescription = null,
-                                tint = WearsicVibrantLavender,
+                                tint = LocalWearsicAccent.current,
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
@@ -278,10 +281,24 @@ fun SearchScreen(
                 }
             }
 
-            // Loading State
+            // Loading State — shimmer placeholders, not a spinner. The song
+            // list stays in place; while a query is in flight the result
+            // area fills with pulsing shimmer rows that the real results
+            // then fade in over. If previous results are still shown
+            // (re-search), a single compact shimmer strip sits above them.
             if (searchState.isSearching) {
-                item {
-                    WearsicLoadingState(label = "Finding your music…")
+                if (searchState.results.isEmpty()) {
+                    repeat(3) { shimmerIndex ->
+                        item(key = "search_shimmer_$shimmerIndex") {
+                            WearsicSearchShimmerRow(modifier = Modifier)
+                        }
+                    }
+                } else {
+                    item(key = "search_refresh_shimmer") {
+                        WearsicCompactShimmer(
+                            modifier = Modifier.testTag("search_refresh_shimmer")
+                        )
+                    }
                 }
             }
 
@@ -317,7 +334,7 @@ fun SearchScreen(
                                     Icon(
                                         imageVector = Icons.Rounded.Refresh,
                                         contentDescription = null,
-                                        tint = WearsicVibrantLavender,
+                                        tint = LocalWearsicAccent.current,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
@@ -351,31 +368,34 @@ fun SearchScreen(
             }
             // Defend against duplicate IDs returned by older servers.
             items(searchState.results.distinctBy { it.id }, key = { it.id }) { track ->
-                SearchTrackItem(
-                    track = track,
-                    onClick = { onTrackSelected(track) },
-                    onLongPress = { actionTrack = track },
-                    onMore = { actionTrack = track },
-                    onDownload = { onDownloadTrack(track) },
-                    onAddToQueue = { onAddToQueue(track) }
-                )
+                // Smooth reveal: each result fades in over the shimmer
+                // placeholders once the search completes.
+                var revealed by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) { revealed = true }
+                AnimatedVisibility(
+                    visible = revealed,
+                    enter = fadeIn(animationSpec = tween(320))
+                ) {
+                    SearchTrackItem(
+                        track = track,
+                        onClick = { onTrackSelected(track) },
+                        onLongPress = { actionTrack = track },
+                        onMore = { actionTrack = track },
+                        onDownload = { onDownloadTrack(track) },
+                        onAddToQueue = { onAddToQueue(track) }
+                    )
+                }
             }
 
             // Show more: expanded page loads behind the visible list.
             if (searchState.isLoadingMore) {
                 item {
-                    Box(
+                    WearsicCompactShimmer(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(CircleShape)
-                            .background(WearsicGlassFill)
-                            .border(1.dp, WearsicGlassBorder, CircleShape)
-                            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
-                            .testTag("search_loading_more"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                    }
+                            .padding(horizontal = WearsicDimens.ScreenPaddingH)
+                            .testTag("search_loading_more")
+                    )
                 }
             } else if (searchState.canLoadMore && searchState.results.isNotEmpty() && !searchState.isSearching) {
                 item {
@@ -392,7 +412,7 @@ fun SearchScreen(
                     ) {
                         Text(
                             text = "Show more",
-                            color = WearsicVibrantLavender,
+                            color = LocalWearsicAccent.current,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )

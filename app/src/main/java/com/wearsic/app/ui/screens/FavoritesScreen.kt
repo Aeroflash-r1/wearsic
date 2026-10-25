@@ -52,6 +52,7 @@ import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSecondaryPillButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicSurface
@@ -60,7 +61,6 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.FavoritesUiState
 
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -108,8 +108,7 @@ fun FavoritesScreen(
             item {
                 WearsicScreenHeader(
                     title = "Favorites",
-                    subtitle = "${favoritesState.tracks.size} Loved Songs",
-                    icon = Icons.Rounded.Favorite
+                    subtitle = "${favoritesState.tracks.size} Loved Songs"
                 )
             }
 

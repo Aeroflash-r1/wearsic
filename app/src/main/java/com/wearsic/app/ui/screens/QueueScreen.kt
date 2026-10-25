@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
@@ -82,7 +83,6 @@ import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -129,8 +129,7 @@ fun QueueScreen(
             item {
                 WearsicScreenHeader(
                     title = "Queue",
-                    subtitle = "${upcoming.size} Up Next",
-                    icon = Icons.AutoMirrored.Rounded.QueueMusic
+                    subtitle = "${upcoming.size} Up Next"
                 )
             }
 
@@ -146,12 +145,12 @@ fun QueueScreen(
                             .size(44.dp)
                             .clip(CircleShape)
                             .background(
-                                if (shuffleEnabled) WearsicVibrantLavender.copy(alpha = 0.25f)
+                                if (shuffleEnabled) LocalWearsicAccent.current.copy(alpha = 0.25f)
                                 else WearsicGlassFill
                             )
                             .border(
                                 1.dp,
-                                if (shuffleEnabled) WearsicVibrantLavender else WearsicGlassBorder,
+                                if (shuffleEnabled) LocalWearsicAccent.current else WearsicGlassBorder,
                                 CircleShape
                             )
                             .wearsicClickable(onClick = onToggleShuffle),
@@ -160,7 +159,7 @@ fun QueueScreen(
                         Icon(
                             imageVector = Icons.Rounded.Shuffle,
                             contentDescription = if (shuffleEnabled) "Shuffle on" else "Shuffle off",
-                            tint = if (shuffleEnabled) WearsicVibrantLavender else WearsicTextMuted,
+                            tint = if (shuffleEnabled) LocalWearsicAccent.current else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -194,12 +193,12 @@ fun QueueScreen(
                             .size(44.dp)
                             .clip(CircleShape)
                             .background(
-                                if (repeatMode != 0) WearsicVibrantLavender.copy(alpha = 0.25f)
+                                if (repeatMode != 0) LocalWearsicAccent.current.copy(alpha = 0.25f)
                                 else WearsicGlassFill
                             )
                             .border(
                                 1.dp,
-                                if (repeatMode != 0) WearsicVibrantLavender else WearsicGlassBorder,
+                                if (repeatMode != 0) LocalWearsicAccent.current else WearsicGlassBorder,
                                 CircleShape
                             )
                             .wearsicClickable(onClick = onCycleRepeat),
@@ -212,7 +211,7 @@ fun QueueScreen(
                                 androidx.compose.material.icons.Icons.Rounded.Repeat
                             },
                             contentDescription = when (repeatMode) { 1 -> "Repeat One"; 2 -> "Repeat All"; else -> "Repeat off" },
-                            tint = if (repeatMode != 0) WearsicVibrantLavender else WearsicTextMuted,
+                            tint = if (repeatMode != 0) LocalWearsicAccent.current else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -374,7 +373,7 @@ private fun QueueMenuRow(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = if (destructive) WearsicError else WearsicVibrantLavender,
+            tint = if (destructive) WearsicError else LocalWearsicAccent.current,
             modifier = Modifier.size(15.dp)
         )
         Spacer(modifier = Modifier.width(8.dp))
@@ -400,7 +399,7 @@ private fun QueueCurrentCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(WearsicDimens.CardRadius))
             .background(WearsicSurfaceRaised)
-            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), RoundedCornerShape(WearsicDimens.CardRadius))
+            .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.5f), RoundedCornerShape(WearsicDimens.CardRadius))
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag("queue_current_track")
     ) {
@@ -439,7 +438,7 @@ private fun QueueCurrentCard(
                         Icon(
                             imageVector = Icons.Rounded.MusicNote,
                             contentDescription = null,
-                            tint = WearsicVibrantLavender,
+                            tint = LocalWearsicAccent.current,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -458,7 +457,7 @@ private fun QueueCurrentCard(
                     )
                     Text(
                         text = if (isPlaying) "Now Playing" else "Paused",
-                        color = if (isPlaying) WearsicVibrantLavender else WearsicTextMuted,
+                        color = if (isPlaying) LocalWearsicAccent.current else WearsicTextMuted,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1

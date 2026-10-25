@@ -40,6 +40,7 @@ import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicSongRowArtwork
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.util.wearsicClickable
 import androidx.compose.ui.graphics.Color
@@ -80,7 +81,6 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.AlbumsUiState
 
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -151,8 +151,7 @@ fun AlbumsScreen(
             item {
                 WearsicScreenHeader(
                     title = "Albums",
-                    subtitle = "Find full albums",
-                    icon = Icons.Rounded.Album
+                    subtitle = "Find full albums"
                 )
             }
 
@@ -163,10 +162,10 @@ fun AlbumsScreen(
                         .fillMaxWidth()
                         .heightIn(min = WearsicDimens.TouchTarget)
                         .clip(CircleShape)
-                        .background(if (isFocused) WearsicVibrantLavender.copy(alpha = 0.12f) else WearsicGlassFill)
+                        .background(if (isFocused) LocalWearsicAccent.current.copy(alpha = 0.12f) else WearsicGlassFill)
                         .border(
                             1.dp,
-                            if (isFocused) WearsicVibrantLavender else WearsicGlassBorder,
+                            if (isFocused) LocalWearsicAccent.current else WearsicGlassBorder,
                             CircleShape
                         )
                         .padding(horizontal = 12.dp),
@@ -176,7 +175,7 @@ fun AlbumsScreen(
                         Icon(
                             imageVector = Icons.Rounded.Search,
                             contentDescription = null,
-                            tint = if (isFocused) WearsicVibrantLavender else WearsicTextMuted,
+                            tint = if (isFocused) LocalWearsicAccent.current else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.size(8.dp))
@@ -188,7 +187,7 @@ fun AlbumsScreen(
                             },
                             singleLine = true,
                             textStyle = TextStyle(color = WearsicTextPrimary, fontSize = 12.sp),
-                            cursorBrush = SolidColor(WearsicVibrantLavender),
+                            cursorBrush = SolidColor(LocalWearsicAccent.current),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                             keyboardActions = KeyboardActions(
                                 onSearch = { submitAlbumSearch() },
@@ -231,7 +230,7 @@ fun AlbumsScreen(
                                 Icon(
                                     imageVector = Icons.Rounded.Refresh,
                                     contentDescription = null,
-                                    tint = WearsicVibrantLavender,
+                                    tint = LocalWearsicAccent.current,
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))

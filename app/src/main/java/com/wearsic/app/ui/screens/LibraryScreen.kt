@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.graphics.Brush
 import com.wearsic.app.ui.components.WearsicSongRowArtwork
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.wearsicAccentContainer
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -75,14 +77,12 @@ import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicGlassBorder
-import com.wearsic.app.ui.theme.WearsicLavenderContainer
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -129,8 +129,7 @@ fun LibraryScreen(
             item {
                 WearsicScreenHeader(
                     title = "Library",
-                    subtitle = "Your music, everywhere",
-                    icon = Icons.Rounded.MusicNote
+                    subtitle = "Your music, everywhere"
                 )
             }
 
@@ -188,7 +187,7 @@ fun LibraryScreen(
                     label = "Search Music",
                     icon = Icons.Rounded.Search,
                     onClick = onNavigateToSearch,
-                    backgroundColor = WearsicVibrantLavender,
+                    backgroundColor = LocalWearsicAccent.current,
                     contentColor = WearsicTextPrimaryDark,
                     testTag = "library_search_button"
                 )
@@ -344,7 +343,7 @@ private fun NowPlayingMiniCard(
             .heightIn(min = 88.dp)
             .clip(heroShape)
             .background(WearsicSurfaceRaised)
-            .border(1.dp, if (isPlaying) WearsicVibrantLavender.copy(alpha = 0.4f) else WearsicGlassBorder, heroShape)
+            .border(1.dp, if (isPlaying) LocalWearsicAccent.current.copy(alpha = 0.4f) else WearsicGlassBorder, heroShape)
             .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
             .testTag("now_playing_shortcut")
     ) {
@@ -398,14 +397,14 @@ private fun NowPlayingMiniCard(
                 } else {
                     Box(
                         modifier = artModifier.background(
-                            if (isPlaying) Color.Black.copy(alpha = 0.25f) else WearsicLavenderContainer
+                            if (isPlaying) Color.Black.copy(alpha = 0.25f) else wearsicAccentContainer()
                         ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.MusicNote,
                             contentDescription = null,
-                            tint = WearsicVibrantLavender,
+                            tint = LocalWearsicAccent.current,
                             modifier = Modifier.size(17.dp)
                         )
                     }
@@ -417,7 +416,7 @@ private fun NowPlayingMiniCard(
                     run {
                         Text(
                             text = if (isPlaying) "NOW PLAYING" else "READY TO PLAY",
-                            color = WearsicVibrantLavender,
+                            color = LocalWearsicAccent.current,
                             // 9sp, not 8: this kicker was the smallest text on
                             // the whole home screen and disappears on a 44mm
                             // face at arm's length.
@@ -451,7 +450,7 @@ private fun NowPlayingMiniCard(
                     .size(26.dp)
                     .clip(CircleShape)
                     .background(
-                        if (isPlaying) Color.White.copy(alpha = 0.9f) else WearsicVibrantLavender
+                        if (isPlaying) Color.White.copy(alpha = 0.9f) else LocalWearsicAccent.current
                     ),
                 contentAlignment = Alignment.Center
             ) {
@@ -485,7 +484,7 @@ private fun RecentTrackRow(
                 modifier = Modifier
                     .size(28.dp)
                     .clip(CircleShape)
-                    .background(WearsicVibrantLavender),
+                    .background(LocalWearsicAccent.current),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

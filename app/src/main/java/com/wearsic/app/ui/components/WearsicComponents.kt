@@ -1,6 +1,11 @@
 package com.wearsic.app.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.MarqueeSpacing
@@ -16,16 +21,20 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.unit.IntOffset
 import com.wearsic.app.ui.theme.WearsicAccentSky
+import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.WearsicAccentMint
 import com.wearsic.app.ui.theme.WearsicAccentPeach
 import com.wearsic.app.ui.theme.WearsicAccentRose
@@ -44,6 +53,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -58,7 +68,6 @@ import androidx.wear.compose.material3.Text
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
-import com.wearsic.app.ui.theme.WearsicLavenderContainer
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorder
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
@@ -69,7 +78,6 @@ import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTextWhite60
 import com.wearsic.app.ui.theme.WearsicTextWhite80
 import com.wearsic.app.ui.theme.LocalWearsicAccent
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.util.WearsicMotion
 import com.wearsic.app.ui.util.wearsicEntrance
 
@@ -387,54 +395,27 @@ fun WearsicGlassPanel(
  *
  * A small section-colored marker and generous type establish hierarchy.
  * The surrounding canvas stays OLED black; decoration is local to content.
+ * Icons are deliberately absent: the accent bar is the only mark above the
+ * title on every screen.
  */
 @Composable
 fun WearsicScreenHeader(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
-    accentColor: Color = wearsicSectionAccent(title),
-    icon: ImageVector? = null
+    accentColor: Color? = null
 ) {
+    val accent = accentColor ?: wearsicSectionAccent(title)
     Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(top = 6.dp, bottom = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        if (icon != null) {
-            // Screen identity medallion: a soft radial tint of the screen's
-            // accent with a hairline ring, so each screen reads as its own
-            // place rather than a list with a coloured bar.
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.radialGradient(
-                            listOf(
-                                accentColor.copy(alpha = 0.55f),
-                                accentColor.copy(alpha = 0.16f)
-                            )
-                        )
-                    )
-                    .border(1.dp, accentColor.copy(alpha = 0.35f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.92f),
-                    modifier = Modifier.size(15.dp)
-                )
-            }
-            Spacer(Modifier.height(5.dp))
-        } else {
-            Box(
-                Modifier.width(22.dp).height(3.dp).clip(CircleShape).background(accentColor)
-            )
-            Spacer(Modifier.height(6.dp))
-        }
+        Box(
+            Modifier.width(22.dp).height(3.dp).clip(CircleShape).background(accent)
+        )
+        Spacer(Modifier.height(6.dp))
         Text(
             text = title,
             color = WearsicTextPrimary,
@@ -533,7 +514,7 @@ fun WearsicEmptyState(
             modifier = Modifier
                 .size(48.dp)
                 .clip(RoundedCornerShape(WearsicDimens.ArtRadius))
-                .background(WearsicLavenderContainer)
+                .background(wearsicAccentContainer())
                 .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.ArtRadius)),
             contentAlignment = Alignment.Center
         ) {
@@ -563,13 +544,14 @@ fun WearsicEmptyState(
     }
 }
 
+@Composable
 private fun wearsicSectionAccent(title: String): Color = when (title) {
     "Search", "Albums" -> WearsicAccentSky
     "Downloads", "Storage" -> WearsicAccentMint
     "Favorites" -> WearsicAccentRose
     "Artists" -> WearsicAccentPeach
     "Queue", "Audio Output" -> WearsicAccentAmber
-    else -> WearsicVibrantLavender
+    else -> LocalWearsicAccent.current
 }
 
 /**
@@ -644,6 +626,130 @@ fun WearsicLoadingState(
             text = label,
             color = WearsicTextSecondary,
             fontSize = 11.sp
+        )
+    }
+}
+
+/**
+ * Expressive search loading: a shimmer placeholder shaped like a song row.
+ *
+ * A soft highlight sweeps across the row while the whole card breathes
+ * (pulsing glow) — deliberately NOT a spinning ring. While a search is in
+ * flight the list stays in place and these placeholders fill the result
+ * area; the real rows then fade in over the same spot.
+ */
+@Composable
+fun WearsicSearchShimmerRow(
+    modifier: Modifier = Modifier
+) {
+    val transition = rememberInfiniteTransition(label = "searchShimmer")
+    val sweep by transition.animateFloat(
+        initialValue = -1f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1150, easing = LinearEasing), RepeatMode.Restart),
+        label = "searchShimmerSweep"
+    )
+    val pulse by transition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 0.75f,
+        animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
+        label = "searchShimmerPulse"
+    )
+    val base = wearsicAccentContainer()
+    val density = LocalDensity.current
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
+            .background(base.copy(alpha = pulse))
+    ) {
+        // Sweeping highlight band, clipped to the card.
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(140.dp)
+                .offset { IntOffset(x = (sweep * 800f * density.density).toInt(), y = 0) }
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Color.Transparent, Color.White.copy(alpha = 0.08f), Color.Transparent)
+                    )
+                )
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(WearsicDimens.ArtRadius))
+                    .background(base)
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.72f)
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(base)
+                )
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.45f)
+                        .height(9.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(base)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Compact shimmer bar — the pagination ("load more") state, matching the
+ * search shimmer language instead of the old mini spinner.
+ */
+@Composable
+fun WearsicCompactShimmer(
+    modifier: Modifier = Modifier
+) {
+    val transition = rememberInfiniteTransition(label = "compactShimmer")
+    val sweep by transition.animateFloat(
+        initialValue = -1f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
+        label = "compactShimmerSweep"
+    )
+    val pulse by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.7f,
+        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
+        label = "compactShimmerPulse"
+    )
+    val base = wearsicAccentContainer()
+    val density = LocalDensity.current
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 36.dp)
+            .clip(CircleShape)
+            .background(base.copy(alpha = pulse))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(120.dp)
+                .offset { IntOffset(x = (sweep * 700f * density.density).toInt(), y = 0) }
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Color.Transparent, Color.White.copy(alpha = 0.08f), Color.Transparent)
+                    )
+                )
         )
     }
 }

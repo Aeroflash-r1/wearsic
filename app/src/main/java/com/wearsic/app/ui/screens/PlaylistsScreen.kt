@@ -46,6 +46,7 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.model.Playlist
 import com.wearsic.app.ui.theme.WearsicGlassBorder
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicLoadingState
@@ -63,7 +64,6 @@ import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistsUiState
 
 import com.wearsic.app.ui.util.wearsicClickable
@@ -108,8 +108,7 @@ fun PlaylistsScreen(
             item {
                 WearsicScreenHeader(
                     title = "Playlists",
-                    subtitle = "Your Library",
-                    icon = Icons.AutoMirrored.Rounded.QueueMusic
+                    subtitle = "Your Library"
                 )
             }
 
@@ -184,7 +183,7 @@ fun PlaylistsScreen(
                         .padding(horizontal = 16.dp)
                         .clip(CircleShape)
                         .background(WearsicSurface)
-                        .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), CircleShape)
+                        .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.5f), CircleShape)
                         .padding(horizontal = 16.dp, vertical = 14.dp)
                 ) {
                     Text(
@@ -200,7 +199,7 @@ fun PlaylistsScreen(
                             .heightIn(min = WearsicDimens.TouchTarget)
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.35f))
-                            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.4f), CircleShape)
+                            .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.4f), CircleShape)
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         androidx.compose.foundation.text.BasicTextField(
@@ -211,7 +210,7 @@ fun PlaylistsScreen(
                                 color = WearsicTextPrimary,
                                 fontSize = 12.sp
                             ),
-                            cursorBrush = androidx.compose.ui.graphics.SolidColor(WearsicVibrantLavender),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(LocalWearsicAccent.current),
                             modifier = Modifier.fillMaxWidth(),
                             decorationBox = { innerTextField ->
                                 if (newPlaylistName.isEmpty()) {
@@ -227,7 +226,7 @@ fun PlaylistsScreen(
                             modifier = Modifier
                                 .heightIn(min = WearsicDimens.TouchTarget)
                                 .clip(CircleShape)
-                                .background(WearsicVibrantLavender)
+                                .background(LocalWearsicAccent.current)
                                 .wearsicClickable {
                                     val name = newPlaylistName.trim()
                                     if (name.isNotBlank()) {
@@ -273,7 +272,7 @@ fun PlaylistsScreen(
                         .padding(horizontal = 16.dp)
                         .clip(CircleShape)
                         .background(WearsicSurface)
-                        .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), CircleShape)
+                        .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.5f), CircleShape)
                         .padding(horizontal = 16.dp, vertical = 14.dp)
                 ) {
                     Text(

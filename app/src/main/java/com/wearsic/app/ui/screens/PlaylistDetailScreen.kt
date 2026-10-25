@@ -50,17 +50,17 @@ import com.wearsic.app.ui.components.WearsicLibraryTrackRow
 import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.wearsicAccentContainer
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
-import com.wearsic.app.ui.theme.WearsicLavenderContainer
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistDetailUiState
 
 import com.wearsic.app.ui.util.wearsicClickable
@@ -140,8 +140,8 @@ fun PlaylistDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(CircleShape)
-                            .background(WearsicVibrantLavender.copy(alpha = 0.16f))
-                            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.45f), CircleShape)
+                            .background(LocalWearsicAccent.current.copy(alpha = 0.16f))
+                            .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.45f), CircleShape)
                             .wearsicClickable {
                                 if (notDownloaded > 0) {
                                     onDownloadAllTracks(detailState.tracks)
@@ -157,7 +157,7 @@ fun PlaylistDetailScreen(
                                 imageVector = Icons.Rounded.Download,
                                 contentDescription = null,
                                 tint = if (notDownloaded > 0) {
-                                    WearsicVibrantLavender
+                                    LocalWearsicAccent.current
                                 } else {
                                     WearsicTextMuted
                                 },

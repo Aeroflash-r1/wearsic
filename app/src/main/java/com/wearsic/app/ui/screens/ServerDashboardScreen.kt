@@ -45,6 +45,7 @@ import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.network.model.ServerUpdateStatusDto
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAccentSky
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicError
@@ -55,7 +56,6 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -98,8 +98,7 @@ fun ServerDashboardScreen(
             item {
                 WearsicScreenHeader(
                     title = "Engine",
-                    subtitle = state.health?.serverName ?: "Server diagnostics",
-                    icon = Icons.Rounded.MonitorHeart
+                    subtitle = state.health?.serverName ?: "Server diagnostics"
                 )
             }
 
@@ -140,7 +139,7 @@ fun ServerDashboardScreen(
                             label = "Update",
                             value = updateSummary(health.update),
                             valueColor = when (health.update?.status) {
-                                "staged" -> WearsicVibrantLavender
+                                "staged" -> LocalWearsicAccent.current
                                 "checking" -> WearsicAccentSky
                                 else -> WearsicTextPrimary
                             }
@@ -317,7 +316,7 @@ private fun RefreshChip(loading: Boolean, onRefresh: () -> Unit) {
             Icon(
                 imageVector = Icons.Rounded.Refresh,
                 contentDescription = null,
-                tint = if (loading) WearsicTextMuted else WearsicVibrantLavender,
+                tint = if (loading) WearsicTextMuted else LocalWearsicAccent.current,
                 modifier = Modifier.size(15.dp)
             )
             Spacer(modifier = Modifier.width(6.dp))

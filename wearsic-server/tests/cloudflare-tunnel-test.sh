@@ -827,6 +827,14 @@ grep -q 'install -y proot' "$CLI" \
   && pass "installs proot automatically when cloudflared has no resolver (native Termux)" \
   || fail "native Termux without proot cannot get DNS for cloudflared"
 
+grep -q 'nameserver 8.8.8.8' "$CLI" \
+  && pass "generates its own resolv.conf (Android has none) instead of depending on Termux's" \
+  || fail "no generated resolv.conf fallback"
+
+grep -q 'command -v pkg' "$CLI" \
+  && pass "finds pkg even when TERMUX_PREFIX is unset (non-login shells)" \
+  || fail "pkg discovery depends on TERMUX_PREFIX being set"
+
 printf '%s' "$SUP" | grep -q 'retrying Worker deployment' \
   && pass "keeps retrying after a degraded deployment" \
   || fail "a degraded deployment is never retried"

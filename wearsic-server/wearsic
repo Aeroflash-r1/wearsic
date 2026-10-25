@@ -4122,7 +4122,7 @@ cf_kill_tree_all() {  # pid — TERM the tree, KILL survivors, reap the shell ch
 #    rides ordinary TCP and works on every carrier, at no practical cost
 #    for the requests this engine serves.
 cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
-  local p="$1" tlog="$2" prefix resolv tls_pem bindings=() proot=""
+  local p="$1" tlog="$2" prefix resolv tls_pem bindings=() proot="" resolver=""
   prefix="${TERMUX_PREFIX:-/data/data/com.termux/files/usr}"
   resolv="$prefix/etc/resolv.conf"
 
@@ -4136,41 +4136,62 @@ cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
   #    connection refused"
   # Resolver strategy, in order:
   #   0. /etc/resolv.conf is already readable with nameservers → launch as-is.
-  #   1. proot bind of Termux's resolv.conf (plus the CA bundle, because Go
-  #      reads exactly /etc/ssl/certs/ca-certificates.crt).
+  #   1. proot bind of a resolv.conf that actually has nameservers (Termux's
+  #      own file when it has them, otherwise one WE generate under DEST —
+  #      Android has no /etc/resolv.conf at all, so depending on Termux's
+  #      file alone is not enough). Plus the CA bundle, because Go reads
+  #      exactly /etc/ssl/certs/ca-certificates.crt.
   #   2. Native Termux without proot: INSTALL proot from the Termux repo
-  #      (a small bionic package), then fall through to (1). Once per process.
+  #      (a small bionic package), then fall through to (1). TERMUX_PREFIX
+  #      is often unset outside login shells, so find pkg by name too.
+  #      Re-attempt at most every 10 minutes.
   #   3. Anything else: refuse to launch a tunnel that can only die at its
   #      first DNS lookup, and say exactly what is missing.
   if [ "${WEARSIC_CF_DNS:-}" != "bare" ] \
       && ! grep -qi 'nameserver' /etc/resolv.conf 2>/dev/null; then
+    # Pick the resolver file to hand cloudflared. Prefer Termux's own file
+    # when it has nameservers; otherwise write one of our own.
+    if grep -qi 'nameserver' "$resolv" 2>/dev/null; then
+      resolver="$resolv"
+    else
+      resolver="${DEST:-$HOME}/.resolv.conf"
+      if [ ! -f "$resolver" ] || ! grep -qi 'nameserver' "$resolver" 2>/dev/null; then
+        printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > "$resolver" 2>/dev/null || {
+          cf_log "ERROR: cannot write a resolv.conf at $resolver"
+          return 1
+        }
+        cf_log "wrote $resolver (nameserver 8.8.8.8 / 1.1.1.1) for cloudflared"
+      fi
+    fi
+    # proot: present, installable via pkg, or nothing.
     if [ -x "$prefix/bin/proot" ]; then
       proot="$prefix/bin/proot"
-    elif [ -n "${TERMUX_PREFIX:-}" ] && [ -x "$TERMUX_PREFIX/bin/pkg" ]; then
-      # Install once per process, and re-attempt only after 10 minutes: the
-      # first attempt may fail purely because the network was down, and the
-      # supervisor lives for days.
-      local _now
-      _now="$(date +%s)"
-      case "${CF_PROOT_TRIED:-}" in
-        ''|*[!0-9]*) CF_PROOT_TRIED=0 ;;
-      esac
-      if [ $(( _now - CF_PROOT_TRIED )) -ge 600 ]; then
-        CF_PROOT_TRIED="$_now"
-        {
-          shim_stage_begin "Cloudflare" "installing proot (gives cloudflared a resolver)"
-          "$TERMUX_PREFIX/bin/pkg" install -y proot >/dev/null 2>&1
-          shim_stage_end ok "proot"
-        } >&2
+    else
+      local pkg_bin=""
+      if [ -n "${TERMUX_PREFIX:-}" ] && [ -x "$TERMUX_PREFIX/bin/pkg" ]; then
+        pkg_bin="$TERMUX_PREFIX/bin/pkg"
+      elif command -v pkg >/dev/null 2>&1; then
+        pkg_bin="$(command -v pkg)"
       fi
-      [ -x "$prefix/bin/proot" ] && proot="$prefix/bin/proot"
+      if [ -n "$pkg_bin" ]; then
+        local _now
+        _now="$(date +%s)"
+        case "${CF_PROOT_TRIED:-}" in
+          ''|*[!0-9]*) CF_PROOT_TRIED=0 ;;
+        esac
+        if [ $(( _now - CF_PROOT_TRIED )) -ge 600 ]; then
+          CF_PROOT_TRIED="$_now"
+          {
+            shim_stage_begin "Cloudflare" "installing proot (gives cloudflared a resolver)"
+            "$pkg_bin" install -y proot >/dev/null 2>&1
+            shim_stage_end ok "proot"
+          } >&2
+          [ -x "$prefix/bin/proot" ] && proot="$prefix/bin/proot"
+        fi
+      fi
     fi
     if [ -n "$proot" ]; then
-      if ! grep -qi 'nameserver' "$resolv" 2>/dev/null; then
-        cf_log "ERROR: $resolv carries no nameserver — cloudflared would have no DNS even under proot"
-        return 1
-      fi
-      bindings=("-b" "$resolv:/etc/resolv.conf")
+      bindings=("-b" "$resolver:/etc/resolv.conf")
       # The CA bundle: Termux ships it as ssl/cert.pem (older layout) or
       # tls/cert.pem (newer). Bind whichever exists.
       tls_pem=""
@@ -4181,7 +4202,7 @@ cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
         bindings+=("-b" "$tls_pem:/etc/ssl/certs/ca-certificates.crt")
       fi
     else
-      cf_log "ERROR: no DNS resolver available for cloudflared (no readable /etc/resolv.conf, no proot)"
+      cf_log "ERROR: no DNS resolver available for cloudflared (no readable /etc/resolv.conf, no proot, no pkg to install it)"
       return 1
     fi
   fi

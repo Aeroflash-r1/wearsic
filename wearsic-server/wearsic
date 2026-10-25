@@ -4016,9 +4016,23 @@ cf_kill_tree_all() {  # pid — TERM the tree, KILL survivors, reap the shell ch
 #    rides ordinary TCP and works on every carrier, at no practical cost
 #    for the requests this engine serves.
 cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
-  local p="$1" tlog="$2" prefix resolv tls_pem bindings
+  local p="$1" tlog="$2" prefix resolv tls_pem bindings dns_extra
   prefix="${TERMUX_PREFIX:-/data/data/com.termux/files/usr}"
   resolv="$prefix/etc/resolv.conf"
+
+  # DNS for the tunnel process. cloudflared is a static Go binary: on
+  # Android (and on some Termux setups) there is no readable
+  # /etc/resolv.conf, so its resolver falls back to the loopback
+  # nameservers (127.0.0.1:53 / [::1]:53). When nothing listens there, the
+  # tunnel dies at once with:
+  #   "lookup _v2-origintunneld._tcp.argotunnel.com on [::1]:53: read:
+  #    connection refused"
+  # Two remedies, tried in order:
+  #   1. proot bind of Termux's resolv.conf + CA bundle (the existing path).
+  #   2. Explicit DNS override: cloudflared accepts a DNS server in
+  #      CLOUDFLARED_DNS. Use Cloudflare's 1.1.1.1 when the proot bind is
+  #      unavailable (no proot, or no resolv.conf to bind).
+  dns_extra=""
   if [ -n "$DEST" ] \
       && case "$DEST" in /data/data/com.termux/*) true ;; *) false ;; esac \
       && [ "${WEARSIC_CF_DNS:-}" != "bare" ] \
@@ -4036,30 +4050,32 @@ cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
       bindings+=("-b" "$tls_pem:/etc/ssl/certs/ca-certificates.crt")
     fi
     proot="$prefix/bin/proot"
-    # A curl-minted token (CF_QT_TOKEN) turns the launch into TUNNEL_TOKEN
-    # mode: cloudflared only CONNECTS to the edge and never visits the
-    # flaky api.trycloudflare.com. Measured on the live phone: `tunnel`
-    # WITHOUT the `run` subcommand ignores TUNNEL_TOKEN and falls back to
-    # the flaky one-shot quick-tunnel POST, and `run` rejects the parent
-    # flags (--protocol/--no-autoupdate) — those ride env vars instead
-    # (TUNNEL_TRANSPORT_PROTOCOL, NO_AUTOUPDATE). The env-assignment
-    # prefix does not disturb argv order (proot first, binds, binary last).
-    if [ -n "${CF_QT_TOKEN:-}" ]; then
-      TUNNEL_TOKEN="$CF_QT_TOKEN" TUNNEL_TRANSPORT_PROTOCOL=http2 NO_AUTOUPDATE=true \
-        "$proot" "${bindings[@]}" "$cfbin" tunnel run \
-        --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
-    else
-      "$proot" "${bindings[@]}" "$cfbin" tunnel --no-autoupdate --protocol http2 \
-        --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
-    fi
   else
-    if [ -n "${CF_QT_TOKEN:-}" ]; then
-      TUNNEL_TOKEN="$CF_QT_TOKEN" TUNNEL_TRANSPORT_PROTOCOL=http2 NO_AUTOUPDATE=true \
-        "$cfbin" tunnel run --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
-    else
-      "$cfbin" tunnel --no-autoupdate --protocol http2 \
-        --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
-    fi
+    # No usable proot bind → make cloudflared use a real public DNS server.
+    case "${WEARSIC_CF_DNS:-}" in
+      bare) : ;;
+      "") dns_extra="${CLOUDFLARED_DNS:-1.1.1.1}" ;;
+      *) dns_extra="$WEARSIC_CF_DNS" ;;
+    esac
+  fi
+  if [ -n "$dns_extra" ]; then
+    export CLOUDFLARED_DNS="$dns_extra"
+  fi
+  # A curl-minted token (CF_QT_TOKEN) turns the launch into TUNNEL_TOKEN
+  # mode: cloudflared only CONNECTS to the edge and never visits the
+  # flaky api.trycloudflare.com. Measured on the live phone: `tunnel`
+  # WITHOUT the `run` subcommand ignores TUNNEL_TOKEN and falls back to
+  # the flaky one-shot quick-tunnel POST, and `run` rejects the parent
+  # flags (--protocol/--no-autoupdate) — those ride env vars instead
+  # (TUNNEL_TRANSPORT_PROTOCOL, NO_AUTOUPDATE). The env-assignment
+  # prefix does not disturb argv order (proot first, binds, binary last).
+  if [ -n "${CF_QT_TOKEN:-}" ]; then
+    TUNNEL_TOKEN="$CF_QT_TOKEN" TUNNEL_TRANSPORT_PROTOCOL=http2 NO_AUTOUPDATE=true \
+      "$proot" "${bindings[@]}" "$cfbin" tunnel run \
+      --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
+  else
+    "$proot" "${bindings[@]}" "$cfbin" tunnel --no-autoupdate --protocol http2 \
+      --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
   fi
 }
 

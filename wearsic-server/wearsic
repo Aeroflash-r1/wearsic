@@ -4041,7 +4041,7 @@ cf_kill_tree_all() {  # pid — TERM the tree, KILL survivors, reap the shell ch
 #    rides ordinary TCP and works on every carrier, at no practical cost
 #    for the requests this engine serves.
 cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
-  local p="$1" tlog="$2" prefix resolv tls_pem bindings dns_extra
+  local p="$1" tlog="$2" prefix resolv tls_pem bindings=() proot="" dns_extra
   prefix="${TERMUX_PREFIX:-/data/data/com.termux/files/usr}"
   resolv="$prefix/etc/resolv.conf"
 
@@ -4086,6 +4086,13 @@ cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
   if [ -n "$dns_extra" ]; then
     export CLOUDFLARED_DNS="$dns_extra"
   fi
+  # proot is only set when the Termux bind path applies. Keep it optional:
+  # on a normal host (CI, desktop) an empty "$proot" becomes an empty
+  # command and cloudflared never starts, which hung `cloudflare start`
+  # until the e2e test timed out.
+  local launch=()
+  if [ -n "$proot" ]; then launch=("$proot" "${bindings[@]}"); fi
+  launch+=("$cfbin")
   # A curl-minted token (CF_QT_TOKEN) turns the launch into TUNNEL_TOKEN
   # mode: cloudflared only CONNECTS to the edge and never visits the
   # flaky api.trycloudflare.com. Measured on the live phone: `tunnel`
@@ -4096,10 +4103,10 @@ cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
   # prefix does not disturb argv order (proot first, binds, binary last).
   if [ -n "${CF_QT_TOKEN:-}" ]; then
     TUNNEL_TOKEN="$CF_QT_TOKEN" TUNNEL_TRANSPORT_PROTOCOL=http2 NO_AUTOUPDATE=true \
-      "$proot" "${bindings[@]}" "$cfbin" tunnel run \
+      "${launch[@]}" tunnel run \
       --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
   else
-    "$proot" "${bindings[@]}" "$cfbin" tunnel --no-autoupdate --protocol http2 \
+    "${launch[@]}" tunnel --no-autoupdate --protocol http2 \
       --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
   fi
 }

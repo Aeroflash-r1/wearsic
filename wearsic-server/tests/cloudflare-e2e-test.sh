@@ -151,7 +151,7 @@ case "\$url" in
     # with curl (its own Go client stalls on real carriers) and turns the
     # answer into a TUNNEL_TOKEN. The hostname must match the one the fake
     # cloudflared announces, so both sides of the test agree. The trailing
-    # line emulates curl's `-w '\nQT_CODE %{http_code}\n'` — without the
+    # line emulates curl's -w '\nQT_CODE %{http_code}\n' output — without the
     # QT_CODE prefix the supervisor reads the mint as "no answer" and every
     # cycle burns a 5x4s retry ladder before falling back to the classic
     # announce path (which made this test race its own restart window).

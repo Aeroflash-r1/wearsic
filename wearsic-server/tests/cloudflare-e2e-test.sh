@@ -69,6 +69,14 @@ export TEST_ACCOUNT_ID="$ACCOUNT_ID"
 # restarted by the supervisor to exercise process-restart recovery.
 cat > "$WORK/bin/cloudflared" <<EOF
 #!/bin/sh
+# The CLI now probes candidates with --version before trusting them (a
+# broken build must be skippable). Answer it and exit — never loop.
+case " \$* " in
+  *"--version"*)
+    echo "cloudflared version 2026.1.1 (mock)"
+    exit 0
+    ;;
+esac
 # Announce the current hostname, and keep announcing it: the real
 # cloudflared re-announces on every reconnect, and a reconnect is exactly
 # when the hostname CHANGES. The supervisor must notice the latest one.

@@ -1676,7 +1676,20 @@ lan_ip() {
       ip="$(ip -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
     fi
     if [ -z "$ip" ]; then
-      ip="$(ip -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
+      # Prefer the interface that actually carries the default route; the
+      # "first non-loopback" grab was picking hotspot/mobile-data addresses
+      # (e.g. 10.26.202.168) over the Wi-Fi NIC. "wlan*" is the usual
+      # Wi-Fi name; anything else with the default route wins next.
+      if [ -n "$iface" ]; then
+        ip="$(ip -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+      fi
+      if [ -z "$ip" ]; then
+        ip="$(ip -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' \
+          | grep -Ev '^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
+      fi
+      if [ -z "$ip" ]; then
+        ip="$(ip -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
+      fi
     fi
     if [ -z "$ip" ]; then
       ip="$(ip route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]\+\).*/\1/p' | head -1)"
@@ -1688,6 +1701,10 @@ lan_ip() {
     ip="$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
     if [ -z "$ip" ] && [ -n "$iface" ]; then
       ip="$(ifconfig "$iface" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
+    if [ -z "$ip" ]; then
+      ip="$(ifconfig -a 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' \
+        | grep -Ev '^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
     fi
     if [ -z "$ip" ]; then
       ip="$(ifconfig -a 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
@@ -1705,6 +1722,10 @@ lan_ip() {
       ip="$("$sys/ip" -4 -o addr show "$iface" 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
     fi
     if [ -z "$ip" ]; then
+      ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ip" -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' \
+        | grep -Ev '^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
+    fi
+    if [ -z "$ip" ]; then
       ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ip" -4 -o addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"
     fi
   fi
@@ -1712,6 +1733,10 @@ lan_ip() {
     ip="$("$sys/ifconfig" wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
     if [ -z "$ip" ] && [ -n "$iface" ]; then
       ip="$("$sys/ifconfig" "$iface" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | head -1)"
+    fi
+    if [ -z "$ip" ]; then
+      ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ifconfig" -a 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' \
+        | grep -Ev '^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
     fi
     if [ -z "$ip" ]; then
       ip="$(LD_LIBRARY_PATH=/system/lib64:/system/lib "$sys/ifconfig" -a 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]\+\).*/\1/p; s/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)"

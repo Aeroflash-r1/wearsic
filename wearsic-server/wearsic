@@ -3598,12 +3598,26 @@ cf_normalize_origin() {  # $1 = hostname or url
 
 # --- cloudflared ------------------------------------------------------------
 cf_cloudflared_bin() {
+  # A binary that EXISTS but cannot be EXECUTED on this device (a glibc
+  # build on bionic Termux, a wrong-arch download, a stripped mode) used to
+  # be picked silently, and every tunnel then died in seconds with a bare
+  # "tunnel process exited". Verify each candidate actually runs — cloudflared
+  # --version costs milliseconds and is cached for the process lifetime —
+  # and say so when a candidate is skipped. Order: explicit CLOUDFLARED_PATH,
+  # PATH, then this install's bin/.
   local c
-  c="${CLOUDFLARED_PATH:-}"
-  if [ -n "$c" ] && [ -x "$c" ]; then printf '%s' "$c"; return 0; fi
-  c="$(command -v cloudflared 2>/dev/null || true)"
-  if [ -n "$c" ] && [ -x "$c" ]; then printf '%s' "$c"; return 0; fi
-  if [ -x "$DEST/bin/cloudflared" ]; then printf '%s' "$DEST/bin/cloudflared"; return 0; fi
+  for c in "${CLOUDFLARED_PATH:-}" "$(command -v cloudflared 2>/dev/null || true)" \
+           "$DEST/bin/cloudflared"; do
+    [ -n "$c" ] || continue
+    [ -x "$c" ] || continue
+    case " ${CF_BIN_VERIFIED:-} " in *" $c "*) printf '%s' "$c"; return 0 ;; esac
+    if "$c" --version >/dev/null 2>&1; then
+      CF_BIN_VERIFIED="${CF_BIN_VERIFIED:+$CF_BIN_VERIFIED }$c"
+      printf '%s' "$c"
+      return 0
+    fi
+    err "cloudflared at $c cannot run on this device (wrong build or libc?) — skipping it"
+  done
   return 1
 }
 
@@ -3917,6 +3931,24 @@ cf_permanent_health() {  # permanent url
   cf_health_ok "$1/health" 15
 }
 
+# The watch talks to the PERMANENT URL, not to the tunnel. A successful
+# Worker upload is not enough: a freshly uploaded Worker's workers.dev route
+# can take tens of seconds to activate at the edge, and reporting "live"
+# before that made the CLI promise a URL that answered 530 for the next
+# minute. Only call the front door LIVE once the permanent URL itself
+# serves the engine's {"status":"ok"} — through the edge, end to end.
+cf_permanent_live() {  # $1 = permanent url, $2 = budget_s, $3 = tunnel_pid
+  local deadline
+  deadline=$(( $(date +%s) + ${2:-120} ))
+  case "${2:-}" in ''|*[!0-9]*) deadline=$(( $(date +%s) + 120 )) ;; esac
+  while :; do
+    if cf_permanent_health "$1"; then return 0; fi
+    if [ -n "${3:-}" ] && ! cf_tunnel_alive "$3"; then return 1; fi
+    [ "$(date +%s)" -ge "$deadline" ] && return 1
+    sleep 5
+  done
+}
+
 # Minting a quick tunnel WITHOUT cloudflared's own client. On real carriers
 # cloudflared's Go POST to api.trycloudflare.com can stall for minutes
 # ("context deadline exceeded") while curl answers in seconds to the very
@@ -4090,55 +4122,73 @@ cf_kill_tree_all() {  # pid — TERM the tree, KILL survivors, reap the shell ch
 #    rides ordinary TCP and works on every carrier, at no practical cost
 #    for the requests this engine serves.
 cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
-  local p="$1" tlog="$2" prefix resolv tls_pem bindings=() proot="" dns_extra
+  local p="$1" tlog="$2" prefix resolv tls_pem bindings=() proot=""
   prefix="${TERMUX_PREFIX:-/data/data/com.termux/files/usr}"
   resolv="$prefix/etc/resolv.conf"
 
-  # DNS for the tunnel process. cloudflared is a static Go binary: on
-  # Android (and on some Termux setups) there is no readable
-  # /etc/resolv.conf, so its resolver falls back to the loopback
-  # nameservers (127.0.0.1:53 / [::1]:53). When nothing listens there, the
-  # tunnel dies at once with:
+  # DNS for the tunnel process. cloudflared is a static Go binary: its pure
+  # resolver reads /etc/resolv.conf — and NOTHING else. There is no
+  # "CLOUDFLARED_DNS" variable; an older build exported one and it silently
+  # fixed nothing. On Android that file usually does not exist, so the
+  # resolver falls back to the loopback nameservers and the tunnel dies at
+  # once with:
   #   "lookup _v2-origintunneld._tcp.argotunnel.com on [::1]:53: read:
   #    connection refused"
-  # Two remedies, tried in order:
-  #   1. proot bind of Termux's resolv.conf + CA bundle (the existing path).
-  #   2. Explicit DNS override: cloudflared accepts a DNS server in
-  #      CLOUDFLARED_DNS. Use Cloudflare's 1.1.1.1 when the proot bind is
-  #      unavailable (no proot, or no resolv.conf to bind).
-  dns_extra=""
-  if [ -n "$DEST" ] \
-      && case "$DEST" in /data/data/com.termux/*) true ;; *) false ;; esac \
-      && [ "${WEARSIC_CF_DNS:-}" != "bare" ] \
-      && [ -x "$prefix/bin/proot" ] \
-      && grep -qi 'nameserver' "$resolv" 2>/dev/null; then
-    bindings=("-b" "$resolv:/etc/resolv.conf")
-    # The CA bundle: Termux ships it as ssl/cert.pem (older layout) or
-    # tls/cert.pem (newer). Bind whichever exists — Go reads exactly
-    # /etc/ssl/certs/ca-certificates.crt.
-    tls_pem=""
-    for cand in "$prefix/etc/ssl/cert.pem" "$prefix/etc/tls/cert.pem"; do
-      if [ -f "$cand" ]; then tls_pem="$cand"; break; fi
-    done
-    if [ -n "$tls_pem" ]; then
-      bindings+=("-b" "$tls_pem:/etc/ssl/certs/ca-certificates.crt")
+  # Resolver strategy, in order:
+  #   0. /etc/resolv.conf is already readable with nameservers → launch as-is.
+  #   1. proot bind of Termux's resolv.conf (plus the CA bundle, because Go
+  #      reads exactly /etc/ssl/certs/ca-certificates.crt).
+  #   2. Native Termux without proot: INSTALL proot from the Termux repo
+  #      (a small bionic package), then fall through to (1). Once per process.
+  #   3. Anything else: refuse to launch a tunnel that can only die at its
+  #      first DNS lookup, and say exactly what is missing.
+  if [ "${WEARSIC_CF_DNS:-}" != "bare" ] \
+      && ! grep -qi 'nameserver' /etc/resolv.conf 2>/dev/null; then
+    if [ -x "$prefix/bin/proot" ]; then
+      proot="$prefix/bin/proot"
+    elif [ -n "${TERMUX_PREFIX:-}" ] && [ -x "$TERMUX_PREFIX/bin/pkg" ]; then
+      # Install once per process, and re-attempt only after 10 minutes: the
+      # first attempt may fail purely because the network was down, and the
+      # supervisor lives for days.
+      local _now
+      _now="$(date +%s)"
+      case "${CF_PROOT_TRIED:-}" in
+        ''|*[!0-9]*) CF_PROOT_TRIED=0 ;;
+      esac
+      if [ $(( _now - CF_PROOT_TRIED )) -ge 600 ]; then
+        CF_PROOT_TRIED="$_now"
+        {
+          shim_stage_begin "Cloudflare" "installing proot (gives cloudflared a resolver)"
+          "$TERMUX_PREFIX/bin/pkg" install -y proot >/dev/null 2>&1
+          shim_stage_end ok "proot"
+        } >&2
+      fi
+      [ -x "$prefix/bin/proot" ] && proot="$prefix/bin/proot"
     fi
-    proot="$prefix/bin/proot"
-  else
-    # No usable proot bind → make cloudflared use a real public DNS server.
-    case "${WEARSIC_CF_DNS:-}" in
-      bare) : ;;
-      "") dns_extra="${CLOUDFLARED_DNS:-1.1.1.1}" ;;
-      *) dns_extra="$WEARSIC_CF_DNS" ;;
-    esac
+    if [ -n "$proot" ]; then
+      if ! grep -qi 'nameserver' "$resolv" 2>/dev/null; then
+        cf_log "ERROR: $resolv carries no nameserver — cloudflared would have no DNS even under proot"
+        return 1
+      fi
+      bindings=("-b" "$resolv:/etc/resolv.conf")
+      # The CA bundle: Termux ships it as ssl/cert.pem (older layout) or
+      # tls/cert.pem (newer). Bind whichever exists.
+      tls_pem=""
+      for cand in "$prefix/etc/ssl/cert.pem" "$prefix/etc/tls/cert.pem"; do
+        if [ -f "$cand" ]; then tls_pem="$cand"; break; fi
+      done
+      if [ -n "$tls_pem" ]; then
+        bindings+=("-b" "$tls_pem:/etc/ssl/certs/ca-certificates.crt")
+      fi
+    else
+      cf_log "ERROR: no DNS resolver available for cloudflared (no readable /etc/resolv.conf, no proot)"
+      return 1
+    fi
   fi
-  if [ -n "$dns_extra" ]; then
-    export CLOUDFLARED_DNS="$dns_extra"
-  fi
-  # proot is only set when the Termux bind path applies. Keep it optional:
-  # on a normal host (CI, desktop) an empty "$proot" becomes an empty
-  # command and cloudflared never starts, which hung `cloudflare start`
-  # until the e2e test timed out.
+  # proot is only set when the bind path applies. Keep it optional: on a
+  # normal host (CI, desktop) an empty "$proot" becomes an empty command and
+  # cloudflared never starts, which hung `cloudflare start` until the e2e
+  # test timed out.
   local launch=()
   if [ -n "$proot" ]; then launch=("$proot" "${bindings[@]}"); fi
   launch+=("$cfbin")
@@ -4158,6 +4208,7 @@ cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
     "${launch[@]}" tunnel --no-autoupdate --protocol http2 \
       --url "http://127.0.0.1:$p" >> "$tlog" 2>&1 &
   fi
+  return 0
 }
 
 # Early-death check right after a tunnel launch: if the process dies in the
@@ -4379,7 +4430,13 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
         origin="$CF_QT_ORIGIN"
         cf_log "tunnel available at $origin (provisioned by curl)"
         cf_state_write starting "$sub" "$perm" "$origin" "$deployed" "waiting for the tunnel to connect" "$acc"
-        cf_tunnel_launch "$p" "$tlog"
+        if ! cf_tunnel_launch "$p" "$tlog"; then
+          cf_state_write degraded "$sub" "$perm" "" "$deployed" \
+            "cloudflared has no DNS resolver on this device — install it with: pkg install proot" "$acc"
+          cf_sleep_backoff "$restart_delay" "tunnel launch"
+          restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
+          continue
+        fi
         tunnel_pid=$!
         cf_log "tunnel started (pid $tunnel_pid)"
         if ! cf_tunnel_early_death "$tunnel_pid"; then continue; fi
@@ -4395,7 +4452,13 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
         continue
       else
         cf_log "curl did not provision a tunnel (${CF_QT_LAST:-no answer}); using cloudflared's own announce path"
-        cf_tunnel_launch "$p" "$tlog"
+        if ! cf_tunnel_launch "$p" "$tlog"; then
+          cf_state_write degraded "$sub" "$perm" "" "$deployed" \
+            "cloudflared has no DNS resolver on this device — install it with: pkg install proot" "$acc"
+          cf_sleep_backoff "$restart_delay" "tunnel launch"
+          restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
+          continue
+        fi
         tunnel_pid=$!
         cf_log "tunnel started (pid $tunnel_pid)"
         if ! cf_tunnel_early_death "$tunnel_pid"; then continue; fi
@@ -4507,11 +4570,20 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
       done
     fi
 
-    # 3. Point the Worker at it, with retries.
+    # 3. Point the Worker at it, with retries — and do not call the front
+    #    door live until the PERMANENT URL serves end to end. The upload
+    #    being accepted is not the same as the workers.dev route answering;
+    #    reporting live in between is the "✓ ready → ✗ 530" users saw.
     if cf_deploy_worker_retry "$origin"; then
       deployed="$origin"
-      cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
-      cf_log "worker -> $origin"
+      if cf_permanent_live "$perm" 180 "$tunnel_pid"; then
+        cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
+        cf_log "worker -> $origin; permanent URL serving end-to-end"
+      else
+        cf_state_write starting "$sub" "$perm" "$origin" "$deployed" \
+          "Worker deployed — waiting for the permanent URL to go live at the edge" "$acc"
+        cf_log "worker -> $origin, but the permanent URL is not serving yet — staying non-live"
+      fi
     else
       rc=$?
       cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment failed (see log)}" "$acc"
@@ -4540,8 +4612,14 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
         if cf_origin_ready "$origin" 10; then
           if cf_deploy_worker_retry "$origin"; then
             deployed="$origin"
-            cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
-            cf_log "worker re-pointed -> $origin"
+            if cf_permanent_live "$perm" 45 "$tunnel_pid"; then
+              cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
+              cf_log "worker re-pointed -> $origin"
+            else
+              cf_state_write starting "$sub" "$perm" "$origin" "$deployed" \
+                "Worker re-pointed — waiting for the permanent URL to serve" "$acc"
+              cf_log "re-pointed to $origin, but the permanent URL is not serving yet"
+            fi
           else
             rc=$?
             cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-re-point failed}" "$acc"
@@ -4575,8 +4653,14 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
             cf_log "retrying Worker deployment to $origin"
             if cf_deploy_worker_retry "$origin"; then
               deployed="$origin"
-              cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
-              cf_log "worker -> $origin (recovered)"
+              if cf_permanent_live "$perm" 45 "$tunnel_pid"; then
+                cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
+                cf_log "worker -> $origin (recovered)"
+              else
+                cf_state_write starting "$sub" "$perm" "$origin" "$deployed" \
+                  "Worker deployed — waiting for the permanent URL to serve" "$acc"
+                cf_log "deployed to $origin, but the permanent URL is not serving yet"
+              fi
             else
               rc=$?
               cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-Worker deployment failed (see log)}" "$acc"
@@ -4608,8 +4692,14 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
           cf_stale=$(( cf_stale + 1 ))
           cf_log "permanent URL check failed (${cf_stale} in a row) — re-deploying the Worker"
           if cf_deploy_worker_retry "$origin"; then
-            cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
-            cf_log "worker re-deployed after a failed health check"
+            if cf_permanent_live "$perm" 45 "$tunnel_pid"; then
+              cf_state_write live "$sub" "$perm" "$origin" "$deployed" "" "$acc"
+              cf_log "worker re-deployed after a failed health check"
+            else
+              cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" \
+                "The Worker is deployed but the permanent URL is not serving yet" "$acc"
+              cf_log "re-deployed, but the permanent URL still is not serving"
+            fi
           else
             rc=$?
             cf_state_write degraded "$sub" "$perm" "$origin" "$deployed" "${CF_DEPLOY_ERROR:-health check failed}" "$acc"

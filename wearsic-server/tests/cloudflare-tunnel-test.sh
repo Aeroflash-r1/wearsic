@@ -810,6 +810,23 @@ printf '%s' "$SUP" | grep -q 'cf_permanent_health "$perm"' \
   && pass "probes the permanent URL while healthy" \
   || fail "no permanent-URL self-heal probe"
 
+printf '%s' "$SUP" | grep -q 'cf_permanent_live' \
+  && printf '%s' "$SUP" | grep -q 'permanent URL serving end-to-end' \
+  && pass "reports live only after the PERMANENT URL serves (not merely after upload)" \
+  || fail "a freshly uploaded Worker is reported live before its URL answers (530 on 'ready')"
+
+printf '%s' "$SUP" | grep -q 'if ! cf_tunnel_launch' \
+  && pass "a refused launch (no DNS resolver) backs off instead of dying in a loop" \
+  || fail "tunnel launch failures are ignored"
+
+grep -q 'export CLOUDFLARED_DNS' "$CLI" \
+  && fail "exports CLOUDFLARED_DNS — cloudflared has no such variable" \
+  || pass "no phantom CLOUDFLARED_DNS export (the old no-op 'DNS fallback')"
+
+grep -q 'install -y proot' "$CLI" \
+  && pass "installs proot automatically when cloudflared has no resolver (native Termux)" \
+  || fail "native Termux without proot cannot get DNS for cloudflared"
+
 printf '%s' "$SUP" | grep -q 'retrying Worker deployment' \
   && pass "keeps retrying after a degraded deployment" \
   || fail "a degraded deployment is never retried"
@@ -863,6 +880,56 @@ printf '%s' "$START" | grep -q 'gone quiet' \
 printf '%s' "$START" | grep -q 'rate-limits quick-tunnel creation' \
   && pass "the 429 timeout explains itself instead of a bare failure" \
   || fail "the rate-limit failure gives no explanation"
+
+# ── 11b. cloudflared binary compatibility ──────────────────────────────────
+echo "cloudflared binary compatibility"
+
+# A binary that exists but cannot RUN (glibc build on bionic Termux, wrong
+# arch) must be skipped, never trusted — that was the silent "tunnel process
+# exited" loop.
+extract cf_cloudflared_bin
+. "$WORK/fn_cf_cloudflared_bin.sh"
+_prev_dest="$DEST"; _prev_path="$PATH"
+DEST="$WORK/cfbin"; mkdir -p "$DEST/bin" "$WORK/cfgood" "$WORK/cfbad"
+printf '#!/bin/sh\necho cloudflared version 2026.1.1\n' > "$WORK/cfgood/cloudflared"
+chmod +x "$WORK/cfgood/cloudflared"
+printf '#!/bin/sh\nexit 9\n' > "$WORK/cfbad/cloudflared"
+chmod +x "$WORK/cfbad/cloudflared"
+
+got="$(PATH="$WORK/cfgood:$PATH" cf_cloudflared_bin)"
+[ "$got" = "$WORK/cfgood/cloudflared" ] \
+  && pass "a working cloudflared on PATH is returned" \
+  || fail "a working cloudflared was not returned (got '$got')"
+
+got="$(PATH="$WORK/cfbad:$PATH" cf_cloudflared_bin)"
+[ -z "$got" ] \
+  && pass "a binary that cannot run is skipped" \
+  || fail "a broken binary was trusted (got '$got')"
+
+got="$(CLOUDFLARED_PATH="$WORK/cfbad/cloudflared" PATH="$WORK/cfgood:$PATH" cf_cloudflared_bin)"
+[ "$got" = "$WORK/cfgood/cloudflared" ] \
+  && pass "an explicit CLOUDFLARED_PATH that cannot run falls through to a working one" \
+  || fail "broken CLOUDFLARED_PATH was not skipped (got '$got')"
+
+DEST="$_prev_dest"; PATH="$_prev_path"
+
+# ── 11c. the live gate itself ──────────────────────────────────────────────
+echo "permanent-URL live gate"
+
+extract cf_permanent_live
+. "$WORK/fn_cf_permanent_live.sh"
+cf_permanent_health() { printf '%s' "${CF_PH_ANSWER:-}" ; [ "${CF_PH_ANSWER:-}" = "ok" ]; }
+cf_tunnel_alive() { return 0; }
+
+CF_PH_ANSWER="ok"
+cf_permanent_live "https://x.workers.dev" 10 "" \
+  && pass "a serving permanent URL gates to live immediately" \
+  || fail "a serving permanent URL was not accepted"
+
+CF_PH_ANSWER=""
+cf_permanent_live "https://x.workers.dev" 2 "" \
+  && fail "a 530-ing permanent URL must not gate to live" \
+  || pass "a not-yet-serving permanent URL stays non-live"
 
 # cf_supervisor_idle itself: file mtimes decide "actively working" vs "quiet".
 extract cf_supervisor_idle

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.MonitorHeart
+import androidx.compose.material.icons.rounded.Lan
 import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.SdStorage
@@ -78,7 +79,6 @@ import com.wearsic.app.ui.components.WearsicScreenHeader
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.WearsicDimens
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
@@ -133,6 +133,9 @@ fun SettingsScreen(
     var showNewProfileDialog by remember { mutableStateOf(false) }
     var newProfileName by remember { mutableStateOf("") }
     var profileToDelete by remember { mutableStateOf<com.wearsic.app.data.ServerProfile?>(null) }
+    var showPortDialog by remember { mutableStateOf(false) }
+    var portField by remember { mutableStateOf("") }
+    val currentPort: String = remember(serverUrl) { extractPort(serverUrl) }
 
     val listState = rememberScalingLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -281,7 +284,7 @@ fun SettingsScreen(
                                 1.dp,
                                 when {
                                     urlField.error != null -> WearsicError
-                                    urlField.focused -> LocalWearsicAccent.current
+                                    urlField.focused -> WearsicVibrantLavender
                                     else -> WearsicSurfaceBorderSubtle
                                 },
                                 CircleShape
@@ -299,7 +302,7 @@ fun SettingsScreen(
                                 contentDescription = "Server URL Icon",
                                 tint = when {
                                     urlField.error != null -> WearsicError
-                                    urlField.focused -> LocalWearsicAccent.current
+                                    urlField.focused -> WearsicVibrantLavender
                                     else -> WearsicTextSecondary
                                 },
                                 modifier = Modifier.size(16.dp)
@@ -344,7 +347,7 @@ fun SettingsScreen(
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Normal
                                         ),
-                                        cursorBrush = SolidColor(LocalWearsicAccent.current),
+                                        cursorBrush = SolidColor(WearsicVibrantLavender),
                                         keyboardOptions = KeyboardOptions(
                                             imeAction = ImeAction.Done
                                         ),
@@ -420,7 +423,7 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(CircleShape)
-                                .background(LocalWearsicAccent.current)
+                                .background(WearsicVibrantLavender)
                                 .wearsicClickable { testConnectionNow() }
                                 .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
                                 .testTag("settings_test_connection"),
@@ -530,6 +533,27 @@ fun SettingsScreen(
                 }
             }
 
+            // Server Port — customize the port baked into the server URL
+            item {
+                SettingsPillItem(
+                    title = "Server Port: ${currentPort}",
+                    subtitle = if (serverUrl.isBlank()) {
+                        "Set a server URL first"
+                    } else {
+                        "Tap to change (1024–65535)"
+                    },
+                    icon = Icons.Rounded.Lan,
+                    iconTint = WearsicVibrantLavender,
+                    onClick = {
+                        if (serverUrl.isNotBlank()) {
+                            portField = currentPort
+                            showPortDialog = true
+                        }
+                    },
+                    testTag = "settings_server_port"
+                )
+            }
+
             // API Key Field (optional security)
             item {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -542,7 +566,7 @@ fun SettingsScreen(
                                 1.dp,
                                 when {
                                     keyField.error != null -> WearsicError
-                                    keyField.focused -> LocalWearsicAccent.current
+                                    keyField.focused -> WearsicVibrantLavender
                                     else -> WearsicSurfaceBorderSubtle
                                 },
                                 CircleShape
@@ -616,50 +640,6 @@ fun SettingsScreen(
                 }
             }
 
-            // ── Server Profiles ───────────────────────────────────────────
-            item {
-                Text(
-                    text = "Server Profiles",
-                    color = WearsicVibrantLavender,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-
-            item {
-                SettingsPillItem(
-                    title = "Save current as profile",
-                    subtitle = "Name the server you're connected to",
-                    icon = Icons.Rounded.Add,
-                    onClick = { showNewProfileDialog = true },
-                    testTag = "settings_save_profile"
-                )
-            }
-
-            profiles.forEach { profile ->
-                item(key = profile.id) {
-                    ServerProfileRow(
-                        profile = profile,
-                        isActive = profile.url == serverUrl,
-                        onClick = { onApplyProfile(profile) },
-                        onDelete = { profileToDelete = profile }
-                    )
-                }
-            }
-
-            if (profiles.isNotEmpty()) {
-                item {
-                    Text(
-                        text = "Tap a profile to switch servers instantly.",
-                        color = WearsicTextMuted,
-                        fontSize = 9.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 8.dp)
-                    )
-                }
-            }
-
             // Storage Stats Pill
             item {
                 SettingsPillItem(
@@ -727,6 +707,38 @@ fun SettingsScreen(
                     onClick = { onRotatingArtworkToggled(!rotatingArtworkEnabled) },
                     testTag = "settings_rotating_artwork"
                 )
+            }
+
+            // ── Server Profiles ───────────────────────────────────────────
+            item {
+                Text(
+                    text = "Server Profiles",
+                    color = WearsicVibrantLavender,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
+            item {
+                SettingsPillItem(
+                    title = "Save current as profile",
+                    subtitle = "Name the server you're connected to",
+                    icon = Icons.Rounded.Add,
+                    onClick = { showNewProfileDialog = true },
+                    testTag = "settings_save_profile"
+                )
+            }
+
+            profiles.forEach { profile ->
+                item(key = profile.id) {
+                    ServerProfileRow(
+                        profile = profile,
+                        isActive = profile.url == serverUrl,
+                        onClick = { onApplyProfile(profile) },
+                        onDelete = { profileToDelete = profile }
+                    )
+                }
             }
 
             // ── Offline Audio ────────────────────────────────────────────
@@ -890,7 +902,7 @@ fun SettingsScreen(
                                 color = WearsicTextPrimary,
                                 fontSize = 12.sp
                             ),
-                            cursorBrush = SolidColor(LocalWearsicAccent.current),
+                            cursorBrush = SolidColor(WearsicVibrantLavender),
                             modifier = Modifier.fillMaxWidth(),
                             decorationBox = { innerTextField ->
                                 if (newProfileName.isEmpty()) {
@@ -906,7 +918,7 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .heightIn(min = WearsicDimens.TouchTarget)
                                 .clip(CircleShape)
-                                .background(LocalWearsicAccent.current)
+                                .background(WearsicVibrantLavender)
                                 .wearsicClickable {
                                     val name = newProfileName.trim()
                                     if (name.isNotBlank()) {
@@ -997,6 +1009,197 @@ fun SettingsScreen(
                 }
             }
         }
+
+        // ── Server Port dialog ───────────────────────────────────────────
+        if (showPortDialog) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.65f))
+                    .clickable { showPortDialog = false },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .clip(CircleShape)
+                        .background(WearsicSurface)
+                        .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.5f), CircleShape)
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Text(
+                        text = "Server Port",
+                        color = WearsicTextPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = serverUrl,
+                        color = WearsicTextMuted,
+                        fontSize = 9.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = WearsicDimens.TouchTarget)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.35f))
+                            .border(1.dp, WearsicVibrantLavender.copy(alpha = 0.4f), CircleShape)
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = portField,
+                            onValueChange = { portField = it.filter(Char::isDigit) },
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                color = WearsicTextPrimary,
+                                fontSize = 14.sp
+                            ),
+                            cursorBrush = SolidColor(WearsicVibrantLavender),
+                            keyboardOptions = KeyboardOptions(
+                                imeAction = ImeAction.Done,
+                                keyboardType = KeyboardType.Number
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    keyboardController?.hide()
+                                }
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                            decorationBox = { innerTextField ->
+                                if (portField.isEmpty()) {
+                                    Text("Port (1024–65535)", color = WearsicTextMuted, fontSize = 12.sp)
+                                }
+                                innerTextField()
+                            }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .heightIn(min = WearsicDimens.TouchTarget)
+                                .clip(CircleShape)
+                                .background(WearsicVibrantLavender)
+                                .wearsicClickable {
+                                    val p = portField.trim().toIntOrNull()
+                                    if (p != null && p in 1024..65535) {
+                                        onServerUrlChanged(buildServerUrlWithPort(serverUrl, p.toString()))
+                                        showPortDialog = false
+                                    }
+                                }
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Save", color = WearsicTextPrimaryDark, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .heightIn(min = WearsicDimens.TouchTarget)
+                                .clip(CircleShape)
+                                .background(WearsicGlassFill)
+                                .border(1.dp, WearsicGlassBorder, CircleShape)
+                                .wearsicClickable { showPortDialog = false }
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Cancel", color = WearsicTextPrimary, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One saved server profile row in the original pill language. The wide
+ * left/centre area applies the profile on tap; the trailing icon deletes it
+ * (deletion asks for confirmation). The active profile is highlighted.
+ */
+@Composable
+private fun ServerProfileRow(
+    profile: com.wearsic.app.data.ServerProfile,
+    isActive: Boolean,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val shape = RoundedCornerShape(WearsicDimens.CardRadius)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(
+                if (isActive) WearsicLavenderContainer.copy(alpha = 0.45f)
+                else WearsicSurfaceRaised
+            )
+            .border(
+                1.dp,
+                if (isActive) WearsicVibrantLavender.copy(alpha = 0.5f)
+                else WearsicSurfaceBorderSubtle,
+                shape
+            )
+            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 8.dp)
+            .testTag("settings_profile_${profile.id}")
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = WearsicDimens.TouchTarget)
+                    .clip(shape)
+                    .wearsicClickable(pressedScale = 0.98f, onClick = onClick)
+                    .padding(end = 6.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = profile.name,
+                        color = WearsicTextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = profile.url,
+                        color = WearsicTextSecondary,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Icon(
+                    imageVector = if (isActive) {
+                        Icons.Rounded.CheckCircle
+                    } else {
+                        Icons.AutoMirrored.Rounded.KeyboardArrowRight
+                    },
+                    contentDescription = if (isActive) "Active profile" else "Switch to this profile",
+                    tint = if (isActive) WearsicVibrantLavender else WearsicTextMuted,
+                    modifier = Modifier.size(if (isActive) 16.dp else 18.dp)
+                )
+            }
+            Icon(
+                imageVector = Icons.Rounded.Delete,
+                contentDescription = "Delete profile",
+                tint = WearsicError,
+                modifier = Modifier
+                    .size(WearsicDimens.TouchTarget)
+                    .clip(CircleShape)
+                    .clickable { onDelete() }
+                    .padding(12.dp)
+            )
+        }
     }
 }
 
@@ -1007,7 +1210,7 @@ private fun SettingsPillItem(
     icon: ImageVector,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    iconTint: androidx.compose.ui.graphics.Color = LocalWearsicAccent.current,
+    iconTint: androidx.compose.ui.graphics.Color = WearsicVibrantLavender,
     showChevron: Boolean = false,
     testTag: String = "settings_pill"
 ) {
@@ -1069,95 +1272,26 @@ private fun SettingsPillItem(
     }
 }
 
-/**
- * One saved server profile row. The wide left/centre area applies the profile
- * on tap; the trailing icon deletes it (deletion asks for confirmation).
- * The active profile (URL matches the current server) is highlighted.
- */
-@Composable
-private fun ServerProfileRow(
-    profile: com.wearsic.app.data.ServerProfile,
-    isActive: Boolean,
-    onClick: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val shape = RoundedCornerShape(WearsicDimens.CardRadius)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(
-                if (isActive) WearsicLavenderContainer.copy(alpha = 0.45f)
-                else WearsicSurfaceRaised
-            )
-            .border(
-                1.dp,
-                if (isActive) LocalWearsicAccent.current.copy(alpha = 0.5f)
-                else WearsicSurfaceBorderSubtle,
-                shape
-            )
-            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 8.dp)
-            .testTag("settings_profile_${profile.id}")
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = WearsicDimens.TouchTarget)
-                    .clip(shape)
-                    .wearsicClickable(pressedScale = 0.98f, onClick = onClick)
-                    .padding(end = 6.dp)
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = profile.name,
-                        color = WearsicTextPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = profile.url,
-                        color = WearsicTextSecondary,
-                        fontSize = 10.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                if (isActive) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        imageVector = Icons.Rounded.CheckCircle,
-                        contentDescription = "Active profile",
-                        tint = LocalWearsicAccent.current,
-                        modifier = Modifier.size(16.dp)
-                    )
-                } else {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                        contentDescription = "Switch to this profile",
-                        tint = WearsicTextMuted,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            Icon(
-                imageVector = Icons.Rounded.Delete,
-                contentDescription = "Delete profile",
-                tint = WearsicError,
-                modifier = Modifier
-                    .size(WearsicDimens.TouchTarget)
-                    .clip(CircleShape)
-                    .clickable { onDelete() }
-                    .padding(12.dp)
-            )
-        }
+/** Extract the port from a server URL (default 8080 when absent). */
+private fun extractPort(base: String): String =
+    try {
+        val uri = java.net.URI(base)
+        uri.port.takeIf { it > 0 }?.toString() ?: "8080"
+    } catch (_: Exception) {
+        "8080"
+    }
+
+/** Rebuilds the server URL with a new port, preserving scheme/host/path. */
+private fun buildServerUrlWithPort(base: String, port: String): String {
+    val cleanPort = port.trim()
+    return try {
+        val uri = java.net.URI(base)
+        val host = uri.host ?: return base
+        val scheme = uri.scheme ?: "http"
+        val path = uri.path ?: ""
+        "$scheme://$host:$cleanPort$path"
+    } catch (_: Exception) {
+        base
     }
 }
 

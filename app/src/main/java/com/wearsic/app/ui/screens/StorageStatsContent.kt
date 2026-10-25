@@ -32,7 +32,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.ScreenScaffold
 import com.wearsic.app.ui.components.WearsicScreenHeader
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicTextMuted
@@ -189,7 +188,7 @@ private fun ActionRow(
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, tint = LocalWearsicAccent.current, modifier = Modifier.size(16.dp))
+        Icon(icon, contentDescription = null, tint = WearsicVibrantLavender, modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.size(10.dp))
         Text(label, color = WearsicTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }

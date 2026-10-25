@@ -29,6 +29,11 @@ cd wearsic-server
 ./run-termux.sh
 ```
 
+The default port is `8080`. Override it per-run with `PORT=9000 ./run-termux.sh`,
+or persist it via the CLI: `wearsic port 9000` (saved to `.env`, applied on
+the next `wearsic restart`). The Cloudflare/Funnel front doors, `url`, `pair`
+and `status` all read the configured port.
+
 ## Database compatibility
 
 The DDL in `Database.kt` mirrors the schema of the deployed `wearsic.db`

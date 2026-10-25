@@ -88,10 +88,12 @@ die()  { shim_clear_live; shim_cursor_show; printf "${C_TAG}[wearsic]${C_RESET} 
 #   base      #8A8A85  (138, 138, 133)
 #   highlight #C9C9C3  (201, 201, 195)
 #
-# One pass takes ~1.7s; every frame is redrawn in place every ~90ms. On a
-# 256-colour terminal the blend is approximated with the gray ramp
-# (245 → 253). NO_COLOR, a non-TTY stdout and TERM=dumb turn it off, and the
-# cursor is always restored (normal exit, error, or Ctrl+C).
+# One pass takes ~2.0s; every frame is redrawn in place every ~90ms. More
+# frames per pass (22) and a wider band (40%) make the wave read as a smooth,
+# continuous glide instead of a stepping/blinking highlight. On a 256-colour
+# terminal the blend is approximated with the gray ramp (245 → 253).
+# NO_COLOR, a non-TTY stdout and TERM=dumb turn it off, and the cursor is
+# always restored (normal exit, error, or Ctrl+C).
 #
 # This block is byte-identical in `wearsic` and `install.sh`: the installer is
 # a standalone bootstrap script that cannot source the CLI.
@@ -100,8 +102,8 @@ SHIM_BASE_R=138; SHIM_BASE_G=138; SHIM_BASE_B=133
 SHIM_HI_R=201;   SHIM_HI_G=201;   SHIM_HI_B=195
 SHIM_256_BASE=245; SHIM_256_HI=253
 SHIM_FRAME_S=0.09
-SHIM_LOOP_FRAMES=19
-SHIM_BAND_PCT=30
+SHIM_LOOP_FRAMES=22
+SHIM_BAND_PCT=40
 SHIM_ESC="$(printf '\033')"
 SHIM_DEPTH=0
 SHIM_CURSOR_HIDDEN=0

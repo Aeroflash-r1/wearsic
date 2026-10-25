@@ -64,7 +64,6 @@ import com.wearsic.app.media.AudioOutputHelper
 import com.wearsic.app.media.crossfade.CrossfadeLengths
 import com.wearsic.app.ui.components.WearsicCircularIconButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAccentSky
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicDimens
@@ -286,55 +285,22 @@ fun VolumeScreen(
                         contentPadding = PaddingValues(horizontal = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        item {
-                            OptionChip(
-                                label = "15m",
-                                isActive = sleepRemainingMs > 0 && if (sleepSetMinutes > 0) {
-                                    sleepSetMinutes == 15
+                        options.forEach { mins ->
+                            item(key = "sleep_$mins") {
+                                val isActive = sleepRemainingMs > 0 && if (sleepSetMinutes > 0) {
+                                    sleepSetMinutes == mins
                                 } else {
-                                    approxActiveMinutes in 1..15
-                                },
-                                onClick = { onSleepTimerSet(15) },
-                                testTag = "sleep_timer_15m"
-                            )
+                                    approxActiveMinutes in (mins - 14)..mins
+                                }
+                                OptionChip(
+                                    label = "${mins}m",
+                                    isActive = isActive,
+                                    onClick = { onSleepTimerSet(mins) },
+                                    testTag = "sleep_timer_${mins}m"
+                                )
+                            }
                         }
-                        item {
-                            OptionChip(
-                                label = "30m",
-                                isActive = sleepRemainingMs > 0 && if (sleepSetMinutes > 0) {
-                                    sleepSetMinutes == 30
-                                } else {
-                                    approxActiveMinutes in 16..30
-                                },
-                                onClick = { onSleepTimerSet(30) },
-                                testTag = "sleep_timer_30m"
-                            )
-                        }
-                        item {
-                            OptionChip(
-                                label = "45m",
-                                isActive = sleepRemainingMs > 0 && if (sleepSetMinutes > 0) {
-                                    sleepSetMinutes == 45
-                                } else {
-                                    approxActiveMinutes in 31..45
-                                },
-                                onClick = { onSleepTimerSet(45) },
-                                testTag = "sleep_timer_45m"
-                            )
-                        }
-                        item {
-                            OptionChip(
-                                label = "60m",
-                                isActive = sleepRemainingMs > 0 && if (sleepSetMinutes > 0) {
-                                    sleepSetMinutes == 60
-                                } else {
-                                    approxActiveMinutes >= 46
-                                },
-                                onClick = { onSleepTimerSet(60) },
-                                testTag = "sleep_timer_60m"
-                            )
-                        }
-                        item {
+                        item(key = "sleep_off") {
                             OptionChip(
                                 label = "Off",
                                 isActive = sleepRemainingMs == 0L,
@@ -437,7 +403,7 @@ private fun VolumeDial(
     val arcColor = when {
         !enabled -> WearsicTextMuted.copy(alpha = 0.4f)
         isMuted -> WearsicTextMuted
-        else -> LocalWearsicAccent.current
+        else -> WearsicVibrantLavender
     }
     val trackColor = Color.White.copy(alpha = 0.08f)
 
@@ -525,9 +491,9 @@ private fun DeviceChip(
     testTag: String,
     modifier: Modifier = Modifier
 ) {
-    val fill = if (isSelected) LocalWearsicAccent.current else WearsicGlassFill
+    val fill = if (isSelected) WearsicVibrantLavender else WearsicGlassFill
     val contentTint = if (isSelected) WearsicTextPrimaryDark else WearsicTextPrimary
-    val iconTint = if (isSelected) WearsicTextPrimaryDark else LocalWearsicAccent.current
+    val iconTint = if (isSelected) WearsicTextPrimaryDark else WearsicVibrantLavender
 
     Box(
         modifier = modifier
@@ -580,7 +546,7 @@ private fun OptionChip(
         modifier = Modifier
             .heightIn(min = WearsicDimens.TouchTarget)
             .clip(CircleShape)
-            .background(if (isActive) LocalWearsicAccent.current else WearsicGlassFill)
+            .background(if (isActive) WearsicVibrantLavender else WearsicGlassFill)
             .border(
                 width = 1.dp,
                 color = if (isActive) Color.Transparent else WearsicGlassBorder,

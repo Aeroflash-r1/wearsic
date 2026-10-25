@@ -435,7 +435,7 @@ private fun ArtworkDisc(
     modifier: Modifier = Modifier,
     rotateArtwork: Boolean = true
 ) {
-    val ringStroke = 4f
+    val ringStroke = 3f
     val context = LocalContext.current
     val request = remember(context, artworkUrl) {
         ImageRequest.Builder(context)
@@ -456,7 +456,7 @@ private fun ArtworkDisc(
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
-                        listOf(colors.accent.copy(alpha = 0.32f), Color.Transparent)
+                        listOf(colors.accent.copy(alpha = 0.22f), Color.Transparent)
                     )
                 )
         )

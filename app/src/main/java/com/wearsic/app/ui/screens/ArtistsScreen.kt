@@ -33,7 +33,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -174,15 +173,7 @@ fun ArtistsScreen(
                                 modifier = Modifier
                                     .size(40.dp)
                                     .clip(CircleShape)
-                                    .background(
-                                        Brush.radialGradient(
-                                            listOf(
-                                                WearsicAccentPeach.copy(alpha = 0.55f),
-                                                WearsicAccentPeach.copy(alpha = 0.12f)
-                                            )
-                                        )
-                                    )
-                                    .border(1.dp, WearsicAccentPeach.copy(alpha = 0.4f), CircleShape),
+                                    .background(WearsicAccentPeach.copy(alpha = 0.18f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(

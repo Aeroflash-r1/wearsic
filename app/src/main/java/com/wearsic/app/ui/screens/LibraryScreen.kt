@@ -21,16 +21,13 @@ import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.CloudOff
 import com.wearsic.app.ui.theme.WearsicAccentAmber
-import com.wearsic.app.ui.theme.WearsicAccentMint
-import com.wearsic.app.ui.theme.WearsicAccentPeach
 import com.wearsic.app.ui.theme.WearsicAccentRose
-import com.wearsic.app.ui.theme.WearsicAccentSky
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -66,14 +63,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.layout.ContentScale
 import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track
-import com.wearsic.app.ui.components.WearsicActionTile
 import com.wearsic.app.ui.components.WearsicPrimaryPillButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSectionTitle
 import com.wearsic.app.ui.components.WearsicSecondaryPillButton
 import com.wearsic.app.ui.components.WearsicSettingsActionPill
 import com.wearsic.app.ui.components.WearsicSongRow
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
@@ -83,7 +78,6 @@ import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicLavenderContainer
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
-import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
@@ -110,7 +104,6 @@ fun LibraryScreen(
     isServerReachable: Boolean = true,
     offlineDownloads: List<Track> = emptyList(),
     onPlayOfflineTrack: (List<Track>, Int) -> Unit = { _, _ -> },
-    favoritesCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberScalingLazyListState()
@@ -201,6 +194,34 @@ fun LibraryScreen(
                 )
             }
 
+            // Saved-offline section: shown when the server is unreachable so
+            // the home screen stays useful as an offline library.
+            if (!isServerReachable && offlineDownloads.isNotEmpty()) {
+                item {
+                    WearsicSectionTitle(
+                        label = "Saved offline",
+                        icon = Icons.Rounded.Download,
+                        trailing = {
+                            Text(
+                                text = "${offlineDownloads.size} songs",
+                                color = WearsicTextSecondary,
+                                fontSize = 10.sp
+                            )
+                        }
+                    )
+                }
+                items(offlineDownloads.take(8), key = { it.id }) { track ->
+                    val index = offlineDownloads.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+                    WearsicSongRow(
+                        title = track.title,
+                        artist = track.artist,
+                        artworkUrl = track.artworkUrl,
+                        onClick = { onPlayOfflineTrack(offlineDownloads, index) },
+                        testTag = "library_offline_${track.id}"
+                    )
+                }
+            }
+
             // Recently Played Section
             if (recentTracks.isNotEmpty()) {
                 item {
@@ -231,122 +252,71 @@ fun LibraryScreen(
                 }
             }
 
-            // Saved-offline section: shown when the server is unreachable so
-            // the home screen stays useful as an offline library.
-            if (!isServerReachable && offlineDownloads.isNotEmpty()) {
-                item {
-                    WearsicSectionTitle(
-                        label = "Saved offline",
-                        icon = Icons.Rounded.Download,
-                        trailing = {
-                            Text(
-                                text = "${offlineDownloads.size} songs",
-                                color = WearsicTextSecondary,
-                                fontSize = 10.sp
-                            )
-                        }
-                    )
-                }
-                items(offlineDownloads.take(8), key = { it.id }) { track ->
-                    val index = offlineDownloads.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
-                    WearsicSongRow(
-                        title = track.title,
-                        artist = track.artist,
-                        artworkUrl = track.artworkUrl,
-                        onClick = { onPlayOfflineTrack(offlineDownloads, index) },
-                        testTag = "library_offline_${track.id}"
-                    )
-                }
+            // Downloads Action
+            item {
+                WearsicSecondaryPillButton(
+                    label = "Downloads",
+                    icon = Icons.Rounded.Download,
+                    onClick = onNavigateToDownloads,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "library_downloads_button"
+                )
             }
 
-            // Downloads & Favorites — one glanceable row with live counts.
-            // (Counts are hidden while zero so the home screen stays quiet.)
-            if (onNavigateToFavorites != null) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        WearsicActionTile(
-                            label = "Downloads",
-                            icon = Icons.Rounded.Download,
-                            onClick = onNavigateToDownloads,
-                            modifier = Modifier.weight(1f),
-                            testTag = "library_downloads_tile",
-                            badgeText = offlineDownloads.size.takeIf { it > 0 }?.toString()
-                        )
-                        WearsicActionTile(
-                            label = "Favorites",
-                            icon = Icons.Rounded.Favorite,
-                            onClick = onNavigateToFavorites,
-                            modifier = Modifier.weight(1f),
-                            testTag = "library_favorites_tile",
-                            badgeText = favoritesCount.takeIf { it > 0 }?.toString(),
-                            accentColor = WearsicAccentRose
-                        )
-                    }
-                }
-            } else {
-                item {
-                    WearsicActionTile(
-                        label = "Downloads",
-                        icon = Icons.Rounded.Download,
-                        onClick = onNavigateToDownloads,
-                        modifier = Modifier.fillMaxWidth(),
-                        testTag = "library_downloads_tile",
-                        badgeText = offlineDownloads.size.takeIf { it > 0 }?.toString()
-                    )
-                }
-            }
-
-            // Playlists & Albums
+            // Secondary Actions: Playlists & Albums
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    WearsicActionTile(
+                    WearsicSecondaryPillButton(
                         label = "Playlists",
                         icon = Icons.AutoMirrored.Rounded.QueueMusic,
                         onClick = onNavigateToPlaylists,
                         modifier = Modifier.weight(1f),
-                        testTag = "library_playlists_tile",
-                        accentColor = WearsicAccentSky
+                        testTag = "library_playlists_button"
                     )
-                    WearsicActionTile(
+                    WearsicSecondaryPillButton(
                         label = "Albums",
                         icon = Icons.Rounded.Album,
                         onClick = onNavigateToAlbums,
                         modifier = Modifier.weight(1f),
-                        testTag = "library_albums_tile",
-                        accentColor = WearsicAccentMint
+                        testTag = "library_albums_button"
                     )
                 }
             }
 
-            // Artists & Settings — secondary actions, one row.
+            // Artists
             item {
-                Row(
+                WearsicSecondaryPillButton(
+                    label = "Artists",
+                    icon = Icons.Rounded.Person,
+                    onClick = onNavigateToArtists,
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    WearsicActionTile(
-                        label = "Artists",
-                        icon = Icons.Rounded.Person,
-                        onClick = onNavigateToArtists,
-                        modifier = Modifier.weight(1f),
-                        testTag = "library_artists_tile",
-                        accentColor = WearsicAccentPeach
-                    )
-                    WearsicActionTile(
-                        label = "Settings",
-                        icon = Icons.Rounded.Settings,
-                        onClick = onNavigateToSettings,
-                        modifier = Modifier.weight(1f),
-                        testTag = "library_settings_tile",
-                        accentColor = WearsicTextMuted
+                    testTag = "library_artists_button"
+                )
+            }
+
+            if (onNavigateToFavorites != null) {
+                item {
+                    WearsicSecondaryPillButton(
+                        label = "Favorites",
+                        icon = Icons.Rounded.Favorite,
+                        onClick = onNavigateToFavorites,
+                        modifier = Modifier.fillMaxWidth(),
+                        testTag = "library_favorites_button"
                     )
                 }
+            }
+
+            // Settings Action Pill
+            item {
+                WearsicSettingsActionPill(
+                    label = "Settings",
+                    icon = Icons.Rounded.Settings,
+                    onClick = onNavigateToSettings,
+                    testTag = "library_settings_button"
+                )
             }
 
             // Bottom Spacing
@@ -406,56 +376,38 @@ private fun NowPlayingMiniCard(
                 // Real album art (or the music-note chip when there is none).
                 val artShape = RoundedCornerShape(WearsicDimens.ArtRadius)
                 val artModifier = Modifier
-                    .size(48.dp)
+                    .size(42.dp)
                     .clip(artShape)
                     .then(
                         if (isPlaying) Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), artShape)
                         else Modifier.border(1.dp, WearsicSurfaceBorderSubtle, artShape)
                     )
-                Box(contentAlignment = Alignment.Center) {
-                    if (isPlaying) {
-                        Box(
-                            modifier = Modifier
-                                .size(60.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.radialGradient(
-                                        listOf(
-                                            LocalWearsicAccent.current.copy(alpha = 0.30f),
-                                            Color.Transparent
-                                        )
-                                    )
-                                )
-                        )
+                if (!artworkUrl.isNullOrBlank()) {
+                    val artRequest = remember(artworkUrl) {
+                        ImageRequest.Builder(context)
+                            .data(artworkUrl)
+                            .size(96)
+                            .build()
                     }
-                    if (!artworkUrl.isNullOrBlank()) {
-                        val artRequest = remember(artworkUrl) {
-                            ImageRequest.Builder(context)
-                                .data(artworkUrl)
-                                .size(112)
-                                .build()
-                        }
-                        AsyncImage(
-                            model = artRequest,
-                            contentDescription = "Now Playing",
-                            contentScale = ContentScale.Crop,
-                            modifier = artModifier
+                    AsyncImage(
+                        model = artRequest,
+                        contentDescription = "Now Playing",
+                        contentScale = ContentScale.Crop,
+                        modifier = artModifier
+                    )
+                } else {
+                    Box(
+                        modifier = artModifier.background(
+                            if (isPlaying) Color.Black.copy(alpha = 0.25f) else WearsicLavenderContainer
+                        ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MusicNote,
+                            contentDescription = null,
+                            tint = WearsicVibrantLavender,
+                            modifier = Modifier.size(17.dp)
                         )
-                    } else {
-                        Box(
-                            modifier = artModifier.background(
-                                if (isPlaying) LocalWearsicAccent.current.copy(alpha = 0.25f)
-                                else WearsicLavenderContainer
-                            ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.MusicNote,
-                                contentDescription = null,
-                                tint = WearsicVibrantLavender,
-                                modifier = Modifier.size(17.dp)
-                            )
-                        }
                     }
                 }
                 Spacer(modifier = Modifier.width(10.dp))
@@ -499,7 +451,7 @@ private fun NowPlayingMiniCard(
                     .size(26.dp)
                     .clip(CircleShape)
                     .background(
-                        if (isPlaying) Color.White.copy(alpha = 0.9f) else LocalWearsicAccent.current
+                        if (isPlaying) Color.White.copy(alpha = 0.9f) else WearsicVibrantLavender
                     ),
                 contentAlignment = Alignment.Center
             ) {
@@ -533,7 +485,7 @@ private fun RecentTrackRow(
                 modifier = Modifier
                     .size(28.dp)
                     .clip(CircleShape)
-                    .background(LocalWearsicAccent.current),
+                    .background(WearsicVibrantLavender),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

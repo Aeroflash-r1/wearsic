@@ -55,12 +55,10 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicLavenderContainer
-import com.wearsic.app.ui.theme.WearsicOnPrimaryContainer
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorder
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
@@ -70,6 +68,7 @@ import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
 import com.wearsic.app.ui.theme.WearsicTextWhite60
 import com.wearsic.app.ui.theme.WearsicTextWhite80
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.util.WearsicMotion
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -100,7 +99,6 @@ fun WearsicPrimaryPillButton(
         label = "primaryPillPress"
     )
 
-    val shape = RoundedCornerShape(WearsicDimens.CardRadius)
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -111,8 +109,8 @@ fun WearsicPrimaryPillButton(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .clip(shape)
-            .background(backgroundColor)
+            .clip(CircleShape)
+            .background(Brush.linearGradient(listOf(backgroundColor, backgroundColor.copy(alpha = 0.86f))))
             .clickable(interactionSource = interaction, indication = null) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
@@ -194,8 +192,7 @@ fun WearsicSecondaryPillButton(
     icon: ImageVector,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    testTag: String = "secondary_pill_button",
-    badgeText: String? = null
+    testTag: String = "secondary_pill_button"
 ) {
     val haptic = LocalHapticFeedback.current
     val interaction = remember { MutableInteractionSource() }
@@ -206,8 +203,6 @@ fun WearsicSecondaryPillButton(
         label = "secondaryPillPress"
     )
 
-    val shape = RoundedCornerShape(WearsicDimens.CardRadius)
-    val accent = LocalWearsicAccent.current
     Box(
         modifier = modifier
             .heightIn(min = 48.dp)
@@ -215,9 +210,9 @@ fun WearsicSecondaryPillButton(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .clip(shape)
-            .background(accent.copy(alpha = 0.16f))
-            .border(1.dp, accent.copy(alpha = 0.45f), shape)
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
+            .background(WearsicSurfaceRaised)
+            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
             .clickable(interactionSource = interaction, indication = null) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
@@ -227,49 +222,24 @@ fun WearsicSecondaryPillButton(
         contentAlignment = Alignment.Center
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.Center
         ) {
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = label,
-                    tint = accent,
-                    modifier = Modifier.size(17.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = label,
-                    color = WearsicTextPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (badgeText != null) {
-                Box(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(accent.copy(alpha = 0.30f))
-                        .border(1.dp, accent.copy(alpha = 0.6f), CircleShape)
-                        .padding(horizontal = 7.dp, vertical = 2.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = badgeText,
-                        color = accent,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
-                }
-            }
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = LocalWearsicAccent.current,
+                modifier = Modifier.size(17.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = label,
+                color = WearsicTextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -335,102 +305,6 @@ fun WearsicSettingsActionPill(
 }
 
 /**
- * A compact action tile for grid layouts (the home "Browse" grid, paired
- * shortcuts…). A gradient icon medallion above a single-line label reads as
- * a destination, not a menu row — the visual opposite of a settings pill.
- * Optional [badgeText] shows a small count in the top corner.
- */
-@Composable
-fun WearsicActionTile(
-    label: String,
-    icon: ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    testTag: String = "action_tile",
-    badgeText: String? = null,
-    accentColor: Color = LocalWearsicAccent.current
-) {
-    val haptic = LocalHapticFeedback.current
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val pressScale by animateFloatAsState(
-        targetValue = if (pressed) 0.95f else 1f,
-        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
-        label = "actionTilePress"
-    )
-    val shape = RoundedCornerShape(WearsicDimens.CardRadius)
-
-    Box(
-        modifier = modifier
-            .heightIn(min = 72.dp)
-            .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
-            }
-            .clip(shape)
-            .background(accentColor.copy(alpha = 0.14f))
-            .border(1.dp, accentColor.copy(alpha = 0.45f), shape)
-            .clickable(interactionSource = interaction, indication = null) {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onClick()
-            }
-            .padding(horizontal = 8.dp, vertical = 10.dp)
-            .testTag(testTag),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(accentColor.copy(alpha = 0.30f))
-                    .border(1.dp, accentColor.copy(alpha = 0.55f), RoundedCornerShape(14.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = accentColor,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = label,
-                color = WearsicTextPrimary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center
-            )
-        }
-        if (badgeText != null) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 6.dp, end = 6.dp)
-                    .clip(CircleShape)
-                    .background(accentColor.copy(alpha = 0.30f))
-                    .border(1.dp, accentColor.copy(alpha = 0.6f), CircleShape)
-                    .padding(horizontal = 6.dp, vertical = 1.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = badgeText,
-                    color = accentColor,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1
-                )
-            }
-        }
-    }
-}
-
-/**
  * Circular Icon Action Button. Visual size may be small, but the touchable
  * area is always at least 48dp (Wear OS touch-target guideline) and presses
  * give haptic feedback.
@@ -444,7 +318,7 @@ fun WearsicCircularIconButton(
     size: Dp = 44.dp,
     iconSize: Dp = 22.dp,
     backgroundColor: Color = WearsicSurface,
-    iconTint: Color = WearsicVibrantLavender,
+    iconTint: Color = LocalWearsicAccent.current,
     borderColor: Color = WearsicSurfaceBorderSubtle,
     testTag: String = "circular_icon_button"
 ) {
@@ -536,14 +410,21 @@ fun WearsicScreenHeader(
                 modifier = Modifier
                     .size(30.dp)
                     .clip(CircleShape)
-                    .background(accentColor.copy(alpha = 0.28f))
-                    .border(1.dp, accentColor.copy(alpha = 0.5f), CircleShape),
+                    .background(
+                        Brush.radialGradient(
+                            listOf(
+                                accentColor.copy(alpha = 0.55f),
+                                accentColor.copy(alpha = 0.16f)
+                            )
+                        )
+                    )
+                    .border(1.dp, accentColor.copy(alpha = 0.35f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = accentColor,
+                    tint = Color.White.copy(alpha = 0.92f),
                     modifier = Modifier.size(15.dp)
                 )
             }
@@ -652,8 +533,8 @@ fun WearsicEmptyState(
             modifier = Modifier
                 .size(48.dp)
                 .clip(RoundedCornerShape(WearsicDimens.ArtRadius))
-                .background(LocalWearsicAccent.current.copy(alpha = 0.18f))
-                .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.4f), RoundedCornerShape(WearsicDimens.ArtRadius)),
+                .background(WearsicLavenderContainer)
+                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.ArtRadius)),
             contentAlignment = Alignment.Center
         ) {
             Icon(

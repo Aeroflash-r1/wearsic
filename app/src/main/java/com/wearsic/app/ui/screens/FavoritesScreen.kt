@@ -46,7 +46,6 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.model.Track
-import com.wearsic.app.ui.components.WearsicActionTile
 import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicLibraryTrackRow
 import com.wearsic.app.ui.components.WearsicLoadingState
@@ -121,20 +120,19 @@ fun FavoritesScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        WearsicActionTile(
+                        WearsicSecondaryPillButton(
                             label = "Play all",
                             icon = Icons.Rounded.PlayArrow,
                             onClick = { onPlayAll(favoritesState.tracks) },
                             modifier = Modifier.weight(1f),
                             testTag = "favorites_play_all"
                         )
-                        WearsicActionTile(
+                        WearsicSecondaryPillButton(
                             label = "Shuffle",
                             icon = Icons.Rounded.Shuffle,
                             onClick = { onShuffleAll(favoritesState.tracks) },
                             modifier = Modifier.weight(1f),
-                            testTag = "favorites_shuffle_all",
-                            accentColor = com.wearsic.app.ui.theme.WearsicAccentSky
+                            testTag = "favorites_shuffle_all"
                         )
                     }
                 }

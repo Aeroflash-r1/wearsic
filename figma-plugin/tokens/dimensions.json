@@ -1,0 +1,21 @@
+{
+  "source": "app/src/main/java/com/wearsic/app/ui/theme/WearsicDimens.kt",
+  "note": "Design dims in dp (Figma frames at 1dp = 1px). 44mm round viewport ≈ 240dp wide.",
+  "dimensions": {
+    "ScreenPadding/H": 14,
+    "ScreenPadding/V": 18,
+    "Spacing/Xs": 2,
+    "Spacing/S": 4,
+    "Spacing/M": 8,
+    "Spacing/L": 12,
+    "Spacing/XL": 16,
+    "TouchTarget/Min": 44,
+    "Radius/Card": 20,
+    "Radius/ListRow": 16,
+    "Radius/Artwork": 12,
+    "Row/Thumbnail": 40,
+    "Player/Artwork": 56,
+    "Sheet/RowMinHeight": 44,
+    "Tile/Medallion": 44
+  }
+}

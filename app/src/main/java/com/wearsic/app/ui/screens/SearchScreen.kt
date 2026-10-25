@@ -75,7 +75,6 @@ import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.components.WearsicSongRowPlayButton
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicBlack
@@ -169,7 +168,7 @@ fun SearchScreen(
                         .background(if (isFocused) WearsicSurfaceActive else WearsicGlassFill)
                         .border(
                             1.dp,
-                            if (isFocused) LocalWearsicAccent.current else WearsicSurfaceBorderSubtle,
+                            if (isFocused) WearsicVibrantLavender else WearsicSurfaceBorderSubtle,
                             CircleShape
                         )
                         .padding(horizontal = 12.dp),
@@ -182,7 +181,7 @@ fun SearchScreen(
                         Icon(
                             imageVector = Icons.Rounded.Search,
                             contentDescription = "Search Icon",
-                            tint = if (isFocused) LocalWearsicAccent.current else WearsicTextMuted,
+                            tint = if (isFocused) WearsicVibrantLavender else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
 
@@ -210,7 +209,7 @@ fun SearchScreen(
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Normal
                                 ),
-                                cursorBrush = SolidColor(LocalWearsicAccent.current),
+                                cursorBrush = SolidColor(WearsicVibrantLavender),
                                 keyboardOptions = KeyboardOptions(
                                     imeAction = ImeAction.Search
                                 ),
@@ -309,9 +308,7 @@ fun SearchScreen(
                                     .clip(CircleShape)
                                     .background(WearsicGlassFill)
                                     .border(1.dp, WearsicGlassBorder, CircleShape)
-                                    .wearsicClickable {
-                                        submitSearch()
-                                    }
+                                    .wearsicClickable { submitSearch() }
                                     .padding(horizontal = 14.dp, vertical = 7.dp)
                                     .testTag("search_retry"),
                                 contentAlignment = Alignment.Center
@@ -395,7 +392,7 @@ fun SearchScreen(
                     ) {
                         Text(
                             text = "Show more",
-                            color = LocalWearsicAccent.current,
+                            color = WearsicVibrantLavender,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )

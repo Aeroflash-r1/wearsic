@@ -38,9 +38,12 @@ chmod +x wearsic-server-v*.sh
 wearsic start                      # one command from here on
 ```
 
-`wearsic start|stop|restart|status|logs|health|ready|url|ip|api-key|sideload|pair|update|version|doctor|funnel|public|cookies`
-manages everything (`wearsic help` lists all commands). Re-running `install`
-upgrades in place and keeps `wearsic.db` + `.env`.
+`wearsic start|stop|restart|status|logs|health|ready|url|ip|api-key|sideload|pair|update|version|doctor|port|funnel|cloudflare|public|cookies`
+manages everything (`wearsic help` lists all commands). The default server
+port is `8080`; change it with `wearsic port 9000` (1024–65535, saved to
+`.env`, applied on the next `wearsic restart`) — the front door, `url`,
+`pair`, `status` and `doctor` all follow the configured port. Re-running
+`install` upgrades in place and keeps `wearsic.db` + `.env`.
 `./wearsic-server-v*.sh uninstall` removes it.
 
 ### From the ready-made Termux ZIP (`wearsic-server-termux-v<version>.zip`)
@@ -240,6 +243,9 @@ whole experience:
   Configure → Build → Start → Verify → Ready**. The active stage shimmers;
   a finished stage collapses into one quiet line, printed exactly once.
   Sub-process output is captured and only shown when a step fails.
+- **Smooth shimmer** — the wave is tuned for a smooth glide: 22 frames per
+  left→right pass over ~2.0s with a wider 40% band (softer edges), instead
+  of a coarser 19-frame/30% band that could read as stepping/blinking.
 - **The dashboard** — `wearsic dashboard` renders health, uptime, the LAN
   address, the Cloudflare front door and tunnel state, the API/stream health
   and the current engine activity, and refreshes the frame in place.
@@ -279,7 +285,9 @@ random `trycloudflare.com` hostname changes on restart, so the CLI deploys a
 reviewed Cloudflare Worker in front of it at
 `https://wearsic.<subdomain>.workers.dev`. The Worker streams responses and
 preserves Range/206, `Content-Range`, the API key, multiple `Set-Cookie`
-headers, and same-origin redirects; it never buffers a track.
+headers, and same-origin redirects; it never buffers a track, and it passes
+the engine's `Cache-Control` (private max-age) through on JSON discovery
+endpoints so the watch's disk cache still works over the permanent URL.
 
 Setup is one command:
 
@@ -292,6 +300,14 @@ when no key is saved, authorizes Cloudflare, installs `cloudflared`, deploys
 and verifies the Worker, then prints a single card with the permanent URL and
 API key for **Wearsic → Settings**. Existing keys, `.env`, server data and
 the database are preserved.
+
+**Native Termux note**: the GitHub cloudflared build is glibc and cannot run
+on Termux's bionic libc — the CLI now installs the Termux package
+(`pkg install cloudflared`) automatically and uses it for the tunnel. When a
+tunnel process dies immediately, the CLI reports the real cloudflared error
+line (e.g. DNS/CA bind or token rejection) instead of silently minting new
+tunnels and burning the quick-tunnel rate limit. To override the binary used,
+set `CLOUDFLARED_PATH`.
 
 For an explicit pre-authorization, `wearsic cloudflare login` opens a
 wrangler-compatible OAuth flow in the browser and needs NO wrangler/npm

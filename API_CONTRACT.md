@@ -48,7 +48,7 @@ X-Wearsic-Key: <key>
 ```json
 {
   "status": "ok",
-  "version": "1.9.17",
+  "version": "1.9.18",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -82,7 +82,7 @@ auto-installing a checksum-verified newer release when one exists (see
   "database": true,
   "extractor": true,
   "transcoder": true,
-  "engineVersion": "1.9.17"
+  "engineVersion": "1.9.18"
 }
 ```
 
@@ -381,6 +381,10 @@ Commands:
 
   Streams, `/api/config/*`, `/health`, `/ready` and errors carry no cache
   headers (non-cacheable to HTTP caches).
+- **Cloudflare front door**: the Worker passes the engine's `Cache-Control`
+  through on non-stream responses, so the read-path caching above still
+  applies over the permanent `workers.dev` URL; only audio/Range stream
+  responses are forced `no-store`.
 - **Reference client (watch app ≥ 1.9.1)**: a 16 MB OkHttp disk cache serves
   repeat screens; after any favorites/playlist mutation the app sends
   `Cache-Control: no-cache` for 6 s — longer than the 5 s user-state

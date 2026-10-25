@@ -2,7 +2,8 @@
 
 This file records the app-quality pass (UI, correctness and feature work) done
 on top of v1.9.15, plus a roadmap of larger improvements that are intentionally
-left for a separate, focused effort.
+left for a separate, focused effort. App + server CLI changes are current as
+of v1.9.18.
 
 ## Done in this pass
 
@@ -92,6 +93,24 @@ left for a separate, focused effort.
   (play-all/shuffle-all) and Downloads (play-all). Albums get larger 96dp
   artwork; artists get gradient medallions; playlist/album detail headers no
   longer show the track count; Downloads header shows total offline size.
+
+### Server / CLI (v1.9.18)
+- **`wearsic port [n]`** — show or set the server port (1024–65535, saved to
+  `.env`, applied on restart); supported as `wearsic port` and
+  `wearsic server port`. The engine, supervisor, `url`, `pair`, `status` and
+  the Cloudflare/funnel front doors all follow it.
+- **Cloudflare on native Termux** — the CLI now installs and uses the Termux
+  `cloudflared` package (bionic-compatible) instead of the glibc GitHub build
+  that died seconds after launch; `CLOUDFLARED_PATH` still overrides.
+- **Tunnel early-death diagnostic** — a tunnel that exits immediately now
+  reports the real cloudflared error line and backs off instead of silently
+  re-minting tunnels and burning the quick-tunnel rate limit.
+- **Worker cache-control pass-through** — the front-door Worker preserves the
+  engine's `Cache-Control` on JSON discovery endpoints (search/playlists/
+  favorites), restoring the watch's disk-cache speed over the permanent URL.
+- **Shimmer smoothness** — 22 frames per pass (~2.0s) with a 40% band, so
+  the installer/CLI wave reads as a smooth glide rather than a stepping/
+  blinking highlight (constants remain within the shimmer test suite).
 
 ## Roadmap (follow-up work — not in this pass)
 

@@ -82,6 +82,8 @@ fun WearsicApp(
     val dynamicColorEnabled by settingsVM.dynamicColorEnabled.collectAsStateWithLifecycle()
     val rotatingArtworkEnabled by settingsVM.rotatingArtworkEnabled.collectAsStateWithLifecycle()
     val serverProfiles by settingsVM.serverProfiles.collectAsStateWithLifecycle()
+    val serverReachable by libraryVM.serverReachable.collectAsStateWithLifecycle()
+    val offlineDownloads by downloadsVM.completedTracks.collectAsStateWithLifecycle()
 
     // Dynamic accent: the player hoists the artwork palette here; when the
     // opt-in setting is on and real artwork colours exist, the whole app's
@@ -99,8 +101,6 @@ fun WearsicApp(
     val albumsState by libraryVM.albumsState.collectAsStateWithLifecycle()
     val artistsState by libraryVM.artistsState.collectAsStateWithLifecycle()
     val recentTracks by libraryVM.recentTracks.collectAsStateWithLifecycle()
-    val serverReachable by libraryVM.serverReachable.collectAsStateWithLifecycle()
-    val offlineDownloads by downloadsVM.completedTracks.collectAsStateWithLifecycle()
     val startupHealth by settingsVM.startupHealth.collectAsStateWithLifecycle()
     val favoritesState by libraryVM.favoritesState.collectAsStateWithLifecycle()
     val playlistsState by libraryVM.playlistsState.collectAsStateWithLifecycle()
@@ -160,7 +160,7 @@ fun WearsicApp(
             timeText = timeText,
             modifier = modifier
         ) {
-            SwipeDismissableNavHost(
+        SwipeDismissableNavHost(
             navController = navController,
             startDestination = Screen.Library.route
         ) {
@@ -179,7 +179,6 @@ fun WearsicApp(
                         playerViewModel.playTracksFromList(tracks, index)
                         navController.navigate(Screen.Player.route)
                     },
-                    favoritesCount = favoritesState.tracks.size,
                     onNavigateToSearch = {
                         navController.navigate(Screen.Search.route)
                     },
@@ -479,14 +478,6 @@ fun WearsicApp(
                     onRemoveFavorite = { trackId ->
                         libraryVM.removeFavorite(trackId)
                     },
-                    onPlayAll = { tracks ->
-                        playerViewModel.playTracksFromList(tracks, 0)
-                        navController.navigate(Screen.Player.route)
-                    },
-                    onShuffleAll = { tracks ->
-                        playerViewModel.playTracksShuffled(tracks)
-                        navController.navigate(Screen.Player.route)
-                    },
                     playlists = playlistsState.playlists,
                     onCreatePlaylistAndAdd = { name, track ->
                         libraryVM.createPlaylistAndAdd(name, track)
@@ -494,7 +485,15 @@ fun WearsicApp(
                     onAddToPlaylist = { playlistId, track ->
                         libraryVM.addToPlaylist(playlistId, track)
                     },
-                    downloadedTrackIds = downloadedTrackIds
+                    downloadedTrackIds = downloadedTrackIds,
+                    onPlayAll = { tracks ->
+                        playerViewModel.playTracksFromList(tracks, 0)
+                        navController.navigate(Screen.Player.route)
+                    },
+                    onShuffleAll = { tracks ->
+                        playerViewModel.playTracksShuffled(tracks)
+                        navController.navigate(Screen.Player.route)
+                    }
                 )
             }
 

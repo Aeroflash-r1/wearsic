@@ -319,6 +319,12 @@ Notes:
   rejected, run `wearsic cloudflare login` again. DNS and transient network
   failures are retried; check `wearsic cloudflare status` and `logs` if the
   URL is not live yet.
+- **Native Termux** (bionic libc): the GitHub cloudflared build cannot run
+  there and used to exit seconds after launch (`tunnel process exited`).
+  The CLI now auto-installs and uses the Termux package
+  (`pkg install cloudflared`). If a tunnel still dies immediately, the
+  error text now includes the real cloudflared log line — paste that if you
+  need help.
 - The public URL still REQUIRES an API key. Cloudflare setup creates one only
   when none exists; it never replaces a key you already saved. `wearsic
   funnel` and `wearsic public` still refuse to run without one.
@@ -403,7 +409,7 @@ the watch:
 
 ~~~bash
 wearsic sideload                         # latest release → the connected watch
-wearsic sideload v1.9.17                  # a specific release
+wearsic sideload v1.9.18                  # a specific release
 wearsic sideload --apk app-release.apk   # a local build
 ~~~
 
@@ -487,6 +493,21 @@ wearsic status
 wearsic doctor
 wearsic logs
 ~~~
+
+## Customizing the server port
+
+The server listens on port `8080` by default. To change it:
+
+~~~bash
+wearsic port          # show the current port
+wearsic port 9000    # set a new port (1024–65535), saved to .env
+wearsic restart       # apply it
+~~~
+
+The watch app connects to the full URL including the port, so after changing
+it, update the server URL in the app (Settings → Server URL → change port, or
+Settings → Server Port). The Cloudflare/Funnel front doors, `url`, `pair` and
+`status` all follow the configured port automatically.
 
 ## Server will not start — port already in use
 
@@ -712,7 +733,7 @@ You get a readable snapshot (status, version, extraction success, crashes):
   │                                        │
   │     ok   127.0.0.1:8080 · 4ms          │
   │    ────────────────────────────────    │
-  │    version     v1.9.17                  │
+  │    version     v1.9.18                  │
   │    transcoder  available               │
   │    extraction  75 ok · 1 failed (1%)   │
   │    crashes     0                       │

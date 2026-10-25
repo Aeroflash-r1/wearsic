@@ -420,10 +420,12 @@ trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 143' TERM
 #   base      #8A8A85  (138, 138, 133)
 #   highlight #C9C9C3  (201, 201, 195)
 #
-# One pass takes ~1.7s; every frame is redrawn in place every ~90ms. On a
-# 256-colour terminal the blend is approximated with the gray ramp
-# (245 → 253). NO_COLOR, a non-TTY stdout and TERM=dumb turn it off, and the
-# cursor is always restored (normal exit, error, or Ctrl+C).
+# One pass takes ~2.0s; every frame is redrawn in place every ~90ms. More
+# frames per pass (22) and a wider band (40%) make the wave read as a smooth,
+# continuous glide instead of a stepping/blinking highlight. On a 256-colour
+# terminal the blend is approximated with the gray ramp (245 → 253).
+# NO_COLOR, a non-TTY stdout and TERM=dumb turn it off, and the cursor is
+# always restored (normal exit, error, or Ctrl+C).
 #
 # This block is byte-identical in `wearsic` and `install.sh`: the installer is
 # a standalone bootstrap script that cannot source the CLI.
@@ -432,8 +434,8 @@ SHIM_BASE_R=138; SHIM_BASE_G=138; SHIM_BASE_B=133
 SHIM_HI_R=201;   SHIM_HI_G=201;   SHIM_HI_B=195
 SHIM_256_BASE=245; SHIM_256_HI=253
 SHIM_FRAME_S=0.09
-SHIM_LOOP_FRAMES=19
-SHIM_BAND_PCT=30
+SHIM_LOOP_FRAMES=22
+SHIM_BAND_PCT=40
 SHIM_ESC="$(printf '\033')"
 SHIM_DEPTH=0
 SHIM_CURSOR_HIDDEN=0
@@ -1871,6 +1873,37 @@ cmd_stop() {
 }
 
 cmd_restart() { cmd_stop; cmd_start; }
+
+# `wearsic port` prints the configured port; `wearsic port <n>` validates and
+# persists a new port to .env (PORT=). The engine, the supervisor and every
+# CLI health/URL/Cloudflare path read PORT dynamically, so a change applies on
+# the next start/restart — the running server must be restarted to pick it up.
+cmd_port() {
+  installed
+  if [ "$#" -eq 0 ]; then
+    brand "port"
+    printf '  %s\n' "current port: $(port)"
+    printf '  %s\n' "set a new port: wearsic port 9000 (1024–65535; restart to apply)"
+    return 0
+  fi
+  local candidate="$1"
+  case "$candidate" in
+    ''|*[!0-9]*) die "port must be a number (1024–65535)" ;;
+  esac
+  if [ "$candidate" -lt 1024 ] || [ "$candidate" -gt 65535 ]; then
+    die "port must be between 1024 and 65535"
+  fi
+  if [ "$(port)" = "$candidate" ]; then
+    ok "port is already $candidate"
+    return 0
+  fi
+  write_env_value PORT "$candidate"
+  ok "port set to $candidate (saved to $ENV_FILE)"
+  note "restart the server to apply: wearsic restart"
+  if health_ok; then
+    dim "the running server is still on port $(port) until it restarts"
+  fi
+}
 
 # Exit codes (documented in usage + README):
 #   0 = running and healthy   1 = error   3 = not running   4 = running but unhealthy
@@ -3541,6 +3574,22 @@ cf_ensure_cloudflared() {
     Linux|Android) ;;
     *) err "Automatic cloudflared installation supports Linux/Termux only — install cloudflared and set CLOUDFLARED_PATH"; return 1 ;;
   esac
+  # Native Termux: prefer the Termux package (bionic-compatible) over the
+  # GitHub glibc build, which cannot start on Termux's libc. The package
+  # manager route is one command and is the reliable path there.
+  if [ -n "${TERMUX_PREFIX:-}" ] && [ -x "$TERMUX_PREFIX/bin/pkg" ] \
+      && ! cf_cloudflared_bin >/dev/null 2>&1; then
+    {
+      shim_stage_begin "Cloudflare" "installing cloudflared from the Termux repository"
+      "$TERMUX_PREFIX/bin/pkg" install -y cloudflared >/dev/null 2>&1
+      shim_stage_end ok "cloudflared (Termux package)"
+    } >&2
+    if cf_cloudflared_bin >/dev/null 2>&1; then
+      printf '%s' "$(cf_cloudflared_bin)"
+      return 0
+    fi
+    err "Could not install cloudflared from the Termux repository — trying the generic Linux build"
+  fi
   local arch
   case "$(uname -m)" in
     aarch64|arm64)  arch="arm64" ;;
@@ -3758,8 +3807,20 @@ cf_engine_guard() {  # $1 = engine port — restart the engine side, not the tun
 # records what the last probe saw so the failure text can say what actually
 # happened.
 CF_READY_LAST="no answer"
+# The last meaningful cloudflared log line(s) when a tunnel dies, so the
+# error text says WHY it exited instead of a bare "tunnel process exited".
+cf_tunnel_exit_hint() {
+  local f hint
+  f="$(cf_tunnel_log)"
+  [ -f "$f" ] || return 0
+  hint="$(tail -n 30 "$f" 2>/dev/null \
+    | grep -E 'ERR|ERROR|error|panic|FATAL|fatal|unable|failed|denied|refused' \
+    | tail -1 | tr -d '\r' | cut -c1-180)"
+  [ -n "$hint" ] && printf '%s' "$hint"
+}
+
 cf_origin_ready() {  # origin [budget_s] [tunnel_pid]
-  local origin="$1" budget="${2:-180}" pid="${3:-}" deadline
+  local origin="$1" budget="${2:-180}" pid="${3:-}" deadline hint
   case "$budget" in ''|*[!0-9]*) budget=180 ;; esac
   deadline=$(( $(date +%s) + budget ))
   while :; do
@@ -3769,7 +3830,8 @@ cf_origin_ready() {  # origin [budget_s] [tunnel_pid]
     fi
     case "$CF_HEALTH_LAST" in ?*) CF_READY_LAST="$CF_HEALTH_LAST" ;; esac
     if [ -n "$pid" ] && ! cf_tunnel_alive "$pid"; then
-      CF_READY_LAST="tunnel process exited"
+      hint="$(cf_tunnel_exit_hint)"
+      CF_READY_LAST="tunnel process exited${hint:+ ($hint)}"
       return 1
     fi
     [ "$(date +%s)" -ge "$deadline" ] && return 1
@@ -4001,6 +4063,25 @@ cf_tunnel_launch() {  # $1 = engine port, $2 = tunnel log path
   fi
 }
 
+# Early-death check right after a tunnel launch: if the process dies in the
+# first seconds (wrong libc build, missing DNS/CA bind, bad token), fail fast
+# with the REAL cloudflared error instead of minting new hostnames forever
+# (which also burns the quick-tunnel rate limit). Assumes the caller's loop
+# variables (sub/perm/deployed/acc/restart_delay) exist.
+cf_tunnel_early_death() {  # $1 = tunnel pid
+  local pid="$1" hint
+  sleep 4
+  cf_tunnel_alive "$pid" && return 0
+  hint="$(cf_tunnel_exit_hint)"
+  cf_log "ERROR: tunnel died immediately after start${hint:+ ($hint)}"
+  cf_state_write degraded "$sub" "$perm" "${origin:-}" "$deployed" \
+    "The tunnel process exited immediately (${hint:-see the tunnel log})" "${acc:-}"
+  wait "$pid" 2>/dev/null || true
+  cf_sleep_backoff "$restart_delay" "tunnel start"
+  restart_delay=$(( restart_delay * 2 )); [ "$restart_delay" -gt 60 ] && restart_delay=60
+  return 1
+}
+
 # Runs the tunnel, points the Worker at it, and re-points the Worker every
 # time the tunnel hands out a new random hostname. Restarts the tunnel if it
 # dies. Runs detached; the CLI starts it and reads the state file.
@@ -4204,6 +4285,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
         cf_tunnel_launch "$p" "$tlog"
         tunnel_pid=$!
         cf_log "tunnel started (pid $tunnel_pid)"
+        if ! cf_tunnel_early_death "$tunnel_pid"; then continue; fi
       elif [ "${CF_QT_LAST:-}" = "HTTP 429 — the tunnel API is rate-limiting this network" ]; then
         # Rate-limited: wait it out. Minting again immediately would only
         # extend the limit, and the classic fallback would stall for
@@ -4219,6 +4301,7 @@ cf_supervise() {  # $1 = engine port, $2 = install directory
         cf_tunnel_launch "$p" "$tlog"
         tunnel_pid=$!
         cf_log "tunnel started (pid $tunnel_pid)"
+        if ! cf_tunnel_early_death "$tunnel_pid"; then continue; fi
         cf_state_write starting "$sub" "$perm" "" "$deployed" "waiting for the tunnel hostname" "$acc"
 
         # 1. Wait for the random hostname. The log is authoritative; the
@@ -4755,9 +4838,24 @@ cf_ensure_auth() {
     cf_login || return 1
     return 0
   fi
-  say "  Then save it with:  wearsic cloudflare login --token-stdin"
+  # Non-interactive context (Termux:Boot, scripts, remote shells): the
+  # device flow needs no terminal input — it prints a link + code and
+  # polls. Never hard-fail here; that is what left normal users with no
+  # URL. Only if Cloudflare's bot protection blocks the device-code
+  # endpoint do we fall back to instructions for a terminal.
+  say "  No interactive terminal detected — starting the device login (a link"
+  say "  and code will be printed above; approve it in any browser)."
   say ""
-  err "No usable Cloudflare credential (non-interactive shell)."
+  cf_login --device
+  local rc=$?
+  if [ "$rc" -eq 0 ]; then
+    return 0
+  fi
+  say "  If the device flow was blocked by Cloudflare's bot protection, run"
+  say "  this in a terminal:  wearsic cloudflare login --browser"
+  say "  (or save a scoped token:  wearsic cloudflare login --token-stdin)"
+  say ""
+  err "Cloudflare authorization did not complete."
   return 1
 }
 
@@ -5792,8 +5890,11 @@ cmd_version() {
     box_begin "engine" ok
     box_line ""
     box_line "   $(pill ok "v$ver")  ${C_DIM}running${C_RESET}"
+    box_line "   ${C_DIM}server port${C_RESET}  $(port)"
     box_hr
     box_line "   ${C_ACC}wearsic update${C_RESET}  ${C_DIM}check for updates${C_RESET}"
+    box_line "   ${C_ACC}wearsic status${C_RESET}  ${C_DIM}full health picture${C_RESET}"
+    box_line "   ${C_ACC}wearsic cloudflare${C_RESET}  ${C_DIM}public workers.dev URL${C_RESET}"
     box_end
   else
     box_begin "engine" err
@@ -6413,12 +6514,14 @@ usage() {
   l="$(printf '%s♪%s %s' "$C_ACC" "$C_RESET" "$(grad_word 'wearsic')")"
   if [ "$st" = "running" ]; then
     r="$(pill ok running)${ver:+ $(printf '%s v%s %s' "$C_DIM" "$ver" "$C_RESET")}"
+    tag="music for your watch · v${ver:-?} · port $(port)"
   elif [ "$st" = "not running" ]; then
     r="$(pill off 'not running')"
+    tag="music for your watch · port $(port)"
   else
     r="$(pill off 'not installed')"
+    tag="music for your watch"
   fi
-  tag="music for your watch"
   lp="$(vis "$l")"; rp="$(vis "$r")"
   printf '\n'
   if [ $(( tw - ${#lp} - ${#rp} )) -ge 3 ]; then
@@ -6443,6 +6546,7 @@ usage() {
   item "logs" "follow live logs" "follow live logs (Ctrl+C to exit)"
   item "doctor" "full checkup (exit 0 = ready)" "full checkup — exit 0 means READY"
   item "setup" "one-command setup" "set up everything: key, server, health, watch values"
+  item "port [n]" "show or set the server port" "show the port — or set a new one (1024–65535, restart to apply)"
 
   ICOL=16
   section "Watch pairing" cyan
@@ -6507,6 +6611,7 @@ case "${1:-}" in
       funnel)  cmd_funnel ;;
       cloudflare) shift 2; cmd_cloudflare "$@" ;;
       public)  cmd_public ;;
+      port)    shift 2; cmd_port "$@" ;;
       "") usage; exit 2 ;;
       *) die "Unknown command: wearsic server $2 — run 'wearsic' for the list" ;;
     esac ;;
@@ -6531,6 +6636,7 @@ case "${1:-}" in
   funnel)    cmd_funnel ;;
   cloudflare) shift; cmd_cloudflare "$@" ;;
   public)    cmd_public ;;
+  port)      shift; cmd_port "$@" ;;
   __cf_supervise) shift; cf_supervise "$@" ;;
   ""|help|-h|--help) usage ;;
   *) die "Unknown command: wearsic $1 — run 'wearsic' for the list" ;;

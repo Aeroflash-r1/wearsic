@@ -319,7 +319,7 @@ class WearsicPlayerViewModel(
 
     /**
      * Plays a whole list in shuffled order. Used by the "Shuffle all"
-     * shortcuts on Favorites/Downloads.
+     * shortcuts on Favorites.
      */
     fun playTracksShuffled(tracks: List<Track>) {
         if (tracks.isEmpty()) return

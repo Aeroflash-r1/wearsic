@@ -186,9 +186,23 @@ export default {
       resHeaders.set("location", rewriteLocation(location, target, incoming));
     }
 
-    // Never let a shared cache store an authenticated API response or a
-    // byte range. The engine's own cache headers are otherwise preserved.
-    resHeaders.set("cache-control", "no-store");
+    // Never let a SHARED cache store an authenticated API response or a byte
+    // range (the edge sees every request, so it must not cache anything the
+    // watch's private cache is allowed to). But the ENGINE publishes its own
+    // `Cache-Control: private, max-age=…` on the JSON discovery endpoints
+    // (search/playlists/favorites) exactly so the WATCH's 16MB OkHttp disk
+    // cache can skip a relayed round-trip. Overwriting that with no-store —
+    // as earlier builds did — silently disabled the watch-side cache for
+    // every front-door user. Preserve the engine's header when it exists and
+    // the response is not an audio/stream range; default to no-store for
+    // everything else (streams, errors, mutations, fallback).
+    const isRangeResponse = upstream.headers.get("content-range") !== null;
+    const upstreamCacheControl = upstream.headers.get("cache-control");
+    if (upstreamCacheControl && !isRangeResponse) {
+      resHeaders.set("cache-control", upstreamCacheControl);
+    } else {
+      resHeaders.set("cache-control", "no-store");
+    }
     resHeaders.set("x-wearsic-frontdoor", "1");
 
     // 204/205/304 must not carry a body. Everything else streams through.

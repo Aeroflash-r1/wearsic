@@ -68,7 +68,6 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.model.Album
 import com.wearsic.app.ui.components.WearsicSongRow
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
@@ -164,10 +163,10 @@ fun AlbumsScreen(
                         .fillMaxWidth()
                         .heightIn(min = WearsicDimens.TouchTarget)
                         .clip(CircleShape)
-                        .background(if (isFocused) LocalWearsicAccent.current.copy(alpha = 0.12f) else WearsicGlassFill)
+                        .background(if (isFocused) WearsicVibrantLavender.copy(alpha = 0.12f) else WearsicGlassFill)
                         .border(
                             1.dp,
-                            if (isFocused) LocalWearsicAccent.current else WearsicGlassBorder,
+                            if (isFocused) WearsicVibrantLavender else WearsicGlassBorder,
                             CircleShape
                         )
                         .padding(horizontal = 12.dp),
@@ -177,7 +176,7 @@ fun AlbumsScreen(
                         Icon(
                             imageVector = Icons.Rounded.Search,
                             contentDescription = null,
-                            tint = if (isFocused) LocalWearsicAccent.current else WearsicTextMuted,
+                            tint = if (isFocused) WearsicVibrantLavender else WearsicTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.size(8.dp))
@@ -189,7 +188,7 @@ fun AlbumsScreen(
                             },
                             singleLine = true,
                             textStyle = TextStyle(color = WearsicTextPrimary, fontSize = 12.sp),
-                            cursorBrush = SolidColor(LocalWearsicAccent.current),
+                            cursorBrush = SolidColor(WearsicVibrantLavender),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                             keyboardActions = KeyboardActions(
                                 onSearch = { submitAlbumSearch() },
@@ -286,7 +285,7 @@ private fun AlbumCard(
         WearsicSongRowArtwork(
             artworkUrl = album.thumbnailUrl,
             contentDescription = album.name,
-            size = 96.dp
+            size = 88.dp
         )
         Spacer(Modifier.height(8.dp))
         Text(

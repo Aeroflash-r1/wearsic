@@ -45,7 +45,6 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
@@ -57,6 +56,7 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.util.WearsicMotion
 import com.wearsic.app.ui.util.wearsicClickable
@@ -95,9 +95,9 @@ fun WearsicSongRow(
         modifier = modifier
             .fillMaxWidth()
             // Rows enter with the list, not every time lazy scrolling recycles them.
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
             .background(WearsicSurface)
-            .border(1.dp, WearsicSurfaceBorder, RoundedCornerShape(16.dp))
+            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
             .wearsicClickable(pressedScale = 0.975f, onLongClick = onLongClick, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 10.dp)
             .testTag(testTag)
@@ -154,7 +154,7 @@ fun WearsicSongRowArtwork(
 ) {
     val context = LocalContext.current
     val shape = RoundedCornerShape(WearsicDimens.ArtRadius)
-    val ring = Modifier.border(1.dp, WearsicSurfaceBorder, shape)
+    val ring = Modifier.border(1.dp, WearsicSurfaceBorderSubtle, shape)
     if (!artworkUrl.isNullOrBlank()) {
         // Built once per URL: a fresh ImageRequest on every row recomposition
         // (rows redraw during a press and on list updates) makes Coil restart

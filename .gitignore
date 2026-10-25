@@ -38,3 +38,8 @@ build-release.log
 
 # Supervisor state dir (staged engine updates, rollback records)
 wearsic-server/wearsic-state/
+
+# local dev convenience/runtime
+wearsic-server/bin/
+wearsic-server/lib/lib/
+wearsic-server/wearsic-gc.log.*

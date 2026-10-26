@@ -45,9 +45,21 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val recentRepository = container.recentRepository
 
     /** Live search-suggestions preference (set from Settings). */
-    val searchSuggestionsEnabled: StateFlow<Boolean> =
-        container.preferencesRepository.searchSuggestionsEnabledFlow
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    private val _searchSuggestionsEnabled = MutableStateFlow(true)
+    val searchSuggestionsEnabled: StateFlow<Boolean> = _searchSuggestionsEnabled.asStateFlow()
+
+    init {
+        // Always keep the toggle mirrored — not a WhileSubscribed stateIn:
+        // onSearchTextChanged reads .value, and if nothing happened to be
+        // subscribed to the flow at that moment, a lazy stateIn would still
+        // report the default (true) and the disabled toggle would never
+        // actually disable suggestions.
+        viewModelScope.launch {
+            container.preferencesRepository.searchSuggestionsEnabledFlow.collect {
+                _searchSuggestionsEnabled.value = it
+            }
+        }
+    }
 
     val recentTracks: StateFlow<List<Track>> = recentRepository.recentTracksFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -418,10 +430,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * "Show more": fetches the next page of results (offset = current count)
-     * and appends new rows. The button stays visible while the server keeps
-     * returning full pages, so browsing can continue until the result set is
-     * exhausted instead of stopping after one fixed cap.
+     * "Show more": fetches the next page of results and appends them. The
+     * request uses BOTH a growing limit and the offset — a server that
+     * honours offset returns the next window; an older server that ignores it
+     * returns the first rows again, which the dedupe drops, and we still make
+     * progress as long as the server has more rows to give. The button stays
+     * visible until a page comes back duplicated or short (exhausted).
      */
     fun loadMoreResults() {
         val state = _searchState.value
@@ -431,7 +445,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         searchJob = viewModelScope.launch {
             _searchState.update { it.copy(isLoadingMore = true, errorMessage = null) }
             val pageSize = com.wearsic.app.network.WearsicHttpApiClient.SEARCH_PAGE_SIZE
-            val result = musicRepository.searchMusic(state.query, pageSize, state.results.size)
+            val maxLimit = com.wearsic.app.network.WearsicHttpApiClient.SEARCH_MAX_LIMIT
+            val reqLimit = (state.results.size + pageSize).coerceAtMost(maxLimit)
+            val result = musicRepository.searchMusic(state.query, reqLimit, state.results.size)
             result.onSuccess { tracks ->
                 val known = state.results.map { it.id }.toSet()
                 val fresh = tracks.filter { t -> t.id !in known }
@@ -440,10 +456,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         results = it.results + fresh,
                         isLoadingMore = false,
                         errorMessage = null,
-                        // Stop when the server returned nothing new (a server
-                        // without offset support repeats the first page — no
-                        // point looping), or when the page was not full.
-                        canLoadMore = fresh.isNotEmpty() && tracks.size >= pageSize
+                        // Exhausted when the server returned nothing new or a
+                        // page smaller than requested.
+                        canLoadMore = fresh.isNotEmpty() && tracks.size >= reqLimit
                     )
                 }
             }.onFailure { err ->

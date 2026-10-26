@@ -65,7 +65,6 @@ import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSecondaryPillButton
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
-import com.wearsic.app.ui.components.WearsicSongRowPlayButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.wearsicAccentContainer
@@ -356,17 +355,16 @@ private fun DownloadedTrackItemCard(
         modifier = modifier,
         testTag = "downloaded_track_${entity.trackId}",
         trailing = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                WearsicSongRowPlayButton(onClick = onPlay)
-                Spacer(modifier = Modifier.width(6.dp))
-                WearsicSongRowActionButton(
-                    icon = Icons.Rounded.Delete,
-                    contentDescription = "Delete",
-                    onClick = onDelete,
-                    testTag = "delete_download_${entity.trackId}",
-                    tint = WearsicTextMuted
-                )
-            }
+            // Only the delete action stays inline — the play button is
+            // redundant (the whole row plays) and it stole width from the
+            // song name, which is what matters most on a round watch.
+            WearsicSongRowActionButton(
+                icon = Icons.Rounded.Delete,
+                contentDescription = "Delete",
+                onClick = onDelete,
+                testTag = "delete_download_${entity.trackId}",
+                tint = WearsicTextMuted
+            )
         }
     )
 }

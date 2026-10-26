@@ -77,6 +77,18 @@ class WearsicDownloadManager(
     private val activeJobs = ConcurrentHashMap<String, ActiveDownload>()
 
     /**
+     * Tracks admitted but not yet started because the concurrency cap is
+     * full. FIFO; drained as soon as a live job finishes. Previously an
+     * over-cap request was silently dropped — a "Download all" batch of 10
+     * started 2 songs and lost the other 8. Queued items keep their
+     * MANUAL-intent entry in [manualPromotionRequests] until they start, so
+     * eviction never removes them while they wait.
+     */
+    private data class PendingDownload(val track: Track, val autoCached: Boolean)
+
+    private val pendingQueue = java.util.concurrent.ConcurrentLinkedQueue<PendingDownload>()
+
+    /**
      * Track ids for which a MANUAL "Download" request was admitted but the
      * promotion write has not landed yet. Set SYNCHRONOUSLY on the calling
      * thread before any coroutine work, so eviction/Clear-auto that runs a
@@ -234,11 +246,9 @@ class WearsicDownloadManager(
             return
         }
         if (activeJobs.size > MAX_CONCURRENT_DOWNLOADS) {
-            // Over the live-job cap: un-register BEFORE any coroutine or DB
-            // work, so this admission is never visible as a live download to
-            // startup cleanup or eviction.
-            activeJobs.remove(track.id, holder)
-            if (!autoCached) manualPromotionRequests.remove(track.id)
+            // Over the live-job cap: queue instead of dropping. The request
+            // stays pending (with its MANUAL-intent set) until a slot frees.
+            pendingQueue.add(PendingDownload(track, autoCached))
             return
         }
 
@@ -358,10 +368,27 @@ class WearsicDownloadManager(
                 }
             } finally {
                 activeJobs.remove(track.id)
+                // A slot just freed — start any queued downloads.
+                drainPending()
             }
         }
 
         holder.job = job
+    }
+
+    /**
+     * Starts queued downloads while the concurrency cap has room. Called
+     * after every job finishes (and on clear/cancel paths). Each start goes
+     * through the same atomic admission as a direct request, so races
+     * between concurrent drains can at worst momentarily add one extra job;
+     * the cap check is re-read each iteration.
+     */
+    private fun drainPending() {
+        if (pendingQueue.isEmpty()) return
+        while (activeJobs.size < MAX_CONCURRENT_DOWNLOADS) {
+            val next = pendingQueue.poll() ?: break
+            startDownload(next.track, next.autoCached)
+        }
     }
 
     /**
@@ -643,6 +670,8 @@ class WearsicDownloadManager(
     /** Cancels an in-progress download and removes its row + partial bytes. */
     fun cancelDownload(trackId: String) {
         activeJobs.remove(trackId)?.job?.cancel()
+        pendingQueue.removeIf { it.track.id == trackId }
+        manualPromotionRequests.remove(trackId)
         scope.launch {
             try {
                 // Serialize with the job's completion write (also under this
@@ -668,6 +697,7 @@ class WearsicDownloadManager(
      */
     fun deleteDownload(trackId: String) {
         activeJobs.remove(trackId)?.job?.cancel()
+        pendingQueue.removeIf { it.track.id == trackId }
         scope.launch {
             try {
                 stateMutex.withLock {
@@ -690,6 +720,7 @@ class WearsicDownloadManager(
     fun clearAllDownloads() {
         activeJobs.values.forEach { it.job?.cancel() }
         activeJobs.clear()
+        pendingQueue.clear()
         scope.launch {
             try {
                 stateMutex.withLock {
@@ -719,6 +750,7 @@ class WearsicDownloadManager(
     fun release() {
         activeJobs.values.forEach { it.job?.cancel() }
         activeJobs.clear()
+        pendingQueue.clear()
         scope.cancel()
     }
 }

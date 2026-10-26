@@ -168,6 +168,6 @@ class SearchResultsRenderTest {
         }
 
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("No tracks found for \"zzz nothing\"").assertExists()
+        composeTestRule.onNodeWithText("No tracks found for \"zzz nothing\" — try a shorter or simpler title").assertExists()
     }
 }

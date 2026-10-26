@@ -40,6 +40,7 @@ import com.wearsic.app.ui.screens.SettingsScreen
 import com.wearsic.app.ui.screens.VolumeScreen
 import com.wearsic.app.model.ArtistGroup
 import com.wearsic.app.ui.theme.LocalWearsicAccent
+import com.wearsic.app.ui.theme.LocalWearsicDynamicAccent
 import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.util.ArtworkColors
 import com.wearsic.app.ui.viewmodel.WearsicPlayerViewModel
@@ -83,6 +84,7 @@ fun WearsicApp(
     val offlineLimit by settingsVM.offlineLimit.collectAsStateWithLifecycle()
     val dynamicColorEnabled by settingsVM.dynamicColorEnabled.collectAsStateWithLifecycle()
     val rotatingArtworkEnabled by settingsVM.rotatingArtworkEnabled.collectAsStateWithLifecycle()
+    val searchSuggestionsEnabled by settingsVM.searchSuggestionsEnabled.collectAsStateWithLifecycle()
     val serverProfiles by settingsVM.serverProfiles.collectAsStateWithLifecycle()
     val serverReachable by libraryVM.serverReachable.collectAsStateWithLifecycle()
     val offlineDownloads by downloadsVM.completedTracks.collectAsStateWithLifecycle()
@@ -157,8 +159,11 @@ fun WearsicApp(
         }
     }
 
-    CompositionLocalProvider(LocalWearsicAccent provides effectiveAccent) {
-        MaterialTheme(colorScheme = wearsicColorSchemeFor(effectiveAccent)) {
+    CompositionLocalProvider(
+        LocalWearsicAccent provides effectiveAccent,
+        LocalWearsicDynamicAccent provides dynamicColorEnabled
+    ) {
+        MaterialTheme(colorScheme = wearsicColorSchemeFor(effectiveAccent, dynamicColorEnabled)) {
         AppScaffold(
             timeText = timeText,
             modifier = modifier
@@ -337,6 +342,10 @@ fun WearsicApp(
                     rotatingArtworkEnabled = rotatingArtworkEnabled,
                     onRotatingArtworkToggled = { enabled ->
                         settingsVM.setRotatingArtworkEnabled(enabled)
+                    },
+                    searchSuggestionsEnabled = searchSuggestionsEnabled,
+                    onSearchSuggestionsToggled = { enabled ->
+                        settingsVM.setSearchSuggestionsEnabled(enabled)
                     },
                     profiles = serverProfiles,
                     onSaveProfile = { name ->

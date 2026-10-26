@@ -241,14 +241,14 @@ fun PlayerScreen(
             }
         }
 
-        // Page dots live on the VERY EDGE of the round face — outside the
-        // scaffold's inset so they hug the display's curved boundary instead
-        // of floating mid-screen. One generous touch target for the
-        // sub-screen, vertical to match the edge.
+        // Page dots hug the VERY EDGE of the round face — outside the
+        // scaffold's inset so they follow the display's curved boundary. The
+        // 48dp touch target spans inward from the edge while the dots
+        // themselves align to the outer edge (End), so they sit right on the
+        // bezel instead of floating mid-screen.
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .padding(end = 2.dp)
                 .widthIn(min = WearsicDimens.TouchTarget)
                 .semantics {
                     contentDescription =
@@ -259,12 +259,13 @@ fun PlayerScreen(
                 }
                 .testTag("player_page_switch"),
             verticalArrangement = Arrangement.spacedBy(5.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.End
         ) {
             repeat(2) { index ->
                 val active = pagerState.currentPage == index
                 Box(
                     modifier = Modifier
+                        .padding(end = 3.dp)
                         .size(width = 4.dp, height = if (active) 11.dp else 5.dp)
                         .clip(CircleShape)
                         .background(

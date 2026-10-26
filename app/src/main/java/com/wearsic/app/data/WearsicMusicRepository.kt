@@ -111,15 +111,20 @@ class WearsicMusicRepository(
     suspend fun probeServerReadiness(url: String): Result<ReadyResponseDto> =
         httpApiClient.checkReady(url)
 
-    suspend fun searchMusic(query: String, limit: Int = 10): Result<List<Track>> {
+    suspend fun searchMusic(query: String, limit: Int = 10, offset: Int = 0): Result<List<Track>> {
         val queryValidation = Validation.validateQuery(query)
         if (queryValidation.isFailure) {
             val error = queryValidation.exceptionOrNull() as? WearsicError
             return Result.failure(error ?: EmptyInputError("query"))
         }
         val currentUrl = getServerUrl()
-        
-        val httpResult = httpApiClient.searchTracks(currentUrl, queryValidation.getOrThrow(), limit)
+
+        val httpResult = httpApiClient.searchTracks(
+            currentUrl,
+            queryValidation.getOrThrow(),
+            limit,
+            offset
+        )
         if (httpResult.isSuccess) {
             // An empty page is a VALID answer ("no matches for this query"),
             // not a failure. Treating it as an error made the search screen

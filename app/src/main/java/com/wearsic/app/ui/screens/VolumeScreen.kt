@@ -64,7 +64,7 @@ import com.wearsic.app.media.AudioOutputHelper
 import com.wearsic.app.media.crossfade.CrossfadeLengths
 import com.wearsic.app.ui.components.WearsicCircularIconButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
-import com.wearsic.app.ui.theme.WearsicAccentSky
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicDimens
@@ -73,7 +73,7 @@ import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.rememberSystemVolumeState
@@ -281,7 +281,7 @@ fun VolumeScreen(
                     // reachable (touch-swipe; the crown still adjusts volume).
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         options.forEach { mins ->
@@ -312,9 +312,11 @@ fun VolumeScreen(
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = "Sleep in ${sleepRemainingMs / 60000}m ${(sleepRemainingMs % 60000) / 1000}s",
-                            color = WearsicAccentSky,
+                            color = wearsicSecondaryText(),
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp)
                         )
                     }
                 }
@@ -335,7 +337,7 @@ fun VolumeScreen(
                     // chips overflow the round viewport, so the row scrolls.
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         CrossfadeLengths.SELECTABLE_MS.forEach { ms ->
@@ -353,9 +355,11 @@ fun VolumeScreen(
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = "Tracks fade into each other",
-                            color = WearsicTextSecondary,
+                            color = wearsicSecondaryText(),
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp)
                         )
                     }
                 }

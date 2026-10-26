@@ -76,6 +76,7 @@ import com.wearsic.app.ui.components.WearsicCompactShimmer
 import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicSectionTitle
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.components.WearsicSongRow
@@ -92,7 +93,7 @@ import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.SearchUiState
 
@@ -236,15 +237,16 @@ fun SearchScreen(
                                 contentDescription = "Clear Search",
                                 onClick = { onSearchTextChanged("") },
                                 testTag = "search_clear_button",
-                                tint = WearsicTextSecondary
+                                tint = wearsicSecondaryText()
                             )
                         }
                     }
                 }
             }
 
-            // Live Suggestions (while typing)
-            if (searchState.suggestions.isNotEmpty() && typedQuery.isNotBlank()) {
+            // Live Suggestions (while typing) — hidden while a search is in
+            // flight so the shimmer placeholders stay visible.
+            if (searchState.suggestions.isNotEmpty() && typedQuery.isNotBlank() && !searchState.isSearching) {
                 items(searchState.suggestions, key = { it }) { suggestion ->
                     Box(
                         modifier = Modifier

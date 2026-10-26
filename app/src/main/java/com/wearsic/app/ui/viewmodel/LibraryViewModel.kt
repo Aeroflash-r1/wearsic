@@ -44,6 +44,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val musicRepository = container.musicRepository
     private val recentRepository = container.recentRepository
 
+    /** Live search-suggestions preference (set from Settings). */
+    val searchSuggestionsEnabled: StateFlow<Boolean> =
+        container.preferencesRepository.searchSuggestionsEnabledFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     val recentTracks: StateFlow<List<Track>> = recentRepository.recentTracksFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -211,7 +216,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             }
             var result = musicRepository.getPlaylistTracksFlexible(playlistId)
             if (result.isFailure) {
-                delay(1500)
+                // Albums/playlists can take a while to resolve on the server
+                // (a full YouTube album fetch). Retry after a real delay, not
+                // 1.5 s — a premature retry just hits the same cold state.
+                delay(8000)
                 result = musicRepository.getPlaylistTracksFlexible(playlistId)
             }
             result.onSuccess { tracks ->
@@ -410,9 +418,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * "Show more": re-asks the server with the expanded page and merges new
-     * rows behind the existing ones (dedupe by id — page boundaries can
-     * shift between calls). First page stays on screen the whole time.
+     * "Show more": fetches the next page of results (offset = current count)
+     * and appends new rows. The button stays visible while the server keeps
+     * returning full pages, so browsing can continue until the result set is
+     * exhausted instead of stopping after one fixed cap.
      */
     fun loadMoreResults() {
         val state = _searchState.value
@@ -421,18 +430,20 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             _searchState.update { it.copy(isLoadingMore = true, errorMessage = null) }
-            val result = musicRepository.searchMusic(
-                state.query,
-                com.wearsic.app.network.WearsicHttpApiClient.SEARCH_MAX_LIMIT
-            )
+            val pageSize = com.wearsic.app.network.WearsicHttpApiClient.SEARCH_PAGE_SIZE
+            val result = musicRepository.searchMusic(state.query, pageSize, state.results.size)
             result.onSuccess { tracks ->
                 val known = state.results.map { it.id }.toSet()
+                val fresh = tracks.filter { t -> t.id !in known }
                 _searchState.update {
                     it.copy(
-                        results = it.results + tracks.filter { t -> t.id !in known },
+                        results = it.results + fresh,
                         isLoadingMore = false,
                         errorMessage = null,
-                        canLoadMore = false
+                        // Stop when the server returned nothing new (a server
+                        // without offset support repeats the first page — no
+                        // point looping), or when the page was not full.
+                        canLoadMore = fresh.isNotEmpty() && tracks.size >= pageSize
                     )
                 }
             }.onFailure { err ->
@@ -451,6 +462,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         _searchState.update { it.copy(query = text) }
         suggestionsJob?.cancel()
         if (text.isBlank()) {
+            _searchState.update { it.copy(suggestions = emptyList()) }
+            return
+        }
+        if (!searchSuggestionsEnabled.value) {
             _searchState.update { it.copy(suggestions = emptyList()) }
             return
         }

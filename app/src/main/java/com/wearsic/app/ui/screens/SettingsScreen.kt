@@ -78,6 +78,7 @@ import kotlinx.coroutines.delay
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
@@ -94,7 +95,7 @@ import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 
 import com.wearsic.app.ui.util.wearsicClickable
@@ -115,6 +116,8 @@ fun SettingsScreen(
     onDynamicColorToggled: (Boolean) -> Unit = {},
     rotatingArtworkEnabled: Boolean = true,
     onRotatingArtworkToggled: (Boolean) -> Unit = {},
+    searchSuggestionsEnabled: Boolean = true,
+    onSearchSuggestionsToggled: (Boolean) -> Unit = {},
     profiles: List<com.wearsic.app.data.ServerProfile> = emptyList(),
     onSaveProfile: (String) -> Unit = {},
     onApplyProfile: (com.wearsic.app.data.ServerProfile) -> Unit = {},
@@ -302,7 +305,7 @@ fun SettingsScreen(
                                 tint = when {
                                     urlField.error != null -> WearsicError
                                     urlField.focused -> LocalWearsicAccent.current
-                                    else -> WearsicTextSecondary
+                                    else -> wearsicSecondaryText()
                                 },
                                 modifier = Modifier.size(16.dp)
                             )
@@ -372,7 +375,7 @@ fun SettingsScreen(
                                 Icon(
                                     imageVector = Icons.Rounded.Close,
                                     contentDescription = "Clear URL",
-                                    tint = WearsicTextSecondary,
+                                    tint = wearsicSecondaryText(),
                                     modifier = Modifier
                                         .size(16.dp)
                                         .clip(CircleShape)
@@ -705,6 +708,22 @@ fun SettingsScreen(
                     iconTint = if (rotatingArtworkEnabled) LocalWearsicAccent.current else WearsicTextMuted,
                     onClick = { onRotatingArtworkToggled(!rotatingArtworkEnabled) },
                     testTag = "settings_rotating_artwork"
+                )
+            }
+
+            // Live search suggestions toggle
+            item {
+                SettingsPillItem(
+                    title = "Search Suggestions: ${if (searchSuggestionsEnabled) "On" else "Off"}",
+                    subtitle = if (searchSuggestionsEnabled) {
+                        "Suggest songs while you type"
+                    } else {
+                        "Only show results after searching"
+                    },
+                    icon = Icons.Rounded.AutoAwesome,
+                    iconTint = if (searchSuggestionsEnabled) LocalWearsicAccent.current else WearsicTextMuted,
+                    onClick = { onSearchSuggestionsToggled(!searchSuggestionsEnabled) },
+                    testTag = "settings_search_suggestions"
                 )
             }
 
@@ -1170,7 +1189,7 @@ private fun ServerProfileRow(
                     )
                     Text(
                         text = profile.url,
-                        color = WearsicTextSecondary,
+                        color = wearsicSecondaryText(),
                         fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -1253,7 +1272,7 @@ private fun SettingsPillItem(
                 )
                 Text(
                     text = subtitle,
-                    color = WearsicTextSecondary,
+                    color = wearsicSecondaryText(),
                     fontSize = 10.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

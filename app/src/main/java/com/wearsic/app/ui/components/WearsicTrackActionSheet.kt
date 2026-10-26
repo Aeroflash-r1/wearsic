@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.util.wearsicEntrance
 import androidx.compose.foundation.text.BasicTextField
@@ -59,7 +60,7 @@ import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.util.wearsicClickable
 
 /**

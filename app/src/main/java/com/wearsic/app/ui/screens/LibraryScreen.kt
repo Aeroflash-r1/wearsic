@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.graphics.Brush
 import com.wearsic.app.ui.components.WearsicSongRowArtwork
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import androidx.compose.foundation.shape.CircleShape
@@ -81,7 +82,7 @@ import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 
 import com.wearsic.app.ui.util.wearsicClickable
@@ -168,17 +169,19 @@ fun LibraryScreen(
                 }
             }
 
-            // Now Playing hero — always the first thing on the home screen so
-            // "continue listening" is one tap away and the top of the app
-            // reads as a real home rather than a plain menu.
-            item {
-                NowPlayingMiniCard(
-                    title = playbackState.currentTrack.title.ifBlank { "Your next favorite" },
-                    artist = playbackState.currentTrack.artist.ifBlank { "Find something to play" },
-                    artworkUrl = playbackState.currentTrack.artworkUrl,
-                    isPlaying = playbackState.isPlaying,
-                    onClick = if (playbackState.currentTrack.id.isBlank()) onNavigateToSearch else onNavigateToPlayer
-                )
+            // Now Playing hero — only appears when a track is actually loaded
+            // (playing OR paused). With nothing selected the home screen opens
+            // clean instead of showing the placeholder "READY TO PLAY" box.
+            if (playbackState.currentTrack.id.isNotBlank()) {
+                item {
+                    NowPlayingMiniCard(
+                        title = playbackState.currentTrack.title,
+                        artist = playbackState.currentTrack.artist,
+                        artworkUrl = playbackState.currentTrack.artworkUrl,
+                        isPlaying = playbackState.isPlaying,
+                        onClick = onNavigateToPlayer
+                    )
+                }
             }
 
             // Primary Search Action
@@ -203,7 +206,7 @@ fun LibraryScreen(
                         trailing = {
                             Text(
                                 text = "${offlineDownloads.size} songs",
-                                color = WearsicTextSecondary,
+                                color = wearsicSecondaryText(),
                                 fontSize = 10.sp
                             )
                         }
@@ -231,7 +234,7 @@ fun LibraryScreen(
                         trailing = {
                             Text(
                                 text = "${recentTracks.size} songs",
-                                color = WearsicTextSecondary,
+                                color = wearsicSecondaryText(),
                                 // Matches its own section label (10sp) so the
                                 // row reads as one baseline, not two sizes.
                                 fontSize = 10.sp

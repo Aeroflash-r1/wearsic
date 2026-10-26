@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicAccentPeach
@@ -57,7 +58,7 @@ import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.util.wearsicClickable
@@ -119,7 +120,7 @@ fun ArtistsScreen(
                         Icon(
                             imageVector = Icons.Rounded.Close,
                             contentDescription = "Clear artist",
-                            tint = WearsicTextSecondary,
+                            tint = wearsicSecondaryText(),
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.size(6.dp))
@@ -193,7 +194,7 @@ fun ArtistsScreen(
                                 )
                                 Text(
                                     text = "${artist.songs.size} saved songs",
-                                    color = WearsicTextSecondary,
+                                    color = wearsicSecondaryText(),
                                     fontSize = 12.sp
                                 )
                             }

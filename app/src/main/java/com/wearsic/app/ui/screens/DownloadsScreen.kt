@@ -67,6 +67,7 @@ import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.components.WearsicSongRowPlayButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
@@ -81,7 +82,7 @@ import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 
 import com.wearsic.app.ui.util.wearsicClickable
@@ -285,7 +286,7 @@ fun DownloadsScreen(
                     )
                     Text(
                         text = "This removes the offline copy.",
-                        color = WearsicTextSecondary,
+                        color = wearsicSecondaryText(),
                         fontSize = 10.sp,
                         textAlign = TextAlign.Center
                     )

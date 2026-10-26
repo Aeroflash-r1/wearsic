@@ -48,6 +48,12 @@ class WearsicPreferencesRepository(private val context: Context) {
          */
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color_enabled")
         /**
+         * Whether live search suggestions (as you type) are fetched and shown.
+         * Adds a small network call per keystroke; off by default is NOT the
+         * default — users who don't want the pop-up can turn it off here.
+         */
+        val KEY_SEARCH_SUGGESTIONS_ENABLED = booleanPreferencesKey("search_suggestions_enabled")
+        /**
          * Whether the player's album-art disc rotates slowly with the song.
          * The motion is free (drawn in the layer phase), but some users find
          * any motion distracting, so it is a setting.
@@ -181,6 +187,18 @@ class WearsicPreferencesRepository(private val context: Context) {
     suspend fun setRotatingArtworkEnabled(enabled: Boolean) {
         editPreferences { preferences ->
             preferences[KEY_ROTATING_ARTWORK] = enabled
+        }
+    }
+
+    val searchSuggestionsEnabledFlow: Flow<Boolean> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_SEARCH_SUGGESTIONS_ENABLED] ?: true
+        }
+
+    suspend fun setSearchSuggestionsEnabled(enabled: Boolean) {
+        editPreferences { preferences ->
+            preferences[KEY_SEARCH_SUGGESTIONS_ENABLED] = enabled
         }
     }
 

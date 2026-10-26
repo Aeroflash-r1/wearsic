@@ -33,12 +33,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.IntOffset
-import com.wearsic.app.ui.theme.WearsicAccentSky
 import com.wearsic.app.ui.theme.wearsicAccentContainer
-import com.wearsic.app.ui.theme.WearsicAccentMint
-import com.wearsic.app.ui.theme.WearsicAccentPeach
-import com.wearsic.app.ui.theme.WearsicAccentRose
-import com.wearsic.app.ui.theme.WearsicAccentAmber
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.WearsicDimens
 import androidx.compose.runtime.Composable
@@ -74,7 +70,7 @@ import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTextWhite60
 import com.wearsic.app.ui.theme.WearsicTextWhite80
 import com.wearsic.app.ui.theme.LocalWearsicAccent
@@ -393,10 +389,11 @@ fun WearsicGlassPanel(
 /**
  * Screen title header styled for round Wear OS displays.
  *
- * A small section-colored marker and generous type establish hierarchy.
- * The surrounding canvas stays OLED black; decoration is local to content.
- * Icons are deliberately absent: the accent bar is the only mark above the
- * title on every screen.
+ * A small accent bar and generous type establish hierarchy. The bar uses
+ * the app-wide accent (fixed lavender by default; the artwork accent when
+ * Dynamic Accent is on) — one colour across every screen, never per-screen
+ * colours. The surrounding canvas stays OLED black; decoration is local to
+ * content. Icons are deliberately absent above the title.
  */
 @Composable
 fun WearsicScreenHeader(
@@ -405,7 +402,7 @@ fun WearsicScreenHeader(
     subtitle: String? = null,
     accentColor: Color? = null
 ) {
-    val accent = accentColor ?: wearsicSectionAccent(title)
+    val accent = accentColor ?: LocalWearsicAccent.current
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -544,16 +541,6 @@ fun WearsicEmptyState(
     }
 }
 
-@Composable
-private fun wearsicSectionAccent(title: String): Color = when (title) {
-    "Search", "Albums" -> WearsicAccentSky
-    "Downloads", "Storage" -> WearsicAccentMint
-    "Favorites" -> WearsicAccentRose
-    "Artists" -> WearsicAccentPeach
-    "Queue", "Audio Output" -> WearsicAccentAmber
-    else -> LocalWearsicAccent.current
-}
-
 /**
  * A single-line, self-scrolling title.
  *
@@ -624,7 +611,7 @@ fun WearsicLoadingState(
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = label,
-            color = WearsicTextSecondary,
+            color = wearsicSecondaryText(),
             fontSize = 11.sp
         )
     }

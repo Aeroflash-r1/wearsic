@@ -40,6 +40,7 @@ import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicSongRowArtwork
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.util.wearsicClickable
@@ -79,7 +80,7 @@ import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.AlbumsUiState
 

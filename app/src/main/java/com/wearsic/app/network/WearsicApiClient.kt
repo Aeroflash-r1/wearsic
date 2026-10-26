@@ -15,6 +15,8 @@ interface WearsicApiClient {
     suspend fun searchTracks(baseUrl: String, query: String): Result<SearchResponseDto>
     /** Same search with an explicit page size (1..25, server-clamped). */
     suspend fun searchTracks(baseUrl: String, query: String, limit: Int): Result<SearchResponseDto>
+    /** Same search with a page offset for deeper "Show more" paging. */
+    suspend fun searchTracks(baseUrl: String, query: String, limit: Int, offset: Int): Result<SearchResponseDto>
     /**
      * Resolve a track server-side without streaming audio (`/api/prewarm`).
      * True when the server has a cached, playable target ready.

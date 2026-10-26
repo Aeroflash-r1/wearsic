@@ -33,11 +33,12 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.ScreenScaffold
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicViolet
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.wearsicClickable
@@ -148,7 +149,7 @@ private fun StatRow(
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(label, color = WearsicTextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-            Text(detail, color = WearsicTextSecondary, fontSize = 10.sp)
+            Text(detail, color = wearsicSecondaryText(), fontSize = 10.sp)
         }
         Spacer(modifier = Modifier.height(4.dp))
         Box(

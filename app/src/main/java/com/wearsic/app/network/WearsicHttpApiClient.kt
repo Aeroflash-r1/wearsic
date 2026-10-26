@@ -42,6 +42,18 @@ class WearsicHttpApiClient(
         .build()
 ) : WearsicApiClient {
 
+    /**
+     * Slow client for heavy extraction endpoints (playlist/album by URL):
+     * a full album fetch can legitimately take well over the default 30 s
+     * read timeout while YouTube resolves every track. Timeouts there made
+     * opening an album fail with a phantom "could not load playlist".
+     */
+    private val slowClient: OkHttpClient = client.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .callTimeout(120, TimeUnit.SECONDS)
+        .build()
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -142,10 +154,19 @@ class WearsicHttpApiClient(
     }
 
     override suspend fun searchTracks(baseUrl: String, query: String): Result<SearchResponseDto> {
-        return searchTracks(baseUrl, query, SEARCH_PAGE_SIZE)
+        return searchTracks(baseUrl, query, SEARCH_PAGE_SIZE, 0)
     }
 
-    override suspend fun searchTracks(baseUrl: String, query: String, limit: Int): Result<SearchResponseDto> = withContext(Dispatchers.IO) {
+    override suspend fun searchTracks(baseUrl: String, query: String, limit: Int): Result<SearchResponseDto> {
+        return searchTracks(baseUrl, query, limit, 0)
+    }
+
+    override suspend fun searchTracks(
+        baseUrl: String,
+        query: String,
+        limit: Int,
+        offset: Int
+    ): Result<SearchResponseDto> = withContext(Dispatchers.IO) {
         val urlValidation = validateBaseUrl(baseUrl)
         if (urlValidation.isFailure) {
             val error = urlValidation.exceptionOrNull() as? WearsicError
@@ -159,7 +180,8 @@ class WearsicHttpApiClient(
         }
         val encodedQuery = URLEncoder.encode(queryValidation.getOrThrow(), "UTF-8")
         val page = limit.coerceIn(1, SEARCH_MAX_LIMIT)
-        val searchUrl = "$sanitizedUrl/api/search?q=$encodedQuery&limit=$page"
+        val offsetClamped = offset.coerceAtLeast(0)
+        val searchUrl = "$sanitizedUrl/api/search?q=$encodedQuery&limit=$page&offset=$offsetClamped"
 
         try {
             val request = Request.Builder()
@@ -584,7 +606,7 @@ class WearsicHttpApiClient(
                     .get()
                     .build()
 
-                runInterruptible { client.newCall(request).execute() }.use { response ->
+                runInterruptible { slowClient.newCall(request).execute() }.use { response ->
                     if (!response.isSuccessful) {
                         return@use Result.failure(
                             HttpError("$sanitizedUrl/api/playlist", response.code, "Server error: HTTP ${response.code}")

@@ -45,6 +45,7 @@ import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.network.model.ServerUpdateStatusDto
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAccentSky
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicAppBackground
@@ -54,7 +55,7 @@ import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicSuccess
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.WearsicTextSecondary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.wearsicClickable
@@ -152,7 +153,7 @@ fun ServerDashboardScreen(
                             ValueRow(
                                 label = "Refusals",
                                 value = "${health.upstreamRefusals}",
-                                valueColor = WearsicTextSecondary
+                                valueColor = wearsicSecondaryText()
                             )
                         }
                     }
@@ -245,7 +246,7 @@ private fun StatusCard(state: ServerDashboardState) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = state.error,
-                        color = WearsicTextSecondary,
+                        color = wearsicSecondaryText(),
                         fontSize = 10.sp,
                         textAlign = TextAlign.Center,
                         maxLines = 3,

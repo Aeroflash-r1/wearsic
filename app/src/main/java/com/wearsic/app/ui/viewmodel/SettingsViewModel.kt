@@ -71,6 +71,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val rotatingArtworkEnabled: StateFlow<Boolean> = preferencesRepository.rotatingArtworkFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
+    /** Live search suggestions while typing (opt-out). */
+    val searchSuggestionsEnabled: StateFlow<Boolean> = preferencesRepository.searchSuggestionsEnabledFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     /** Saved server profiles; the active one matches [serverUrl] + [apiKey]. */
     val serverProfiles: StateFlow<List<com.wearsic.app.data.ServerProfile>> =
         preferencesRepository.serverProfilesFlow
@@ -158,6 +162,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setRotatingArtworkEnabled(enabled: Boolean) {
         viewModelScope.launch {
             preferencesRepository.setRotatingArtworkEnabled(enabled)
+        }
+    }
+
+    fun setSearchSuggestionsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setSearchSuggestionsEnabled(enabled)
         }
     }
 

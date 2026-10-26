@@ -6,7 +6,6 @@ import com.wearsic.app.model.DnsError
 import com.wearsic.app.model.EmptyInputError
 import com.wearsic.app.model.HostUnreachableError
 import com.wearsic.app.model.HttpError
-import com.wearsic.app.model.InvalidUrlError
 import com.wearsic.app.model.Playlist
 import com.wearsic.app.model.TimeoutError
 import com.wearsic.app.model.Track

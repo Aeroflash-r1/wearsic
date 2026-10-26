@@ -7,13 +7,7 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wearsic.app.WearsicApp
-import com.wearsic.app.data.WearsicDownloadRepository
-import com.wearsic.app.data.WearsicMusicRepository
-import com.wearsic.app.data.WearsicPreferencesRepository
-import com.wearsic.app.data.WearsicRecentRepository
 import com.wearsic.app.data.db.WearsicDownloadEntity
-import com.wearsic.app.media.WearsicPlaybackController
-import com.wearsic.app.media.download.WearsicDownloadManager
 import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track
 import com.wearsic.app.network.model.ConnectionTestState

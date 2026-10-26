@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.itemsIndexed
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
@@ -47,20 +46,14 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicLibraryTrackRow
-import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicScreenHeader
+import com.wearsic.app.ui.components.WearsicSearchShimmerRow
 import com.wearsic.app.ui.theme.WearsicAppBackground
-import com.wearsic.app.ui.theme.wearsicSecondaryText
-import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.wearsicListContentPadding
-import com.wearsic.app.ui.theme.WearsicBlack
-import com.wearsic.app.ui.theme.WearsicSurface
-import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistDetailUiState
 
@@ -117,8 +110,14 @@ fun PlaylistDetailScreen(
             }
 
             if (detailState.isLoading && detailState.tracks.isEmpty()) {
-                item {
-                    WearsicLoadingState(label = "Loading tracks...")
+                // Shimmer placeholders (same language as search) keep the list
+                // populated and scrollable while tracks load — a single
+                // spinner left the list shorter than the viewport, which made
+                // scrolling feel frozen.
+                repeat(3) { shimmerIndex ->
+                    item(key = "playlist_shimmer_$shimmerIndex") {
+                        WearsicSearchShimmerRow(modifier = Modifier)
+                    }
                 }
             }
 

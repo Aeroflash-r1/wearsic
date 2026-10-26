@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Warning
@@ -37,8 +38,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.components.WearsicEmptyState
-import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicSongRowArtwork
+import com.wearsic.app.ui.components.WearsicSearchShimmerRow
+import com.wearsic.app.ui.components.WearsicCompactShimmer
+import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
@@ -62,21 +65,18 @@ import coil.request.ImageRequest
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.model.Album
-import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
-import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
@@ -172,7 +172,10 @@ fun AlbumsScreen(
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.CenterStart
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Icon(
                             imageVector = Icons.Rounded.Search,
                             contentDescription = null,
@@ -180,30 +183,57 @@ fun AlbumsScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.size(8.dp))
-                        BasicTextField(
-                            value = typed,
-                            onValueChange = {
-                                typed = it
-                                debouncedQuery = it
-                            },
-                            singleLine = true,
-                            textStyle = TextStyle(color = WearsicTextPrimary, fontSize = 12.sp),
-                            cursorBrush = SolidColor(LocalWearsicAccent.current),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(
-                                onSearch = { submitAlbumSearch() },
-                                onDone = { submitAlbumSearch() },
-                                onGo = { submitAlbumSearch() }
-                            ),
-                            modifier = Modifier.fillMaxWidth().onFocusChanged { isFocused = it.isFocused }
-                        )
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            BasicTextField(
+                                value = typed,
+                                onValueChange = {
+                                    typed = it
+                                    debouncedQuery = it
+                                },
+                                singleLine = true,
+                                textStyle = TextStyle(color = WearsicTextPrimary, fontSize = 12.sp),
+                                cursorBrush = SolidColor(LocalWearsicAccent.current),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = { submitAlbumSearch() },
+                                    onDone = { submitAlbumSearch() },
+                                    onGo = { submitAlbumSearch() }
+                                ),
+                                modifier = Modifier.fillMaxWidth().onFocusChanged { isFocused = it.isFocused }
+                            )
+                        }
+                        if (typed.isNotEmpty()) {
+                            WearsicSongRowActionButton(
+                                icon = Icons.Rounded.Close,
+                                contentDescription = "Clear album search",
+                                onClick = {
+                                    typed = ""
+                                    debouncedQuery = ""
+                                    submittedQuery = ""
+                                    onQueryChanged("")
+                                },
+                                testTag = "albums_search_clear",
+                                tint = wearsicSecondaryText()
+                            )
+                        }
                     }
                 }
             }
 
             if (albumsState.isLoading) {
-                item {
-                    WearsicLoadingState(label = "Finding albums…")
+                if (albumsState.albums.isEmpty()) {
+                    repeat(3) { shimmerIndex ->
+                        item(key = "albums_shimmer_$shimmerIndex") {
+                            WearsicSearchShimmerRow(modifier = Modifier)
+                        }
+                    }
+                } else {
+                    item(key = "albums_refresh_shimmer") {
+                        WearsicCompactShimmer(modifier = Modifier)
+                    }
                 }
             }
 

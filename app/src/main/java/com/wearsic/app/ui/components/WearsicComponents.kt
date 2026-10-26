@@ -61,7 +61,6 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
-import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicSurface
@@ -75,8 +74,6 @@ import com.wearsic.app.ui.theme.WearsicTextWhite60
 import com.wearsic.app.ui.theme.WearsicTextWhite80
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.util.WearsicMotion
-import com.wearsic.app.ui.util.wearsicEntrance
-
 /**
  * High-contrast vibrant primary pill button (e.g. "Downloads")
  * Styled with solid vibrant lavender #D0BCFF, dark icon container, and bold black text.

@@ -13,7 +13,6 @@ import com.wearsic.app.model.Playlist
 import com.wearsic.app.model.TimeoutError
 import com.wearsic.app.model.Track
 import com.wearsic.app.model.displayMessage
-import com.wearsic.app.network.model.ConnectionTestState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -21,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -531,23 +531,56 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         radioJob?.cancel()
         radioJob = viewModelScope.launch {
             _radioState.value = RadioState.Loading
-            val result = musicRepository.getRelated(current.id)
-            result.onSuccess { related ->
-                val existingIds = playbackViewModel.uiState.value.playlist.map { it.id }.toSet()
-                val fresh = related.filter { rel ->
-                    rel.id !in existingIds && rel.durationMs in 1..600_000
+            val repo = musicRepository
+            val existingIds = playbackViewModel.uiState.value.playlist.map { it.id }.toSet()
+            val targetCount = 10
+
+            // Seeds: the current track first, then the two most recent tracks
+            // (different tracks) — a single seed's related set is often thin,
+            // so blending a couple of seeds gives a fuller, more relevant set.
+            val recents = runCatching {
+                recentRepository.recentTracksFlow.first()
+            }.getOrDefault(emptyList())
+            val seeds = buildList {
+                add(current)
+                addAll(recents.filter { it.id != current.id }.take(2))
+            }.distinctBy { it.id }.take(3)
+
+            val gathered = mutableListOf<Track>()
+            for (seed in seeds) {
+                if (gathered.size >= targetCount) break
+                val related = repo.getRelated(seed.id).getOrDefault(emptyList())
+                gathered += related.filter { candidate ->
+                    candidate.id !in existingIds &&
+                        candidate.id !in gathered.map { it.id } &&
+                        (candidate.durationMs == 0L || candidate.durationMs in 30_000..900_000)
                 }
-                if (fresh.isEmpty()) {
-                    _radioState.value = RadioState.Idle
-                    return@launch
-                }
-                playbackViewModel.addToQueue(fresh)
-                _radioState.value = RadioState.Idle
-            }.onFailure { err ->
-                _radioState.value = RadioState.Error(err.displayMessage("Radio unavailable"))
-                delay(2500)
-                _radioState.value = RadioState.Idle
             }
+
+            // Prioritise tracks by the same artist as what is playing — that
+            // is what makes a radio feel coherent instead of scattered.
+            val seedArtist = current.artist.trim().lowercase()
+            val sameArtist = gathered.filter { it.artist.trim().lowercase() == seedArtist }
+            val rest = gathered.filter { it.artist.trim().lowercase() != seedArtist }
+            val fresh = (sameArtist + rest).distinctBy { it.id }.take(targetCount)
+
+            val final = if (fresh.size < 3) {
+                // Fallback: pad from favorites so radio never returns a
+                // nearly-empty set on sparse related data.
+                val favs = _favoritesState.value.tracks.filter { f ->
+                    f.id !in existingIds && f.id !in fresh.map { it.id }
+                }
+                (fresh + favs).take(targetCount)
+            } else {
+                fresh
+            }
+
+            if (final.isEmpty()) {
+                _radioState.value = RadioState.Idle
+                return@launch
+            }
+            playbackViewModel.addToQueue(final)
+            _radioState.value = RadioState.Idle
         }
     }
 }

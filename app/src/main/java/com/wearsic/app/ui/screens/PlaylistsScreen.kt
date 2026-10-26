@@ -46,7 +46,6 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.model.Playlist
 import com.wearsic.app.ui.theme.WearsicGlassBorder
-import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.components.WearsicEmptyState
@@ -57,13 +56,11 @@ import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.wearsicListContentPadding
-import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
-import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistsUiState
 

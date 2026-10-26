@@ -445,19 +445,36 @@ class YoutubeGateway(
         val result = runCatching {
             val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
             extractor.fetchPage()
-            extractor.relatedItems?.items
+            val related = extractor.relatedItems?.items
                 .orEmpty()
                 .filterIsInstance<StreamInfoItem>()
-                .filter { it.duration in 1..(MAX_RELATED_MINUTES * 60) }
+                .filter { it.duration == 0L || it.duration in 30..(MAX_RELATED_MINUTES * 60) }
                 .mapNotNull { it.toTrackDtoOrNull() }
                 .distinctBy { it.videoId }
                 .take(MAX_RESULTS)
+            // Recommendations read better when they stay around the same
+            // artist: surface the artist that appears most in the related
+            // set first, keep the rest after (all in original order).
+            orderByDominantArtist(related)
         }
             .onSuccess { healthMeter?.recordSuccess() }
             .onFailure { healthMeter?.recordFailure("related: ${it.message}") }
             .getOrDefault(emptyList())
         if (result.isNotEmpty()) relatedCache.put(videoId, Timed(result, now + RELATED_TTL_MS))
         result
+    }
+
+    /** Stable reorder: most-common artist first, then the rest as-is. */
+    private fun orderByDominantArtist(tracks: List<TrackDto>): List<TrackDto> {
+        if (tracks.size < 4) return tracks
+        val counts = HashMap<String, Int>()
+        for (t in tracks) {
+            val key = (t.uploader ?: "").trim().lowercase()
+            if (key.isNotEmpty()) counts[key] = (counts[key] ?: 0) + 1
+        }
+        val dominant = counts.maxByOrNull { it.value }?.takeIf { it.value > 1 }?.key ?: return tracks
+        val (first, rest) = tracks.partition { (it.uploader ?: "").trim().lowercase() == dominant }
+        return first + rest
     }
 
     // ---------------- Albums ----------------

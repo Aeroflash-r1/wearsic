@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,13 +55,11 @@ import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
-import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
@@ -106,24 +105,34 @@ fun ArtistsScreen(
                         title = selected!!.name,
                         subtitle = "${selected!!.songs.size} songs"
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    // Circular close button above the track list — a clean,
-                    // properly placed back affordance.
-                    Box(
+                    // Properly placed back pill: full-width, inside the safe
+                    // rounded area (never clipped by the bezel), directly
+                    // under the header.
+                    Row(
                         modifier = Modifier
-                            .size(42.dp)
+                            .fillMaxWidth(0.72f)
+                            .heightIn(min = 40.dp)
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
                             .wearsicClickable { selected = null }
+                            .padding(horizontal = 12.dp)
                             .testTag("artist_clear"),
-                        contentAlignment = Alignment.Center
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
-                            contentDescription = "Back to artists",
+                            contentDescription = null,
                             tint = wearsicSecondaryText(),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "All Artists",
+                            color = WearsicTextPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }

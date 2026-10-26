@@ -97,26 +97,26 @@ fun WearsicTrackActionSheet(
             .clickable(onClick = onDismiss)
             .testTag("track_action_sheet")
     ) {
-        // The sheet is HEIGHT-CAPPED and scrollable: on a 44mm round display
-        // an unbounded menu pushes its last actions below the curved edge
-        // where they can never be tapped. Centering keeps it in the circular
-        // safe area at any font scale. Wider side padding keeps the rounded
-        // card fully inside the round screen so no corner is ever clipped.
+        // The sheet is a compact, fully-rounded pill sized for the round
+        // face: width comes from generous side padding (so it always sits
+        // inside the circular safe area), corners are fully rounded, and the
+        // height is capped with scrolling so no action ever falls off the
+        // curved edge.
         BoxWithConstraints(
             modifier = Modifier
                 .align(Alignment.Center)
-                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = maxHeight * 0.86f)
                 .wearsicEntrance(riseDp = 12f)
-                .clip(RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(32.dp))
                 .background(WearsicSurfaceRaised)
-                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(24.dp))
+                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(32.dp))
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 12.dp)
+                .padding(horizontal = 10.dp, vertical = 12.dp)
                 // Consume taps on the sheet body so they never reach the scrim.
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -131,7 +131,7 @@ fun WearsicTrackActionSheet(
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
             )
             Text(
                 text = track.artist,
@@ -139,11 +139,11 @@ fun WearsicTrackActionSheet(
                 fontSize = 11.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, top = 2.dp, bottom = 8.dp)
+                modifier = Modifier.fillMaxWidth().padding(start = 6.dp, top = 2.dp, bottom = 8.dp)
             )
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.7f)
+                    .fillMaxWidth(0.6f)
                     .height(1.dp)
                     .background(WearsicGlassBorder)
             )
@@ -253,10 +253,10 @@ private fun SheetAction(
             // Comfortable one-finger touch height on the 44mm display; grows
             // with font scale instead of clipping larger text.
             .heightIn(min = WearsicDimens.SheetRowMinHeight)
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(20.dp))
             .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
             .background(WearsicGlassFill)
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(

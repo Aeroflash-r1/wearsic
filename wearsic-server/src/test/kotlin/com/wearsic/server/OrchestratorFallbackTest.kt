@@ -62,6 +62,36 @@ class OrchestratorFallbackTest {
         assertEquals("obscure song", youtube.searchCalls.single())
     }
 
+    @Test
+    fun `zero results everywhere triggers relaxed-query retry`() = runTest {
+        // The metadata source only answers the relaxed variant; the exact
+        // query (with parentheticals) finds nothing. The orchestrator must
+        // retry the stripped query and surface the song.
+        val metadata = object : MetadataSource {
+            val calls = mutableListOf<String>()
+            override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> {
+                calls.add(query)
+                return if (query.equals("weather with you", ignoreCase = true)) listOf(
+                    YtmTrack(videoId = "relaxed1", title = "Weather with You", artist = "Crowded House", durationMs = 200_000L)
+                ) else emptyList()
+            }
+            override fun toTrackDto(track: YtmTrack): TrackDto = TrackDto(
+                videoId = track.videoId,
+                title = track.title ?: "Unknown",
+                uploader = track.artist ?: "Unknown",
+                durationMs = track.durationMs ?: 0L,
+            )
+        }
+        val youtube = FakeYoutubeMetadataClient() // returns nothing
+        val orchestrator = MetadataSearchOrchestrator(metadata, youtube)
+        try {
+            val results = orchestrator.search("Weather with You (Official Video)")
+            assertEquals(1, results.size)
+            assertEquals("relaxed1", results[0].videoId)
+            assertTrue(metadata.calls.any { it.equals("weather with you", ignoreCase = true) }, "relaxed variant must be tried: ${metadata.calls}")
+        } finally { orchestrator.shutdown() }
+    }
+
     /**
      * The real YTMusicService filters unusable entries (null title/artist)
      * BEFORE returning, so partially populated entries never reach the

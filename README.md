@@ -82,7 +82,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 ```json
 {
   "status": "ok",
-  "version": "1.9.28",
+  "version": "1.9.29",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -267,7 +267,7 @@ verified exactly like a stable one.
 To install a specific build without touching the CLI at all:
 
 ```bash
-WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.9.28/wearsic-server-termux-v1.9.28.zip \
+WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.9.29/wearsic-server-termux-v1.9.29.zip \
   wearsic update
 ```
 
@@ -291,7 +291,7 @@ keytool -genkeypair -v -keystore my-upload-key.jks -alias upload \
 Then cut a release:
 
 ```bash
-git tag v1.9.28 && git push origin v1.9.28
+git tag v1.9.29 && git push origin v1.9.29
 ```
 
 ### One-button extractor hotfix (when YouTube breaks)

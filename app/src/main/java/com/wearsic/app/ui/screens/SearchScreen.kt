@@ -77,22 +77,17 @@ import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicSectionTitle
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.wearsicSecondaryText
-import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
-import com.wearsic.app.ui.components.WearsicSongRowPlayButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
-import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
-import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceActive
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.SearchUiState
@@ -313,7 +308,7 @@ fun SearchScreen(
                             text = if (searchState.errorMessage != null) {
                                 "Search failed: ${searchState.errorMessage}"
                             } else {
-                                "No tracks found for \"${searchState.query}\""
+                                "No tracks found for \"${searchState.query}\" — try a shorter or simpler title"
                             },
                             color = if (searchState.errorMessage != null) com.wearsic.app.ui.theme.WearsicError else WearsicTextMuted,
                             fontSize = 11.sp,

@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.graphics.Brush
-import com.wearsic.app.ui.components.WearsicSongRowArtwork
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.wearsicAccentContainer
@@ -30,7 +29,6 @@ import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Favorite
 import com.wearsic.app.ui.theme.WearsicAccentAmber
-import com.wearsic.app.ui.theme.WearsicAccentRose
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -74,11 +72,9 @@ import com.wearsic.app.ui.components.WearsicSettingsActionPill
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
-import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicGlassBorder
-import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark

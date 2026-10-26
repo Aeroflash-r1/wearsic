@@ -40,7 +40,6 @@ import com.wearsic.app.ui.screens.SearchScreen
 import com.wearsic.app.ui.screens.ServerDashboardScreen
 import com.wearsic.app.ui.screens.SettingsScreen
 import com.wearsic.app.ui.screens.VolumeScreen
-import com.wearsic.app.model.ArtistGroup
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.LocalWearsicDynamicAccent
 import com.wearsic.app.ui.theme.WearsicVibrantLavender

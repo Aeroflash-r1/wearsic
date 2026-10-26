@@ -99,29 +99,83 @@ class MetadataSearchOrchestrator(
         // caches the biggest page it has fetched for a query, so paging just
         // grows the cache and slices — offset pages are cheap.
         val take = (offsetClamped + limit).coerceIn(1, MAX_FETCH)
+        // Exact query first; only when it returns ZERO results do we retry
+        // with progressively relaxed variants (parentheticals stripped, "official
+        // video/audio" suffixes removed, last-two-words). This rescues songs
+        // YouTube's exact match misses without changing normal search results.
+        val queries = buildList {
+            add(normalized)
+            addAll(relaxedQueries(normalized))
+        }
         val page = searchFlight.run("$normalized|$take|$offsetClamped") {
-            val tracks = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
-                try {
-                    metadata.searchSongs(normalized, take)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    emptyList()
+            val acc = mutableListOf<TrackDto>()
+            for (q in queries) {
+                if (acc.size >= take) break
+                val window = fetchWindowOnce(q, take)
+                for (t in window) {
+                    if (acc.none { it.videoId == t.videoId }) {
+                        acc.add(t)
+                        if (acc.size >= take) break
+                    }
                 }
-            }?.filter { it.videoId.isNotBlank() }?.distinctBy { it.videoId }?.take(take)
-                ?: emptyList()
-            if (tracks.isNotEmpty()) {
-                prefetch(tracks.take(PREFETCH_COUNT))
-                tracks.map { metadata.toTrackDto(it) }
-            } else {
-                fallbackCount.incrementAndGet()
-                val fallback = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
-                    youtube.search(normalized, take)
-                } ?: emptyList()
-                fallback.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(take)
+                // Exact query produced something: keep semantics identical to a
+                // normal search, never re-rank or dilute with relaxed matches.
+                if (q == normalized && acc.isNotEmpty()) break
             }
+            acc
         }
         return page.drop(offsetClamped).take(limit)
+    }
+
+    /** One query window = metadata source, then the YouTube scrape fallback. */
+    private suspend fun fetchWindowOnce(query: String, take: Int): List<TrackDto> {
+        val tracks = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+            try {
+                metadata.searchSongs(query, take)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }?.filter { it.videoId.isNotBlank() }?.distinctBy { it.videoId }?.take(take)
+            ?: emptyList()
+        if (tracks.isNotEmpty()) {
+            prefetch(tracks.take(PREFETCH_COUNT))
+            return tracks.map { metadata.toTrackDto(it) }
+        }
+        fallbackCount.incrementAndGet()
+        val fallback = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+            youtube.search(query, take)
+        } ?: emptyList()
+        return fallback.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(take)
+    }
+
+    /**
+     * Progressive relaxations of a query, used only when the exact query finds
+     * nothing: strip parentheticals, strip "official video/audio/lyrics"
+     * suffixes, then try the last two words and drop a leading article.
+     */
+    private fun relaxedQueries(query: String): List<String> {
+        val out = mutableListOf<String>()
+        val noParen = query
+            .replace(Regex("\\([^)]*\\)|\\[[^]]*\\]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (noParen != query && noParen.isNotEmpty()) out += noParen
+        val noSuffix = noParen
+            .replace(Regex("(?i)\\b(official\\s*)?(video|audio|lyrics?|music\\s*video)\\b\\s*$"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (noSuffix.isNotEmpty() && noSuffix != noParen) out += noSuffix
+        val words = noSuffix.split(" ")
+        if (words.size > 2) {
+            out += words.takeLast(2).joinToString(" ")
+            val noLead = words
+                .filterIndexed { i, w -> !(i == 0 && w.lowercase() in setOf("the", "a", "an")) }
+                .joinToString(" ")
+            if (noLead != noSuffix && noLead.isNotEmpty()) out += noLead
+        }
+        return out.distinct().take(3)
     }
 
     /**

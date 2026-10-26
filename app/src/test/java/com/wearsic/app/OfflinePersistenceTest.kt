@@ -5,7 +5,6 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.wearsic.app.data.WearsicDownloadRepository
 import com.wearsic.app.data.WearsicRecentRepository
-import com.wearsic.app.data.db.RecentTrackDao
 import com.wearsic.app.data.db.WearsicDatabase
 import com.wearsic.app.media.download.WearsicDownloadManager
 import com.wearsic.app.model.Track

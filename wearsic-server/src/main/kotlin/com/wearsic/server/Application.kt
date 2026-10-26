@@ -644,11 +644,11 @@ fun Application.module(
 
             get("/search") {
                 val q = call.request.queryParameters["q"].orEmpty()
-                // "Show more" paging: first page 10, each later page fetches
+                // "Show more" paging: first page 15, each later page fetches
                 // the next window via offset. Clamped server-side — a huge
                 // limit would serialize dozens of slow metadata fetches
                 // behind one request.
-                val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 25) ?: 10
+                val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 25) ?: 15
                 val offset = call.request.queryParameters["offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
                 val tracks = searchOrchestrator.search(q, limit, offset)
                 // Rapid-retap insurance: a user who taps result 1 then

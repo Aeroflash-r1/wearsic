@@ -67,6 +67,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val dynamicColorEnabled: StateFlow<Boolean> = preferencesRepository.dynamicColorFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
+    /** User-picked app accent (ARGB) or null for the default lavender. */
+    val userAccent: StateFlow<Int?> = preferencesRepository.userAccentFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     /** Rotating album-art disc on the player (motion is opt-out). */
     val rotatingArtworkEnabled: StateFlow<Boolean> = preferencesRepository.rotatingArtworkFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
@@ -156,6 +160,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setDynamicColorEnabled(enabled: Boolean) {
         viewModelScope.launch {
             preferencesRepository.setDynamicColorEnabled(enabled)
+        }
+    }
+
+    fun setUserAccentColor(argb: Int?) {
+        viewModelScope.launch {
+            preferencesRepository.setUserAccentColor(argb)
         }
     }
 

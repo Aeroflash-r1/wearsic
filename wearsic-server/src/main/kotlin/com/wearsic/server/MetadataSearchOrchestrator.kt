@@ -65,6 +65,12 @@ class MetadataSearchOrchestrator(
          * as failures (and are never cached).
          */
         private const val SEARCH_TIMEOUT_MS = 30_000L
+
+        /**
+         * Deepest a single search request may fetch. Paging slices this
+         * window (e.g. page 1 = rows 0..9, page 2 = 10..19, …).
+         */
+        private const val MAX_FETCH = 50
     }
 
     /** Read-only view over persisted legacy surrogate matches (SQLite). */
@@ -84,12 +90,16 @@ class MetadataSearchOrchestrator(
     val youtubeFallbackCount: Int get() = fallbackCount.get()
     private val searchFlight = SingleFlight<String, List<TrackDto>>()
 
-    suspend fun search(query: String, limit: Int = 10): List<TrackDto> {
+    suspend fun search(query: String, limit: Int = 10, offset: Int = 0): List<TrackDto> {
         val normalized = query.trim().replace(Regex("\\s+"), " ")
         if (normalized.length < 2) return emptyList()
         require(normalized.length <= 200) { "Search query is too long" }
-        val take = limit.coerceIn(1, 25)
-        return searchFlight.run("$normalized|$take") {
+        val offsetClamped = offset.coerceAtLeast(0)
+        // Fetch enough rows to cover the requested window. The YTM source
+        // caches the biggest page it has fetched for a query, so paging just
+        // grows the cache and slices — offset pages are cheap.
+        val take = (offsetClamped + limit).coerceIn(1, MAX_FETCH)
+        val page = searchFlight.run("$normalized|$take|$offsetClamped") {
             val tracks = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
                 try {
                     metadata.searchSongs(normalized, take)
@@ -111,6 +121,7 @@ class MetadataSearchOrchestrator(
                 fallback.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(take)
             }
         }
+        return page.drop(offsetClamped).take(limit)
     }
 
     /**

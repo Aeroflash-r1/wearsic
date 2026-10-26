@@ -47,6 +47,8 @@ class WearsicPreferencesRepository(private val context: Context) {
          * back to the fixed lavender whenever there is no artwork.
          */
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color_enabled")
+        /** User-picked app accent (ARGB int), from the Settings catalog or saved from artwork. */
+        val KEY_USER_ACCENT_ARGB = intPreferencesKey("user_accent_argb")
         /**
          * Whether live search suggestions (as you type) are fetched and shown.
          * Adds a small network call per keystroke; off by default is NOT the
@@ -175,6 +177,20 @@ class WearsicPreferencesRepository(private val context: Context) {
     suspend fun setDynamicColorEnabled(enabled: Boolean) {
         editPreferences { preferences ->
             preferences[KEY_DYNAMIC_COLOR] = enabled
+        }
+    }
+
+    /** User-chosen app accent, or null for the default lavender. */
+    val userAccentFlow: Flow<Int?> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_USER_ACCENT_ARGB]
+        }
+
+    suspend fun setUserAccentColor(argb: Int?) {
+        editPreferences { preferences ->
+            if (argb == null) preferences.remove(KEY_USER_ACCENT_ARGB)
+            else preferences[KEY_USER_ACCENT_ARGB] = argb
         }
     }
 

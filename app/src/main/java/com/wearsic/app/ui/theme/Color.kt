@@ -98,3 +98,25 @@ val WearsicColorScheme = ColorScheme(
     error = WearsicError,
     onError = WearsicBlack
 )
+
+/**
+ * The app-colour catalog shown in Settings. Each option maps to an accent
+ * colour the whole app adopts (headers, buttons, highlights) when selected.
+ * Kept to pleasant, OLED-friendly shades that read clearly on black.
+ */
+val WearsicAppColorChoices: List<Pair<String, Color>> = listOf(
+    "Lavender" to WearsicVibrantLavender,
+    "Violet" to WearsicViolet,
+    "Sky" to WearsicAccentSky,
+    "Mint" to WearsicAccentMint,
+    "Peach" to WearsicAccentPeach,
+    "Rose" to WearsicAccentRose,
+    "Amber" to WearsicAccentAmber,
+    "Coral" to Color(0xFFFF9E80),
+    "Teal" to Color(0xFF5FD4C8),
+    "Cyan" to Color(0xFF4DD0E1),
+    "Blue" to Color(0xFF82B1FF),
+    "Indigo" to Color(0xFF9FA8DA),
+    "Green" to Color(0xFF8BC98B),
+    "Pink" to Color(0xFFFF8A9B)
+)

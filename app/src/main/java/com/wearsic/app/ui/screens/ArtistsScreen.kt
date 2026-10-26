@@ -104,27 +104,27 @@ fun ArtistsScreen(
                 } else {
                     WearsicScreenHeader(
                         title = selected!!.name,
-                        subtitle = "${selected!!.songs.size} songs • tap Clear to go back"
+                        subtitle = "${selected!!.songs.size} songs"
                     )
-                    // Clear button — exits the artist detail back to the full list
-                    Row(
+                    Spacer(modifier = Modifier.height(6.dp))
+                    // Circular close button above the track list — a clean,
+                    // properly placed back affordance.
+                    Box(
                         modifier = Modifier
+                            .size(42.dp)
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
                             .wearsicClickable { selected = null }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
                             .testTag("artist_clear"),
-                        verticalAlignment = Alignment.CenterVertically
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
-                            contentDescription = "Clear artist",
+                            contentDescription = "Back to artists",
                             tint = wearsicSecondaryText(),
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.size(6.dp))
-                        Text("Clear", color = WearsicTextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     }
                 }
             }

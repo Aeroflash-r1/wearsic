@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -99,22 +100,23 @@ fun WearsicTrackActionSheet(
         // The sheet is HEIGHT-CAPPED and scrollable: on a 44mm round display
         // an unbounded menu pushes its last actions below the curved edge
         // where they can never be tapped. Centering keeps it in the circular
-        // safe area at any font scale.
+        // safe area at any font scale. Wider side padding keeps the rounded
+        // card fully inside the round screen so no corner is ever clipped.
         BoxWithConstraints(
             modifier = Modifier
                 .align(Alignment.Center)
-                .padding(horizontal = 12.dp)
+                .padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = maxHeight * 0.84f)
+                .heightIn(max = maxHeight * 0.86f)
                 .wearsicEntrance(riseDp = 12f)
-                .clip(RoundedCornerShape(WearsicDimens.CardRadius))
+                .clip(RoundedCornerShape(24.dp))
                 .background(WearsicSurfaceRaised)
-                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
+                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(24.dp))
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .padding(horizontal = 12.dp, vertical = 12.dp)
                 // Consume taps on the sheet body so they never reach the scrim.
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -124,15 +126,29 @@ fun WearsicTrackActionSheet(
         ) {
             Text(
                 text = track.title,
-                color = WearsicTextPrimary,
-                fontSize = 11.sp,
+                color = LocalWearsicAccent.current,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+            )
+            Text(
+                text = track.artist,
+                color = wearsicSecondaryText(),
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, top = 2.dp, bottom = 8.dp)
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.7f)
+                    .height(1.dp)
+                    .background(WearsicGlassBorder)
             )
 
-            Spacer(modifier = Modifier.size(8.dp))
+            Spacer(modifier = Modifier.size(6.dp))
 
             when (mode) {
                 "menu" -> {
@@ -149,6 +165,14 @@ fun WearsicTrackActionSheet(
                     if (onRemove != null) {
                         SheetAction(Icons.Rounded.Delete, removeLabel) { onDismiss(); onRemove() }
                     }
+                    Spacer(modifier = Modifier.size(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.7f)
+                            .height(1.dp)
+                            .background(WearsicGlassBorder)
+                    )
+                    Spacer(modifier = Modifier.size(4.dp))
                     SheetAction(Icons.Rounded.Close, "Close") { onDismiss() }
                 }
                 "pick" -> {
@@ -159,6 +183,14 @@ fun WearsicTrackActionSheet(
                         }
                     }
                     SheetAction(Icons.Rounded.Add, "New playlist") { mode = "create" }
+                    Spacer(modifier = Modifier.size(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.7f)
+                            .height(1.dp)
+                            .background(WearsicGlassBorder)
+                    )
+                    Spacer(modifier = Modifier.size(4.dp))
                     SheetAction(Icons.Rounded.Close, "Back") { mode = "menu" }
                 }
                 else -> {
@@ -221,22 +253,32 @@ private fun SheetAction(
             // Comfortable one-finger touch height on the 44mm display; grows
             // with font scale instead of clipping larger text.
             .heightIn(min = WearsicDimens.SheetRowMinHeight)
-            .clip(CircleShape)
+            .clip(RoundedCornerShape(18.dp))
             .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
+            .background(WearsicGlassFill)
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = LocalWearsicAccent.current,
-            modifier = Modifier.size(15.dp)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .background(LocalWearsicAccent.current.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = LocalWearsicAccent.current,
+                modifier = Modifier.size(14.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
         Text(
             text = label,
             color = WearsicTextPrimary,
             fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

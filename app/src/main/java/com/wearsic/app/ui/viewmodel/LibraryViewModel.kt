@@ -474,12 +474,27 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onSearchTextChanged(text: String) {
-        _searchState.update { it.copy(query = text) }
-        suggestionsJob?.cancel()
         if (text.isBlank()) {
-            _searchState.update { it.copy(suggestions = emptyList()) }
+            // Clearing the field (X button or backspace to empty) resets the
+            // whole search surface: no suggestions, no results, no error.
+            _searchState.update {
+                it.copy(
+                    query = "",
+                    suggestions = emptyList(),
+                    results = emptyList(),
+                    hasSearched = false,
+                    isSearching = false,
+                    isLoadingMore = false,
+                    canLoadMore = false,
+                    errorMessage = null
+                )
+            }
+            suggestionsJob?.cancel()
+            searchJob?.cancel()
             return
         }
+        _searchState.update { it.copy(query = text) }
+        suggestionsJob?.cancel()
         if (!searchSuggestionsEnabled.value) {
             _searchState.update { it.copy(suggestions = emptyList()) }
             return

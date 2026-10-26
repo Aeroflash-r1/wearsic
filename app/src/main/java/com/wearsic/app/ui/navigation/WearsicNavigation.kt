@@ -9,6 +9,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
@@ -83,19 +85,23 @@ fun WearsicApp(
     val autoCacheEnabled by settingsVM.autoCacheEnabled.collectAsStateWithLifecycle()
     val offlineLimit by settingsVM.offlineLimit.collectAsStateWithLifecycle()
     val dynamicColorEnabled by settingsVM.dynamicColorEnabled.collectAsStateWithLifecycle()
+    val userAccent by settingsVM.userAccent.collectAsStateWithLifecycle()
     val rotatingArtworkEnabled by settingsVM.rotatingArtworkEnabled.collectAsStateWithLifecycle()
     val searchSuggestionsEnabled by settingsVM.searchSuggestionsEnabled.collectAsStateWithLifecycle()
     val serverProfiles by settingsVM.serverProfiles.collectAsStateWithLifecycle()
     val serverReachable by libraryVM.serverReachable.collectAsStateWithLifecycle()
     val offlineDownloads by downloadsVM.completedTracks.collectAsStateWithLifecycle()
 
-    // Dynamic accent: the player hoists the artwork palette here; when the
-    // opt-in setting is on and real artwork colours exist, the whole app's
-    // accent follows the album art. Falls back to fixed lavender otherwise.
+    // Accent precedence:
+    //   1. Dynamic (opt-in): artwork accent when real colours exist.
+    //   2. User-picked app colour from Settings (catalog or saved from art).
+    //   3. Default lavender.
     var artworkColors by remember { mutableStateOf(ArtworkColors.Default) }
-    val effectiveAccent =
-        if (dynamicColorEnabled && artworkColors.fromArtwork) artworkColors.accent
-        else WearsicVibrantLavender
+    val effectiveAccent = when {
+        dynamicColorEnabled && artworkColors.fromArtwork -> artworkColors.accent
+        userAccent != null -> Color(userAccent!!)
+        else -> WearsicVibrantLavender
+    }
     val radioState by libraryVM.radioState.collectAsStateWithLifecycle()
     val apiKey by settingsVM.apiKey.collectAsStateWithLifecycle()
     val storageStats by downloadsVM.storageStats.collectAsStateWithLifecycle()
@@ -290,7 +296,10 @@ fun WearsicApp(
                     isDownloading = isCurrentTrackDownloading,
                     downloadProgress = currentTrackDownloadProgress,
                     onArtworkColor = { artworkColors = it },
-                    rotateArtwork = rotatingArtworkEnabled
+                    rotateArtwork = rotatingArtworkEnabled,
+                    onSaveArtworkAccent = { color ->
+                        settingsVM.setUserAccentColor(color.toArgb())
+                    }
                 )
             }
 
@@ -338,6 +347,10 @@ fun WearsicApp(
                     dynamicColorEnabled = dynamicColorEnabled,
                     onDynamicColorToggled = { enabled ->
                         settingsVM.setDynamicColorEnabled(enabled)
+                    },
+                    userAccentArgb = userAccent,
+                    onUserAccentSelected = { argb ->
+                        settingsVM.setUserAccentColor(argb)
                     },
                     rotatingArtworkEnabled = rotatingArtworkEnabled,
                     onRotatingArtworkToggled = { enabled ->

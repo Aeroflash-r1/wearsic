@@ -246,8 +246,11 @@ class WearsicDownloadManager(
             return
         }
         if (activeJobs.size > MAX_CONCURRENT_DOWNLOADS) {
-            // Over the live-job cap: queue instead of dropping. The request
-            // stays pending (with its MANUAL-intent set) until a slot frees.
+            // Over the live-job cap: un-register so the slot stays free for
+            // what is actually running, then queue. The request stays pending
+            // (with its MANUAL-intent set) until a slot frees; draining re-
+            // admits it through the normal path.
+            activeJobs.remove(track.id, holder)
             pendingQueue.add(PendingDownload(track, autoCached))
             return
         }

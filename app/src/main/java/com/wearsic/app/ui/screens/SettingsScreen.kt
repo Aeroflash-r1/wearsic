@@ -50,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -81,6 +82,7 @@ import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.LocalWearsicAccent
+import com.wearsic.app.ui.theme.WearsicAppColorChoices
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
@@ -114,6 +116,8 @@ fun SettingsScreen(
     onOpenServerDashboard: () -> Unit = {},
     dynamicColorEnabled: Boolean = false,
     onDynamicColorToggled: (Boolean) -> Unit = {},
+    userAccentArgb: Int? = null,
+    onUserAccentSelected: (Int) -> Unit = {},
     rotatingArtworkEnabled: Boolean = true,
     onRotatingArtworkToggled: (Boolean) -> Unit = {},
     searchSuggestionsEnabled: Boolean = true,
@@ -693,6 +697,51 @@ fun SettingsScreen(
                     onClick = { onDynamicColorToggled(!dynamicColorEnabled) },
                     testTag = "settings_dynamic_color"
                 )
+            }
+
+            // App colour catalog — pick the accent the whole app uses. The
+            // dynamic accent (when on) overrides this while playing; the
+            // player also offers "Save song colour" to catch the artwork
+            // accent into this same slot.
+            item {
+                Text(
+                    text = "App Colour",
+                    color = LocalWearsicAccent.current,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            item {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    WearsicAppColorChoices.chunked(4).forEach { rowColors ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            rowColors.forEach { (name, color) ->
+                                AppColorSwatch(
+                                    name = name,
+                                    color = color,
+                                    selected = color.toArgb() == userAccentArgb,
+                                    onClick = { onUserAccentSelected(color.toArgb()) },
+                                    testTag = "settings_color_${name.lowercase()}"
+                                )
+                            }
+                        }
+                    }
+                    if (dynamicColorEnabled) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Dynamic accent overrides this while a song with artwork plays.",
+                            color = WearsicTextMuted,
+                            fontSize = 10.sp,
+                            lineHeight = 13.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 12.dp)
+                        )
+                    }
+                }
             }
 
             // Rotating artwork toggle (player disc motion)
@@ -1360,6 +1409,56 @@ private fun rememberGuardedTextFieldState(external: String): GuardedTextFieldSta
     }
 
     return state
+}
+
+/**
+ * A single colour swatch in the App Colour catalog. Selected swatches get a
+ * white ring; the current accent fills the dot.
+ */
+@Composable
+private fun AppColorSwatch(
+    name: String,
+    color: Color,
+    selected: Boolean,
+    onClick: () -> Unit,
+    testTag: String
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .padding(vertical = 4.dp)
+            .testTag(testTag)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(color)
+                .border(
+                    width = if (selected) 2.dp else 1.dp,
+                    color = if (selected) Color.White else WearsicGlassBorder,
+                    shape = CircleShape
+                )
+                .wearsicClickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Rounded.CheckCircle,
+                    contentDescription = null,
+                    tint = Color.Black.copy(alpha = 0.7f),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = name,
+            color = if (selected) LocalWearsicAccent.current else WearsicTextMuted,
+            fontSize = 8.sp,
+            maxLines = 1
+        )
+    }
 }
 
 @Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)

@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.HourglassEmpty
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
@@ -101,6 +102,7 @@ import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -153,6 +155,8 @@ fun PlayerScreen(
     onArtworkColor: ((ArtworkColors) -> Unit)? = null,
     /** Whether the album-art disc rotates slowly with the song (setting). */
     rotateArtwork: Boolean = true,
+    /** Hook to save the current artwork accent as the app colour. */
+    onSaveArtworkAccent: ((Color) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val track = playbackState.currentTrack
@@ -233,7 +237,9 @@ fun PlayerScreen(
                             onDownloadTrack = { onDownloadTrack(track) },
                             onNavigateToQueue = onNavigateToQueue,
                             onNavigateToVolume = onNavigateToVolume,
-                            active = pagerState.currentPage == 1
+                            active = pagerState.currentPage == 1,
+                            artworkAccent = if (artworkColors.fromArtwork) artworkColors.accent else Color.Transparent,
+                            onSaveAccent = onSaveArtworkAccent
                         )
                     }
                 }
@@ -551,9 +557,13 @@ private fun ActionsPage(
     onDownloadTrack: () -> Unit,
     onNavigateToQueue: () -> Unit,
     onNavigateToVolume: () -> Unit,
-    active: Boolean
+    active: Boolean,
+    artworkAccent: Color = Color.Transparent,
+    onSaveAccent: ((Color) -> Unit)? = null
 ) {
     val listState = rememberScalingLazyListState()
+    var savedFlash by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     ScalingLazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize().wearsicRotaryScroll(listState, enabled = active),
@@ -603,6 +613,26 @@ private fun ActionsPage(
                 enabled = true,
                 onClick = onNavigateToVolume,
                 testTag = "player_output_button"
+            )
+        }
+        item {
+            ActionRow(
+                icon = Icons.Rounded.Palette,
+                label = when {
+                    savedFlash -> "Colour saved ✓"
+                    else -> "Set app colour"
+                },
+                enabled = hasTrack && onSaveAccent != null &&
+                    artworkAccent != Color.Transparent,
+                onClick = {
+                    onSaveAccent?.invoke(artworkAccent)
+                    savedFlash = true
+                    scope.launch {
+                        delay(1600)
+                        savedFlash = false
+                    }
+                },
+                testTag = "player_save_accent_button"
             )
         }
     }

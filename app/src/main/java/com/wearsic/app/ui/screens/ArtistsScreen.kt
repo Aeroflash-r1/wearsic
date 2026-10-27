@@ -20,11 +20,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.wearsicSecondaryText
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicAccentPeach
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -105,34 +106,25 @@ fun ArtistsScreen(
                         title = selected!!.name,
                         subtitle = "${selected!!.songs.size} songs"
                     )
-                    // Properly placed back pill: full-width, inside the safe
-                    // rounded area (never clipped by the bezel), directly
-                    // under the header.
-                    Row(
+                    Spacer(modifier = Modifier.height(10.dp))
+                    // Back control: a clean, centred circular chip with a
+                    // clear gap below the headline — never touching it, and
+                    // comfortably inside the round safe area.
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth(0.72f)
-                            .heightIn(min = 40.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
                             .wearsicClickable { selected = null }
-                            .padding(horizontal = 12.dp)
                             .testTag("artist_clear"),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = null,
-                            tint = wearsicSecondaryText(),
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "All Artists",
-                            color = WearsicTextPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "Back to artists",
+                            tint = LocalWearsicAccent.current,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }

@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -118,6 +119,12 @@ fun SearchScreen(
     // back through onSearchTextChanged, so no local remember-mirror is needed.
     val typedQuery = searchState.query
     var actionTrack by remember { mutableStateOf<Track?>(null) }
+
+    // Dedupe once per results change instead of on every recomposition
+    // (scroll frames, press states), so list building stays cheap.
+    val distinctResults by remember(searchState.results) {
+        derivedStateOf { searchState.results.distinctBy { it.id } }
+    }
 
     // Wear keyboards are inconsistent: the enter key may fire onSearch, onDone
     // or onGo depending on the active IME. Handle all of them and dismiss the
@@ -364,7 +371,7 @@ fun SearchScreen(
                 }) }
             }
             // Defend against duplicate IDs returned by older servers.
-            items(searchState.results.distinctBy { it.id }, key = { it.id }) { track ->
+            items(distinctResults, key = { it.id }) { track ->
                 // Smooth reveal: each result fades in over the shimmer
                 // placeholders once the search completes.
                 var revealed by remember { mutableStateOf(false) }

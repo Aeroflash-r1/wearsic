@@ -695,14 +695,85 @@ fun WearsicSearchShimmerRow(
 }
 
 /**
+ * Album-shaped shimmer card — matches the AlbumCard layout (large centred
+ * artwork, name line, uploader line) so album loading previews look like
+ * albums, not song rows. Same sweep + pulse animation language as search.
+ */
+@Composable
+fun WearsicAlbumShimmerCard(
+    modifier: Modifier = Modifier
+) {
+    val transition = rememberInfiniteTransition(label = "albumShimmer")
+    val sweep by transition.animateFloat(
+        initialValue = -1f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1150, easing = LinearEasing), RepeatMode.Restart),
+        label = "albumShimmerSweep"
+    )
+    val pulse by transition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 0.75f,
+        animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
+        label = "albumShimmerPulse"
+    )
+    val base = wearsicAccentContainer()
+    val density = LocalDensity.current
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
+            .background(base.copy(alpha = pulse)),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.fillMaxWidth().height(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(140.dp)
+                    .offset { IntOffset(x = (sweep * 800f * density.density).toInt(), y = 0) }
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color.Transparent, Color.White.copy(alpha = 0.08f), Color.Transparent)
+                        )
+                    )
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(88.dp)
+                .clip(RoundedCornerShape(WearsicDimens.ArtRadius))
+                .background(base)
+        )
+        Spacer(Modifier.height(10.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.6f)
+                .height(13.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(base)
+        )
+        Spacer(Modifier.height(7.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.4f)
+                .height(10.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(base)
+        )
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+/**
  * Compact shimmer bar — the pagination ("load more") state, matching the
  * search shimmer language instead of the old mini spinner.
  */
 @Composable
 fun WearsicCompactShimmer(
     modifier: Modifier = Modifier
-) {
-    val transition = rememberInfiniteTransition(label = "compactShimmer")
+) {    val transition = rememberInfiniteTransition(label = "compactShimmer")
     val sweep by transition.animateFloat(
         initialValue = -1f,
         targetValue = 1f,

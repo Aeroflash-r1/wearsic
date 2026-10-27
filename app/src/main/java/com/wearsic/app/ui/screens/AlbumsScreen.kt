@@ -39,7 +39,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicSongRowArtwork
-import com.wearsic.app.ui.components.WearsicSearchShimmerRow
+import com.wearsic.app.ui.components.WearsicAlbumShimmerCard
 import com.wearsic.app.ui.components.WearsicCompactShimmer
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
@@ -227,7 +227,7 @@ fun AlbumsScreen(
                 if (albumsState.albums.isEmpty()) {
                     repeat(3) { shimmerIndex ->
                         item(key = "albums_shimmer_$shimmerIndex") {
-                            WearsicSearchShimmerRow(modifier = Modifier)
+                            WearsicAlbumShimmerCard(modifier = Modifier)
                         }
                     }
                 } else {

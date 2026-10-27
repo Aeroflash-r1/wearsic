@@ -134,6 +134,29 @@ class OrchestratorFallbackTest {
     }
 
     @Test
+    fun `pagination is stable and non-repeating`() = runTest {
+        val metadata = object : MetadataSource {
+            override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> =
+                (1..limit).map { YtmTrack(videoId = "vid$it", title = "Song $it", artist = "Artist", durationMs = 200_000L) }
+            override fun toTrackDto(track: YtmTrack): TrackDto = TrackDto(
+                videoId = track.videoId,
+                title = track.title ?: "Unknown",
+                uploader = track.artist ?: "Unknown",
+                durationMs = track.durationMs ?: 0L,
+            )
+        }
+        val orchestrator = MetadataSearchOrchestrator(metadata, FakeYoutubeMetadataClient())
+        try {
+            val first = orchestrator.search("song", limit = 10, offset = 0)
+            val second = orchestrator.search("song", limit = 10, offset = 10)
+            assertEquals(10, first.size)
+            assertEquals(10, second.size)
+            assertTrue(second.none { it.videoId in first.map { p -> p.videoId } },
+                "page 2 must not repeat page 1: $first vs $second")
+        } finally { orchestrator.shutdown() }
+    }
+
+    @Test
     fun `zero results everywhere triggers relaxed-query retry`() = runTest {
         // The metadata source only answers the relaxed variant; the exact
         // query (with parentheticals) finds nothing. The orchestrator must

@@ -89,6 +89,12 @@ class MetadataSearchOrchestrator(
         private const val SEARCH_FIRST_PAGE_BUDGET_MS = 7_000L
 
         /**
+         * How long a built search pool is reused before re-fetching. Paging
+         * slides within it; Show more extends it only when needed.
+         */
+        private const val SEARCH_POOL_TTL_MS = 5 * 60 * 1000L
+
+        /**
          * Deepest a single search request may fetch. Paging slices this
          * window (e.g. page 1 = rows 0..9, page 2 = 10..19, …).
          */
@@ -110,77 +116,120 @@ class MetadataSearchOrchestrator(
      */
     private val fallbackCount = AtomicInteger()
     val youtubeFallbackCount: Int get() = fallbackCount.get()
-    private val searchFlight = SingleFlight<String, List<TrackDto>>()
+
+    /**
+     * Merged, ranked pool per normalized query, so pagination is stable and
+     * non-repeating: every offset slices the same underlying ordered pool,
+     * and "Show more" only extends it when a deeper window is requested.
+     */
+    private class SearchPool(val tracks: List<TrackDto>, val expiresAt: Long)
+
+    private val searchPoolCache = BoundedCache<String, SearchPool>(64)
 
     suspend fun search(query: String, limit: Int = 10, offset: Int = 0): List<TrackDto> {
         val normalized = query.trim().replace(Regex("\\s+"), " ")
         if (normalized.length < 2) return emptyList()
         require(normalized.length <= 200) { "Search query is too long" }
         val offsetClamped = offset.coerceAtLeast(0)
-        // Fetch enough rows to cover the requested window. The YTM source
-        // caches the biggest page it has fetched for a query, so paging just
-        // grows the cache and slices — offset pages are cheap.
-        val take = (offsetClamped + limit).coerceIn(1, MAX_FETCH)
-        val page = searchFlight.run("$normalized|$take|$offsetClamped") {
-            val collectLimit = (take * 2).coerceAtMost(MAX_FETCH)
-            val startedAt = System.currentTimeMillis()
-            val byId = LinkedHashMap<String, TrackDto>()
+        val requiredEnd = (offsetClamped + limit).coerceIn(1, MAX_FETCH)
+        val now = System.currentTimeMillis()
 
-            fun addAll(tracks: List<TrackDto>) {
-                for (t in tracks) {
-                    if (!byId.containsKey(t.videoId)) byId[t.videoId] = t
-                    if (byId.size >= collectLimit) break
-                }
+        val entry = searchPoolCache.get(normalized)
+        if (entry == null || now > entry.expiresAt) {
+            // First build: keep it fast — only enough rows for the requested
+            // window (no speculative 2x fetches on the first page).
+            val budget = if (offsetClamped == 0) SEARCH_FIRST_PAGE_BUDGET_MS else SEARCH_TOTAL_BUDGET_MS
+            val built = buildPool(normalized, requiredEnd, budget, emptyList())
+            searchPoolCache.put(normalized, SearchPool(built, now + SEARCH_POOL_TTL_MS))
+            return built.drop(offsetClamped).take(limit)
+        }
+
+        var pool = entry.tracks
+        if (pool.size < requiredEnd) {
+            // "Show more": extend the pool to cover the deeper window.
+            val extended = buildPool(normalized, requiredEnd, SEARCH_TOTAL_BUDGET_MS, pool)
+            searchPoolCache.put(normalized, SearchPool(extended, now + SEARCH_POOL_TTL_MS))
+            pool = extended
+        }
+        return pool.drop(offsetClamped).take(limit)
+    }
+
+    /**
+     * Builds (or extends from [seed]) the merged+ranked pool for a query up
+     * to [maxTake] rows. YTM exact → strong fast path → general YouTube
+     * consult → relaxed variants, all under [budgetMs].
+     */
+    private suspend fun buildPool(
+        normalized: String,
+        maxTake: Int,
+        budgetMs: Long,
+        seed: List<TrackDto>
+    ): List<TrackDto> {
+        val collectLimit = maxTake.coerceAtMost(MAX_FETCH)
+        val startedAt = System.currentTimeMillis()
+        val byId = LinkedHashMap<String, TrackDto>()
+        if (seed.isNotEmpty()) {
+            for (t in seed) {
+                if (!byId.containsKey(t.videoId)) byId[t.videoId] = t
             }
+        }
+        // A hard cap for temporary collection: weak sources may fill the
+        // window, so rescue sources need room; the final slice trims back to
+        // exactly `maxTake` after ranking.
+        val safetyCap = (maxTake * 3).coerceAtMost(MAX_FETCH)
 
-            // 1. EXACT query on YouTube Music first.
+        fun addAll(tracks: List<TrackDto>) {
+            for (t in tracks) {
+                if (!byId.containsKey(t.videoId)) byId[t.videoId] = t
+                if (byId.size >= safetyCap) break
+            }
+        }
+
+        // 1. EXACT query on YouTube Music first.
+        if (byId.size < safetyCap) {
             val ytmExact = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
                 try {
-                    metadata.searchSongs(normalized, take)
+                    metadata.searchSongs(normalized, collectLimit)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
                     emptyList()
                 }
-            }?.filter { it.videoId.isNotBlank() }?.distinctBy { it.videoId }?.take(take)
+            }?.filter { it.videoId.isNotBlank() }?.distinctBy { it.videoId }?.take(collectLimit)
                 ?: emptyList()
             if (ytmExact.isNotEmpty()) {
                 prefetch(ytmExact.take(PREFETCH_COUNT))
                 addAll(ytmExact.map { metadata.toTrackDto(it) })
             }
+        }
 
-            // 2. Fast path: the exact query alone produced a full page of
-            //    strong token matches — nothing else needed.
-            if (byId.size >= take && strongMatchCount(byId.values, normalized) >= take) {
-                return@run rankByQueryOverlap(byId.values.toList(), normalized)
-            }
+        // 2. Fast path: the exact query alone produced enough strong matches.
+        if (byId.size >= maxTake && strongMatchCount(byId.values, normalized) >= maxTake) {
+            return rankByQueryOverlap(byId.values.toList(), normalized)
+        }
 
-            // 3. Exact page missing or weak: ask GENERAL YouTube — its index
-            //    has uploads (unreleased, ripped audio) that the music
-            //    catalog never returns. At most one consult per search,
-            //    tightly bounded so a weak first page still answers fast.
+        // 3. Weak/missing exact page: ask GENERAL YouTube (bounded), even if
+        //    the window is already full of weak rows — rank decides what the
+        //    final slice keeps.
+        if (byId.size < safetyCap) {
             val ytExact = withTimeoutOrNull(SEARCH_GENERAL_TIMEOUT_MS) {
-                youtube.searchGeneral(normalized, take)
+                youtube.searchGeneral(normalized, collectLimit)
             } ?: emptyList()
             val beforeYouTube = byId.size
             addAll(ytExact)
             if (byId.size > beforeYouTube) fallbackCount.incrementAndGet()
-
-            // 4. Relaxed variants top up remaining slots (parentheticals
-            //    stripped, artist separator dropped, last-two-words, …),
-            //    only while the budget allows.
-            val budget = if (offsetClamped == 0) SEARCH_FIRST_PAGE_BUDGET_MS else SEARCH_TOTAL_BUDGET_MS
-            for (q in relaxedQueries(normalized)) {
-                if (byId.size >= collectLimit) break
-                val elapsed = System.currentTimeMillis() - startedAt
-                if (elapsed > budget) break
-                val remaining = budget - elapsed
-                addAll(fetchWindowOnce(q, take, remaining.coerceAtLeast(500L)))
-            }
-
-            rankByQueryOverlap(byId.values.toList(), normalized)
         }
-        return page.drop(offsetClamped).take(limit)
+
+        // 4. Relaxed variants top up remaining slots, while budget allows.
+        for (q in relaxedQueries(normalized)) {
+            if (byId.size >= safetyCap) break
+            val elapsed = System.currentTimeMillis() - startedAt
+            if (elapsed > budgetMs) break
+            val remaining = budgetMs - elapsed
+            addAll(fetchWindowOnce(q, collectLimit, remaining.coerceAtLeast(500L)))
+        }
+
+        return rankByQueryOverlap(byId.values.toList(), normalized)
     }
 
     /** One query window = metadata source, then the YouTube scrape fallback. */

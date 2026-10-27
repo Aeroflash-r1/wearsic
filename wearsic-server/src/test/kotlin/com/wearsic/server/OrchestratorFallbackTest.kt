@@ -1,5 +1,6 @@
 package com.wearsic.server
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -98,6 +99,37 @@ class OrchestratorFallbackTest {
             assertTrue(results.any { it.videoId == "ytTarget" }, "the exact upload must surface: ${results.map { it.videoId }}")
             assertTrue(orchestrator.youtubeFallbackCount >= 1, "YouTube fallback must have been consulted")
             assertTrue(youtube.searchCalls.any { it.equals("lil tjay x pop smoke - mary jane (unreleased audio)", ignoreCase = true) }, "exact query must be sent to YouTube: ${youtube.searchCalls}")
+        } finally { orchestrator.shutdown() }
+    }
+
+    @Test
+    fun `slow general consult never delays the first page`() = runTest {
+        // Even when the general-YouTube rescue is slow, the first page must
+        // answer within the tight budget — it must not wait out the slow
+        // fetch. The YTM results come back; the slow consult contributes
+        // nothing.
+        val metadata = object : MetadataSource {
+            override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> =
+                (1..limit).map { YtmTrack(videoId = "w$it", title = "Some Other Track $it", artist = "Various Artists", durationMs = 200_000L) }
+            override fun toTrackDto(track: YtmTrack): TrackDto = TrackDto(
+                videoId = track.videoId,
+                title = track.title ?: "Unknown",
+                uploader = track.artist ?: "Unknown",
+                durationMs = track.durationMs ?: 0L,
+            )
+        }
+        val youtube = object : YoutubeMetadataClient by FakeYoutubeMetadataClient() {
+            override suspend fun searchGeneral(query: String, limit: Int): List<TrackDto> {
+                delay(20_000)
+                return listOf(TrackDto(videoId = "slowYt", title = "Slow find", uploader = "u"))
+            }
+        }
+        val orchestrator = MetadataSearchOrchestrator(metadata, youtube)
+        try {
+            val results = orchestrator.search("weak query")
+            assertTrue(results.isNotEmpty(), "first page must still return YTM results")
+            assertTrue(results.none { it.videoId == "slowYt" }, "timed-out general consult must not contribute")
+            assertEquals(0, orchestrator.youtubeFallbackCount)
         } finally { orchestrator.shutdown() }
     }
 

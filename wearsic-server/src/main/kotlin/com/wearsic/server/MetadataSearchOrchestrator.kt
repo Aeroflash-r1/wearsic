@@ -74,6 +74,21 @@ class MetadataSearchOrchestrator(
         private const val SEARCH_TOTAL_BUDGET_MS = 22_000L
 
         /**
+         * General-YouTube consult budget. A weak/missing exact page asks the
+         * unfiltered index for the real upload, but that fetch must never
+         * make a first search hang: 5s is plenty to either find it or move
+         * on.
+         */
+        private const val SEARCH_GENERAL_TIMEOUT_MS = 5_000L
+
+        /**
+         * First-page budget (offset 0) is much tighter than the deep-paging
+         * budget: users should see results fast. Relaxed variants only run
+         * while this remains.
+         */
+        private const val SEARCH_FIRST_PAGE_BUDGET_MS = 7_000L
+
+        /**
          * Deepest a single search request may fetch. Paging slices this
          * window (e.g. page 1 = rows 0..9, page 2 = 10..19, …).
          */
@@ -142,8 +157,9 @@ class MetadataSearchOrchestrator(
 
             // 3. Exact page missing or weak: ask GENERAL YouTube — its index
             //    has uploads (unreleased, ripped audio) that the music
-            //    catalog never returns. At most one consult per search.
-            val ytExact = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+            //    catalog never returns. At most one consult per search,
+            //    tightly bounded so a weak first page still answers fast.
+            val ytExact = withTimeoutOrNull(SEARCH_GENERAL_TIMEOUT_MS) {
                 youtube.searchGeneral(normalized, take)
             } ?: emptyList()
             val beforeYouTube = byId.size
@@ -151,11 +167,15 @@ class MetadataSearchOrchestrator(
             if (byId.size > beforeYouTube) fallbackCount.incrementAndGet()
 
             // 4. Relaxed variants top up remaining slots (parentheticals
-            //    stripped, artist separator dropped, last-two-words, …).
+            //    stripped, artist separator dropped, last-two-words, …),
+            //    only while the budget allows.
+            val budget = if (offsetClamped == 0) SEARCH_FIRST_PAGE_BUDGET_MS else SEARCH_TOTAL_BUDGET_MS
             for (q in relaxedQueries(normalized)) {
                 if (byId.size >= collectLimit) break
-                if (System.currentTimeMillis() - startedAt > SEARCH_TOTAL_BUDGET_MS) break
-                addAll(fetchWindowOnce(q, take))
+                val elapsed = System.currentTimeMillis() - startedAt
+                if (elapsed > budget) break
+                val remaining = budget - elapsed
+                addAll(fetchWindowOnce(q, take, remaining.coerceAtLeast(500L)))
             }
 
             rankByQueryOverlap(byId.values.toList(), normalized)
@@ -164,8 +184,12 @@ class MetadataSearchOrchestrator(
     }
 
     /** One query window = metadata source, then the YouTube scrape fallback. */
-    private suspend fun fetchWindowOnce(query: String, take: Int): List<TrackDto> {
-        val tracks = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+    private suspend fun fetchWindowOnce(
+        query: String,
+        take: Int,
+        timeoutMs: Long = SEARCH_TIMEOUT_MS
+    ): List<TrackDto> {
+        val tracks = withTimeoutOrNull(timeoutMs) {
             try {
                 metadata.searchSongs(query, take)
             } catch (cancelled: CancellationException) {
@@ -180,7 +204,7 @@ class MetadataSearchOrchestrator(
             return tracks.map { metadata.toTrackDto(it) }
         }
         fallbackCount.incrementAndGet()
-        val fallback = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+        val fallback = withTimeoutOrNull(timeoutMs) {
             youtube.search(query, take)
         } ?: emptyList()
         return fallback.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(take)

@@ -738,7 +738,7 @@ class WearsicHttpApiClient(
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
         /** First search page: fast, enough to choose from. */
-        const val SEARCH_PAGE_SIZE = 15
+        const val SEARCH_PAGE_SIZE = 10
 
         /** Expanded page ("Show more"): server clamps to the same ceiling. */
         const val SEARCH_MAX_LIMIT = 25

@@ -67,6 +67,13 @@ class MetadataSearchOrchestrator(
         private const val SEARCH_TIMEOUT_MS = 30_000L
 
         /**
+         * Total budget for one search across the exact query + relaxed
+         * variants: enough to rescue a missed song without letting deep
+         * multi-query searches turn a normal tap slow.
+         */
+        private const val SEARCH_TOTAL_BUDGET_MS = 22_000L
+
+        /**
          * Deepest a single search request may fetch. Paging slices this
          * window (e.g. page 1 = rows 0..9, page 2 = 10..19, …).
          */
@@ -94,35 +101,50 @@ class MetadataSearchOrchestrator(
         val normalized = query.trim().replace(Regex("\\s+"), " ")
         if (normalized.length < 2) return emptyList()
         require(normalized.length <= 200) { "Search query is too long" }
+        // Paste-a-link (or a bare video id): resolve EXACTLY that video so an
+        // upload that name-search will never find (unreleased, ripped audio)
+        // can still be pulled up.
+        val directId = extractVideoIdFromQuery(normalized)
+        if (directId != null) {
+            val direct = youtube.trackByVideoId(directId)
+            if (direct != null) {
+                return if (offset <= 0) listOf(direct) else emptyList()
+            }
+        }
         val offsetClamped = offset.coerceAtLeast(0)
         // Fetch enough rows to cover the requested window. The YTM source
         // caches the biggest page it has fetched for a query, so paging just
         // grows the cache and slices — offset pages are cheap.
         val take = (offsetClamped + limit).coerceIn(1, MAX_FETCH)
-        // Exact query first; only when it returns ZERO results do we retry
-        // with progressively relaxed variants (parentheticals stripped, "official
-        // video/audio" suffixes removed, last-two-words). This rescues songs
-        // YouTube's exact match misses without changing normal search results.
         val queries = buildList {
             add(normalized)
             addAll(relaxedQueries(normalized))
         }
         val page = searchFlight.run("$normalized|$take|$offsetClamped") {
-            val acc = mutableListOf<TrackDto>()
+            // Collect from the exact query AND relaxed variants, deduplicated,
+            // so a song YouTube's exact match misses can still surface even
+            // when the exact query returned a full page of tangentially
+            // related tracks. Collect up to 2x the window so the best `take`
+            // can be chosen across all candidates.
+            val collectLimit = (take * 2).coerceAtMost(MAX_FETCH)
+            val startedAt = System.currentTimeMillis()
+            val byId = LinkedHashMap<String, TrackDto>()
             for (q in queries) {
-                if (acc.size >= take) break
+                if (byId.size >= collectLimit) break
+                if (System.currentTimeMillis() - startedAt > SEARCH_TOTAL_BUDGET_MS) break
                 val window = fetchWindowOnce(q, take)
                 for (t in window) {
-                    if (acc.none { it.videoId == t.videoId }) {
-                        acc.add(t)
-                        if (acc.size >= take) break
-                    }
+                    if (!byId.containsKey(t.videoId)) byId[t.videoId] = t
+                    if (byId.size >= collectLimit) break
                 }
-                // Exact query produced something: keep semantics identical to a
-                // normal search, never re-rank or dilute with relaxed matches.
-                if (q == normalized && acc.isNotEmpty()) break
+                // Fast path: the exact query alone already produced a full
+                // page of strong token matches — no need to mix in relaxed
+                // variants for an ordinary, well-formed query.
+                if (q == normalized && byId.size >= take &&
+                    strongMatchCount(byId.values, normalized) >= take
+                ) break
             }
-            acc
+            rankByQueryOverlap(byId.values.toList(), normalized)
         }
         return page.drop(offsetClamped).take(limit)
     }
@@ -151,9 +173,11 @@ class MetadataSearchOrchestrator(
     }
 
     /**
-     * Progressive relaxations of a query, used only when the exact query finds
-     * nothing: strip parentheticals, strip "official video/audio/lyrics"
-     * suffixes, then try the last two words and drop a leading article.
+     * Progressive relaxations of a query. Used both when the exact query
+     * finds nothing and to top up a short/weak result page: strip
+     * parentheticals, strip "official video/audio/lyrics" suffixes, drop a
+     * leading article, keep only the part after an artist separator
+     * ("X - Song"), and try the last two words.
      */
     private fun relaxedQueries(query: String): List<String> {
         val out = mutableListOf<String>()
@@ -167,6 +191,14 @@ class MetadataSearchOrchestrator(
             .replace(Regex("\\s+"), " ")
             .trim()
         if (noSuffix.isNotEmpty() && noSuffix != noParen) out += noSuffix
+        // "Lil Tjay x Pop Smoke - Mary Jane (Unreleased Audio)" -> try the
+        // part after the last separator: "Mary Jane (Unreleased Audio)".
+        val separator = Regex("\\s+[-–—]\\s+")
+        val parts = noSuffix.split(separator)
+        if (parts.size > 1) {
+            val remainder = parts.last().trim()
+            if (remainder.length >= 4 && remainder != noSuffix) out += remainder
+        }
         val words = noSuffix.split(" ")
         if (words.size > 2) {
             out += words.takeLast(2).joinToString(" ")
@@ -175,8 +207,53 @@ class MetadataSearchOrchestrator(
                 .joinToString(" ")
             if (noLead != noSuffix && noLead.isNotEmpty()) out += noLead
         }
-        return out.distinct().take(3)
+        return out.distinct().take(5)
     }
+
+    /** Lowercased, non-trivial word tokens of a string. */
+    private fun normalizedTokens(s: String): Set<String> =
+        s.lowercase().split(Regex("\\W+")).filter { it.length > 1 }.toSet()
+
+    /**
+     * Pulls a bare YouTube video id out of a pasted URL query:
+     * https://youtu.be/<id>, https://www.youtube.com/watch?v=<id>, or a
+     * bare 11-character id.
+     */
+    private fun extractVideoIdFromQuery(query: String): String? {
+        val bare = Regex("^[A-Za-z0-9_-]{11}$")
+        if (query.matches(bare)) return query
+        val youtuBe = Regex("youtu\\.be/([A-Za-z0-9_-]{11})")
+        youtuBe.find(query)?.let { return it.groupValues[1] }
+        val watch = Regex("[?&]v=([A-Za-z0-9_-]{11})")
+        watch.find(query)?.let { return it.groupValues[1] }
+        val embed = Regex("embed/([A-Za-z0-9_-]{11})")
+        embed.find(query)?.let { return it.groupValues[1] }
+        return null
+    }
+
+    /**
+     * Fraction of query tokens present in the track's title/artist. 1f =
+     * every query word appears; 0f = no overlap.
+     */
+    private fun overlapScore(t: TrackDto, q: String): Float {
+        val qt = normalizedTokens(q)
+        if (qt.isEmpty()) return 0f
+        val ht = normalizedTokens((t.title ?: "") + " " + (t.uploader ?: ""))
+        val hit = ht.count { it in qt }
+        return hit.toFloat() / qt.size
+    }
+
+    private fun strongMatchCount(items: Collection<TrackDto>, q: String): Int =
+        items.count { overlapScore(it, q) >= 0.5f }
+
+    /** Stable relevance sort: best token overlap first, ties keep original order. */
+    private fun rankByQueryOverlap(items: List<TrackDto>, q: String): List<TrackDto> =
+        items.withIndex()
+            .sortedWith(
+                compareByDescending<IndexedValue<TrackDto>> { overlapScore(it.value, q) }
+                    .thenBy { it.index }
+            )
+            .map { it.value }
 
     /**
      * Warms the stream cache for already-known videoIds (album/playlist open,

@@ -92,6 +92,60 @@ class OrchestratorFallbackTest {
         } finally { orchestrator.shutdown() }
     }
 
+    @Test
+    fun `relaxed variant surfaces a missed song even when exact page is full of weak matches`() = runTest {
+        // The real-world miss: searching "Artist x Artist - Song (Unreleased
+        // Audio)" returns a full page of vaguely related tracks, none of them
+        // the actual song. The stripped variant ("Song") holds it. The
+        // orchestrator must merge variants and rank the strong match first.
+        val metadata = object : MetadataSource {
+            val calls = mutableListOf<String>()
+            override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> {
+                calls.add(query)
+                return if (query.equals("mary jane", ignoreCase = true)) {
+                    listOf(YtmTrack(videoId = "target1", title = "Mary Jane", artist = "Lil Tjay", durationMs = 150_000L))
+                } else {
+                    // A full window of tangential tracks (weak token overlap).
+                    (1..limit).map { YtmTrack(videoId = "weak$it", title = "Some Other Track $it", artist = "Various Artists", durationMs = 200_000L) }
+                }
+            }
+            override fun toTrackDto(track: YtmTrack): TrackDto = TrackDto(
+                videoId = track.videoId,
+                title = track.title ?: "Unknown",
+                uploader = track.artist ?: "Unknown",
+                durationMs = track.durationMs ?: 0L,
+            )
+        }
+        val orchestrator = MetadataSearchOrchestrator(metadata, FakeYoutubeMetadataClient())
+        try {
+            val results = orchestrator.search("Lil Tjay x Pop Smoke - Mary Jane (Unreleased Audio)")
+            assertTrue(results.any { it.videoId == "target1" }, "the missed song must surface: ${results.map { it.videoId }}")
+            assertTrue(metadata.calls.any { it.equals("mary jane", ignoreCase = true) }, "stripped artist variant must be tried: ${metadata.calls}")
+        } finally { orchestrator.shutdown() }
+    }
+
+    @Test
+    fun `pasting a YouTube URL resolves that exact video`() = runTest {
+        val metadata = FakeMetadataSource() // search returns nothing
+        val youtube = FakeYoutubeMetadataClient()
+        // trackByVideoId has a default null; override via a wrapper that
+        // delegates everything else to the fake.
+        val resolver = object : YoutubeMetadataClient by youtube {
+            override suspend fun trackByVideoId(videoId: String): TrackDto? =
+                if (videoId == "a1v9-KOobOo") TrackDto(videoId = "a1v9-KOobOo", title = "Mary Jane", uploader = "Lil Tjay")
+                else null
+        }
+        val orchestrator = MetadataSearchOrchestrator(metadata, resolver)
+        try {
+            val fromUrl = orchestrator.search("https://youtu.be/a1v9-KOobOo?si=P442nw2Bj_pCdZNA")
+            assertEquals("a1v9-KOobOo", fromUrl.single().videoId)
+            val fromBare = orchestrator.search("a1v9-KOobOo")
+            assertEquals("a1v9-KOobOo", fromBare.single().videoId)
+            val fromWatch = orchestrator.search("https://www.youtube.com/watch?v=a1v9-KOobOo")
+            assertEquals("a1v9-KOobOo", fromWatch.single().videoId)
+        } finally { orchestrator.shutdown() }
+    }
+
     /**
      * The real YTMusicService filters unusable entries (null title/artist)
      * BEFORE returning, so partially populated entries never reach the

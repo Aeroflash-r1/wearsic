@@ -140,12 +140,11 @@ class MetadataSearchOrchestrator(
                 return@run rankByQueryOverlap(byId.values.toList(), normalized)
             }
 
-            // 3. Exact page missing or weak: ask plain YouTube — its general
-            //    index has uploads (unreleased, ripped audio) that YTM's
-            //    music search never returns. At most one consult for the
-            //    exact query.
+            // 3. Exact page missing or weak: ask GENERAL YouTube — its index
+            //    has uploads (unreleased, ripped audio) that the music
+            //    catalog never returns. At most one consult per search.
             val ytExact = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
-                youtube.search(normalized, take)
+                youtube.searchGeneral(normalized, take)
             } ?: emptyList()
             val beforeYouTube = byId.size
             addAll(ytExact)

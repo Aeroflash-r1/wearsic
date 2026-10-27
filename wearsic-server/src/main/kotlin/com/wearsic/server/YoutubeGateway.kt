@@ -355,6 +355,30 @@ class YoutubeGateway(
         }
     }
 
+    /**
+     * General (unfiltered) YouTube search — the path that finds uploads the
+     * music catalog hides (unreleased audio, rips, mixes). Runs the plain
+     * extractor with no content filters, cached like the rest.
+     */
+    override suspend fun searchGeneral(query: String, limit: Int): List<TrackDto> =
+        withContext(Dispatchers.IO) {
+            val normalized = query.trim()
+            if (normalized.length < 2) return@withContext emptyList()
+            val want = limit.coerceIn(1, 25)
+            val cacheKey = "general-search:$normalized"
+            val now = System.currentTimeMillis()
+            searchCache.get(cacheKey)?.let { if (it.expiresAt > now) return@withContext it.value.take(want) }
+
+            searchSingleFlight.run(cacheKey) {
+                searchCache.get(cacheKey)?.let { if (it.expiresAt > System.currentTimeMillis()) return@run it.value.take(want) }
+                val results = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                    searchPage(normalized, emptyList())
+                } ?: emptyList()
+                if (results.isNotEmpty()) searchCache.put(cacheKey, Timed(results, now + SEARCH_TTL_MS))
+                results.take(want)
+            }
+        }
+
     private fun searchSecondPage(query: String): List<TrackDto> {
         val extractor = ServiceList.YouTube.getSearchExtractor(query, listOf("music_songs"), "")
         return try {

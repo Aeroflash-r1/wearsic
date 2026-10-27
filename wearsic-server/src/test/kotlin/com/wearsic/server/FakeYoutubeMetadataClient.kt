@@ -14,6 +14,12 @@ class FakeYoutubeMetadataClient : YoutubeMetadataClient {
         return results
     }
 
+    override suspend fun searchGeneral(query: String, limit: Int): List<TrackDto> {
+        lastQuery = query
+        searchCalls.add(query)
+        return results.take(limit)
+    }
+
     override suspend fun streamTarget(videoId: String): StreamTarget? {
         streamTargetCalls.add(videoId)
         return streamTargets[videoId]

@@ -40,6 +40,14 @@ interface YoutubeMetadataClient {
     /** Resolve a playable stream target for [videoId] (URL + MIME type). */
     suspend fun streamTarget(videoId: String): StreamTarget?
 
+    /**
+     * GENERAL YouTube search (no music filter). Used to rescue exact-name
+     * misses: uploads like unreleased audio/rips exist in YouTube's general
+     * index but not in the music catalog, so the music-filtered search never
+     * sees them. Default empty = "not supported".
+     */
+    suspend fun searchGeneral(query: String, limit: Int): List<TrackDto> = emptyList()
+
     /** Autocomplete suggestions for a prefix. */
     suspend fun suggestions(prefix: String): List<String>
 

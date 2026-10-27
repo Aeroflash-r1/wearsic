@@ -40,13 +40,6 @@ interface YoutubeMetadataClient {
     /** Resolve a playable stream target for [videoId] (URL + MIME type). */
     suspend fun streamTarget(videoId: String): StreamTarget?
 
-    /**
-     * Resolve full metadata for a known video id — used when the user pastes
-     * a YouTube URL / video id into search. Default null means "not
-     * supported" and callers fall back to normal search.
-     */
-    suspend fun trackByVideoId(videoId: String): TrackDto? = null
-
     /** Autocomplete suggestions for a prefix. */
     suspend fun suggestions(prefix: String): List<String>
 

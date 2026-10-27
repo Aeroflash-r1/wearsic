@@ -34,15 +34,20 @@ class OrchestratorFallbackTest {
 
     @Test
     fun `YTM results are returned directly - YouTube fallback NOT called`() = runTest {
-        val metadata = FakeMetadataSource().apply { tracks = listOf(track("vid1"), track("vid2")) }
+        // A full page of STRONG matches (every query token present) is the
+        // fast path: plain YouTube is never consulted.
+        val metadata = FakeMetadataSource().apply {
+            tracks = (1..20).map { track("vid$it", "Crowded House Song $it") }
+        }
         val youtube = FakeYoutubeMetadataClient()
         val orchestrator = MetadataSearchOrchestrator(metadata, youtube)
 
         val results = orchestrator.search("crowded house")
 
-        assertEquals(2, results.size)
+        assertEquals(10, results.size)
         assertEquals("vid1", results[0].videoId, "results must carry real videoIds")
-        assertEquals(0, orchestrator.youtubeFallbackCount, "usable YTM results must not count as YouTube fallbacks")
+        assertEquals(0, orchestrator.youtubeFallbackCount, "strong YTM results must not trigger the YouTube fallback")
+        assertTrue(youtube.searchCalls.isEmpty())
         assertEquals(listOf("crowded house"), metadata.searchCalls)
     }
 
@@ -60,6 +65,40 @@ class OrchestratorFallbackTest {
         assertEquals("yt1", results[0].videoId)
         assertEquals(1, orchestrator.youtubeFallbackCount)
         assertEquals("obscure song", youtube.searchCalls.single())
+    }
+
+    @Test
+    fun `weak YTM page consults plain YouTube and surfaces the exact upload`() = runTest {
+        // The real-world miss: YTM returns a full page of tangential tracks
+        // (weak token overlap) — e.g. unrelated "Mary Jane" covers — while
+        // the exact upload the user wants exists on plain YouTube. The
+        // orchestrator must consult the YouTube fallback and merge its hit.
+        val metadata = object : MetadataSource {
+            val calls = mutableListOf<String>()
+            override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> {
+                calls.add(query)
+                return (1..limit).map { YtmTrack(videoId = "weak$it", title = "Some Other Track $it", artist = "Various Artists", durationMs = 200_000L) }
+            }
+            override fun toTrackDto(track: YtmTrack): TrackDto = TrackDto(
+                videoId = track.videoId,
+                title = track.title ?: "Unknown",
+                uploader = track.artist ?: "Unknown",
+                durationMs = track.durationMs ?: 0L,
+            )
+        }
+        val youtube = FakeYoutubeMetadataClient().apply {
+            results = listOf(
+                TrackDto(videoId = "ytTarget", title = "Mary Jane", uploader = "Lil Tjay"),
+                TrackDto(videoId = "yt2", title = "Mary Jane 2", uploader = "Pop Smoke"),
+            )
+        }
+        val orchestrator = MetadataSearchOrchestrator(metadata, youtube)
+        try {
+            val results = orchestrator.search("Lil Tjay x Pop Smoke - Mary Jane (Unreleased Audio)")
+            assertTrue(results.any { it.videoId == "ytTarget" }, "the exact upload must surface: ${results.map { it.videoId }}")
+            assertTrue(orchestrator.youtubeFallbackCount >= 1, "YouTube fallback must have been consulted")
+            assertTrue(youtube.searchCalls.any { it.equals("lil tjay x pop smoke - mary jane (unreleased audio)", ignoreCase = true) }, "exact query must be sent to YouTube: ${youtube.searchCalls}")
+        } finally { orchestrator.shutdown() }
     }
 
     @Test
@@ -94,10 +133,9 @@ class OrchestratorFallbackTest {
 
     @Test
     fun `relaxed variant surfaces a missed song even when exact page is full of weak matches`() = runTest {
-        // The real-world miss: searching "Artist x Artist - Song (Unreleased
-        // Audio)" returns a full page of vaguely related tracks, none of them
-        // the actual song. The stripped variant ("Song") holds it. The
-        // orchestrator must merge variants and rank the strong match first.
+        // The metadata source only answers the relaxed variant ("mary jane");
+        // the full exact query (artist separator + parentheticals) finds weak
+        // tracks. The merge must include the strong relaxed hit.
         val metadata = object : MetadataSource {
             val calls = mutableListOf<String>()
             override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> {
@@ -105,7 +143,6 @@ class OrchestratorFallbackTest {
                 return if (query.equals("mary jane", ignoreCase = true)) {
                     listOf(YtmTrack(videoId = "target1", title = "Mary Jane", artist = "Lil Tjay", durationMs = 150_000L))
                 } else {
-                    // A full window of tangential tracks (weak token overlap).
                     (1..limit).map { YtmTrack(videoId = "weak$it", title = "Some Other Track $it", artist = "Various Artists", durationMs = 200_000L) }
                 }
             }
@@ -124,35 +161,16 @@ class OrchestratorFallbackTest {
         } finally { orchestrator.shutdown() }
     }
 
-    @Test
-    fun `pasting a YouTube URL resolves that exact video`() = runTest {
-        val metadata = FakeMetadataSource() // search returns nothing
-        val youtube = FakeYoutubeMetadataClient()
-        // trackByVideoId has a default null; override via a wrapper that
-        // delegates everything else to the fake.
-        val resolver = object : YoutubeMetadataClient by youtube {
-            override suspend fun trackByVideoId(videoId: String): TrackDto? =
-                if (videoId == "a1v9-KOobOo") TrackDto(videoId = "a1v9-KOobOo", title = "Mary Jane", uploader = "Lil Tjay")
-                else null
-        }
-        val orchestrator = MetadataSearchOrchestrator(metadata, resolver)
-        try {
-            val fromUrl = orchestrator.search("https://youtu.be/a1v9-KOobOo?si=P442nw2Bj_pCdZNA")
-            assertEquals("a1v9-KOobOo", fromUrl.single().videoId)
-            val fromBare = orchestrator.search("a1v9-KOobOo")
-            assertEquals("a1v9-KOobOo", fromBare.single().videoId)
-            val fromWatch = orchestrator.search("https://www.youtube.com/watch?v=a1v9-KOobOo")
-            assertEquals("a1v9-KOobOo", fromWatch.single().videoId)
-        } finally { orchestrator.shutdown() }
-    }
-
     /**
      * The real YTMusicService filters unusable entries (null title/artist)
      * BEFORE returning, so partially populated entries never reach the
      * orchestrator. Any non-empty list = usable.
      */
     @Test
-    fun `non-empty YTM response is treated as usable regardless of entry quality`() = runTest {
+    fun `weak-but-present YTM results still consult plain YouTube and merge`() = runTest {
+        // YTM returns two usable entries for this query, but they share no
+        // query tokens (weak page) — the orchestrator still asks plain YouTube
+        // (which has the real upload) and merges without dropping the YTM row.
         val metadata = FakeMetadataSource().apply {
             tracks = listOf(
                 YtmTrack(videoId = "a", title = null, artist = "Artist"),
@@ -166,8 +184,8 @@ class OrchestratorFallbackTest {
 
         val results = orchestrator.search("broken metadata")
 
-        assertEquals(2, results.size, "non-empty YTM list must be returned as-is (no fallback)")
-        assertEquals(0, orchestrator.youtubeFallbackCount)
+        assertEquals(listOf("a", "b", "yt9"), results.map { it.videoId })
+        assertEquals(1, orchestrator.youtubeFallbackCount)
     }
 
     @Test

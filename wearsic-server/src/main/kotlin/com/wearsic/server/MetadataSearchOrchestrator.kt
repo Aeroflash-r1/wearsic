@@ -101,49 +101,64 @@ class MetadataSearchOrchestrator(
         val normalized = query.trim().replace(Regex("\\s+"), " ")
         if (normalized.length < 2) return emptyList()
         require(normalized.length <= 200) { "Search query is too long" }
-        // Paste-a-link (or a bare video id): resolve EXACTLY that video so an
-        // upload that name-search will never find (unreleased, ripped audio)
-        // can still be pulled up.
-        val directId = extractVideoIdFromQuery(normalized)
-        if (directId != null) {
-            val direct = youtube.trackByVideoId(directId)
-            if (direct != null) {
-                return if (offset <= 0) listOf(direct) else emptyList()
-            }
-        }
         val offsetClamped = offset.coerceAtLeast(0)
         // Fetch enough rows to cover the requested window. The YTM source
         // caches the biggest page it has fetched for a query, so paging just
         // grows the cache and slices — offset pages are cheap.
         val take = (offsetClamped + limit).coerceIn(1, MAX_FETCH)
-        val queries = buildList {
-            add(normalized)
-            addAll(relaxedQueries(normalized))
-        }
         val page = searchFlight.run("$normalized|$take|$offsetClamped") {
-            // Collect from the exact query AND relaxed variants, deduplicated,
-            // so a song YouTube's exact match misses can still surface even
-            // when the exact query returned a full page of tangentially
-            // related tracks. Collect up to 2x the window so the best `take`
-            // can be chosen across all candidates.
             val collectLimit = (take * 2).coerceAtMost(MAX_FETCH)
             val startedAt = System.currentTimeMillis()
             val byId = LinkedHashMap<String, TrackDto>()
-            for (q in queries) {
-                if (byId.size >= collectLimit) break
-                if (System.currentTimeMillis() - startedAt > SEARCH_TOTAL_BUDGET_MS) break
-                val window = fetchWindowOnce(q, take)
-                for (t in window) {
+
+            fun addAll(tracks: List<TrackDto>) {
+                for (t in tracks) {
                     if (!byId.containsKey(t.videoId)) byId[t.videoId] = t
                     if (byId.size >= collectLimit) break
                 }
-                // Fast path: the exact query alone already produced a full
-                // page of strong token matches — no need to mix in relaxed
-                // variants for an ordinary, well-formed query.
-                if (q == normalized && byId.size >= take &&
-                    strongMatchCount(byId.values, normalized) >= take
-                ) break
             }
+
+            // 1. EXACT query on YouTube Music first.
+            val ytmExact = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                try {
+                    metadata.searchSongs(normalized, take)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }?.filter { it.videoId.isNotBlank() }?.distinctBy { it.videoId }?.take(take)
+                ?: emptyList()
+            if (ytmExact.isNotEmpty()) {
+                prefetch(ytmExact.take(PREFETCH_COUNT))
+                addAll(ytmExact.map { metadata.toTrackDto(it) })
+            }
+
+            // 2. Fast path: the exact query alone produced a full page of
+            //    strong token matches — nothing else needed.
+            if (byId.size >= take && strongMatchCount(byId.values, normalized) >= take) {
+                return@run rankByQueryOverlap(byId.values.toList(), normalized)
+            }
+
+            // 3. Exact page missing or weak: ask plain YouTube — its general
+            //    index has uploads (unreleased, ripped audio) that YTM's
+            //    music search never returns. At most one consult for the
+            //    exact query.
+            val ytExact = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                youtube.search(normalized, take)
+            } ?: emptyList()
+            val beforeYouTube = byId.size
+            addAll(ytExact)
+            if (byId.size > beforeYouTube) fallbackCount.incrementAndGet()
+
+            // 4. Relaxed variants top up remaining slots (parentheticals
+            //    stripped, artist separator dropped, last-two-words, …).
+            for (q in relaxedQueries(normalized)) {
+                if (byId.size >= collectLimit) break
+                if (System.currentTimeMillis() - startedAt > SEARCH_TOTAL_BUDGET_MS) break
+                addAll(fetchWindowOnce(q, take))
+            }
+
             rankByQueryOverlap(byId.values.toList(), normalized)
         }
         return page.drop(offsetClamped).take(limit)
@@ -213,23 +228,6 @@ class MetadataSearchOrchestrator(
     /** Lowercased, non-trivial word tokens of a string. */
     private fun normalizedTokens(s: String): Set<String> =
         s.lowercase().split(Regex("\\W+")).filter { it.length > 1 }.toSet()
-
-    /**
-     * Pulls a bare YouTube video id out of a pasted URL query:
-     * https://youtu.be/<id>, https://www.youtube.com/watch?v=<id>, or a
-     * bare 11-character id.
-     */
-    private fun extractVideoIdFromQuery(query: String): String? {
-        val bare = Regex("^[A-Za-z0-9_-]{11}$")
-        if (query.matches(bare)) return query
-        val youtuBe = Regex("youtu\\.be/([A-Za-z0-9_-]{11})")
-        youtuBe.find(query)?.let { return it.groupValues[1] }
-        val watch = Regex("[?&]v=([A-Za-z0-9_-]{11})")
-        watch.find(query)?.let { return it.groupValues[1] }
-        val embed = Regex("embed/([A-Za-z0-9_-]{11})")
-        embed.find(query)?.let { return it.groupValues[1] }
-        return null
-    }
 
     /**
      * Fraction of query tokens present in the track's title/artist. 1f =

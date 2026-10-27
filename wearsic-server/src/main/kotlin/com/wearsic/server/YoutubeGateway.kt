@@ -464,25 +464,6 @@ class YoutubeGateway(
         result
     }
 
-    /**
-     * Full metadata for a single known video id (paste-a-link search). Uses
-     * the same extractor path as related/track resolution.
-     */
-    override suspend fun trackByVideoId(videoId: String): TrackDto? = withContext(Dispatchers.IO) {
-        runCatching {
-            val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
-            extractor.fetchPage()
-            val title = extractor.name ?: return@runCatching null
-            TrackDto(
-                videoId = videoId,
-                title = title,
-                uploader = extractor.uploaderName ?: "Unknown",
-                durationMs = extractor.length.coerceAtLeast(0) * 1000,
-                thumbnailUrl = bestThumbnailUrl(extractor.thumbnails),
-            )
-        }.getOrNull()
-    }
-
     /** Stable reorder: most-common artist first, then the rest as-is. */
     private fun orderByDominantArtist(tracks: List<TrackDto>): List<TrackDto> {
         if (tracks.size < 4) return tracks

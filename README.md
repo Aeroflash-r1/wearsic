@@ -4,6 +4,30 @@
 
 ---
 
+## 🚀 Quick start (60 seconds)
+
+**1. Install the server on your phone (Termux):**
+```bash
+curl -fsSL https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-v1.9.33.sh -o wearsic-server.sh
+chmod +x wearsic-server.sh && ./wearsic-server.sh install
+wearsic start
+```
+
+**2. Get the watch values:**
+```bash
+wearsic url        # shows the LAN address + API key
+```
+
+**3. Install the watch app** — download `Wearsic-v1.9.33.apk` from the [latest release](https://github.com/Aeroflash-r1/wearsic/releases/latest) and install it on the watch (via `wearsic sideload` with adb, or the Play-style sideload).
+
+**4. Pair the watch:** open Wearsic on the watch → Settings → enter the URL + key from step 2. All done — search and play.
+
+**Want music anywhere (not just home WiFi)?** run `wearsic cloudflare` once — you get a permanent `https://wearsic.<sub>.workers.dev` URL the watch remembers forever.
+
+> Tip: after `wearsic shortcuts` you can use one-word commands: `ws-start`, `ws-status`, `ws-cf`, …
+
+---
+
 ## 📜 Architectural Overview
 
 Wearsic adopts a clean, modular Model-View-ViewModel (MVVM) architecture with structured data layers and service boundaries:
@@ -35,7 +59,7 @@ Wearsic adopts a clean, modular Model-View-ViewModel (MVVM) architecture with st
 - **Material Design 3 (Vibrant Palette)**: Deep black background (`#000000`), dark charcoal surfaces (`#1C1B1F`), and high-contrast Lavender accents (`#D0BCFF`). All colors/type live as named tokens in `ui/theme/Color.kt` — no scattered hex literals.
 - **Immersive visual hierarchy**: OLED-black canvases, section-colored header markers, rounded album-cover rows, and an artwork-backed Library shortcut. Shared typography, quiet borders, and compact surface-local gradients keep the music—not decoration—in focus.
 - **One motion system** (`ui/util/Motion.kt`): spring press feedback, brief screen/sheet entrances with density-correct translation, and shared click/long-press handling with haptics. Song rows do not replay entrance animations as lazy scrolling recycles them. Player motion is finite by design: a track change plays one short staggered entrance (art scales in, text rises) and the play/pause glyph pops on each state change — nothing animates while the user simply listens.
-- **Wear-native player (screen + sub-screen)**: the album artwork is the full-bleed background under a dark scrim; a 2-page pager holds Now Playing (album-art disc + metadata + transport, always visible — never scrolled to) and an Actions sub-screen (favourite/download/queue/output). The composition is centre-weighted for the round face, because the widest part of a circle is its middle: the art disc owns the centre, metadata sits in the readable mid-band, and the transport hugs the lower third. Progress is a ring drawn around the art, and every size derives from the measured viewport so a control can never leave the visible chord (short viewports automatically use a tighter scale). Controls and ring use colors extracted from decoded artwork off the main thread, with lavender fallback. A tappable 44dp page indicator exposes the scrollable Actions page; rotary focus follows the active page, and transport is disabled when no track is loaded.
+- **Wear-native player (screen + sub-screen)**: the album artwork is the full-bleed background under a dark scrim; a 2-page pager holds Now Playing (album-art disc + metadata + transport, always visible — never scrolled to) and an Actions sub-screen (favourite/download/queue/output). The composition is centre-weighted for the round face, because the widest part of a circle is its middle: the art disc owns the centre, metadata sits in the readable mid-band, and the transport hugs the lower third. Progress is a ring drawn around the art, and every size derives from the measured viewport so a control can never leave the visible chord (short viewports automatically use a tighter scale). Controls and ring use colors extracted from decoded artwork off the main thread, with lavender fallback. A tappable 44dp page indicator exposes the scrollable Actions page. **The rotating bezel / crown slides between the pages** (a firm turn past a threshold switches; small turns are ignored), and dragging around the disc's ring scrubs to any point in the track — both are the primary controls on Samsung Galaxy Watch bezel devices.
 - **Consistent components & states**: screens share canonical empty/loading states (`WearsicEmptyState`, `WearsicLoadingState`), glass pills, headers and song rows, so loading/empty/error moments look identical everywhere.
 - **Settings that cannot eat your keystrokes**: the server URL and API key fields keep their edit local while focused and commit on Done/blur/leaving the screen; an async DataStore round-trip can never reset the text mid-typing, and invalid input is reported inline (never silently written over a working URL).
 - **Server Port setting**: a dedicated "Server Port" pill in Settings edits the port baked into the current server URL (1024–65535) without retyping the whole address — perfect for `wearsic port 9000`-style setups.
@@ -134,10 +158,12 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 
 ## 🎛️ Terminal experience
 - **One command, seven stages, no log spam.** The installer (`curl -fsSL …/install.sh | bash`) walks **Download → Install → Configure → Build → Start → Verify → Ready**. The active stage is the only thing on screen: its text shimmers — a soft gray wave that blends every character between base `#8A8A85` and highlight `#C9C9C3` by its distance from a highlight band travelling left → right, redrawn in place every ~90ms, one seamless pass every ~2.0s. Finished stages collapse into one quiet line each, printed exactly once. Sub-process output (package manager, unzip, Gradle) is captured internally and only surfaced when a step fails, so the terminal never fills with duplicate logs and a failure is never hidden.
-- **The shimmer is real, not a mock — and smooth.** Truecolor (`#8A8A85` → `#C9C9C3`) in Termux, a 256-colour gray ramp fallback (base **245**, highlight 253) elsewhere, `NO_COLOR` and non-TTY output stay plain, `TERM=dumb` disables it, and the cursor is hidden only while the wave is on screen — it is restored on every exit path, including errors and Ctrl+C. The live line is truncated to the terminal width, so a 40-column phone never sees a wrapped mess. The wave uses 22 frames per pass with a wider 40% band so the motion reads as a smooth glide rather than a stepping/blinking highlight.
+- **The shimmer is real, not a mock — and smooth.** Truecolor (`#8A8A85` → `#C9C9C3`) in Termux, a 256-colour gray ramp fallback (base **245**, highlight 253) elsewhere, `NO_COLOR` and non-TTY output stay plain, `TERM=dumb` disables it, and the cursor is hidden only while the wave is on screen — it is restored on every exit path, including errors and Ctrl+C. The live line is truncated to the terminal width, so a 40-column phone never sees a wrapped mess. The wave uses 22 frames per pass with a wider 40% band — **precomputed once per label and just printed per tick**, so the motion is pure terminal writes and stays smooth on a low-end phone.
+- **Everything follows the live terminal width.** Panels, rules and progress bars re-measure the terminal at render time (cached ~1s, invalidated on `SIGWINCH`), so rotating the phone or changing font mid-command never leaves misaligned boxes.
+- **Shorter commands.** `wearsic /start` ⇔ `wearsic start` (leading slash accepted), and `wearsic shortcuts` installs one-word `ws-start`, `ws-stop`, `ws-status`, `ws-logs`, `ws-health`, `ws-url`, `ws-ip`, `ws-pair`, `ws-update`, `ws-dashboard`, `ws-doctor`, `ws-cf`, `ws-funnel`, `ws-cookies` symlinks (never overwrites existing binaries).
 - **Custom server port**: `wearsic port` prints the configured port; `wearsic port 5861` validates and persists a new port (1024–65535) to `.env`, applied on `wearsic restart`. `url`, `pair`, `status`, `doctor` and the Cloudflare/funnel front doors all follow it.
 - **A live dashboard for the running server.** `wearsic dashboard` shows health, uptime, the LAN address, the Cloudflare front door and tunnel state, the API/stream health and the current engine activity — refreshed **in place** (no scrollback spam), with the same shimmer on active states and Ctrl+C to leave. `wearsic setup` re-runs the whole flow for an existing install (key → engine → health → watch values), with `--update` and `--cloudflare` options. Existing commands (`start`, `stop`, `restart`, `status`, `logs`, `doctor`, `update`, `health`, `url`, `api-key`, `pair`, `cloudflare`) keep their syntax and exit codes.
-- Covered by `wearsic-server/tests/shimmer-test.sh` (colour blending, frame timing, band direction, 256-colour fallback, `NO_COLOR`, non-TTY, cursor restoration including Ctrl+C, narrow terminals, the stage machine and the CLI/installer core sync) in CI.
+- Covered by `wearsic-server/tests/shimmer-test.sh` (colour blending, frame timing, band direction, 256-colour fallback, `NO_COLOR`, non-TTY, cursor restoration including Ctrl+C, narrow terminals, the stage machine and the CLI/installer core sync), `wearsic-server/tests/cli-shortcuts-test.sh` (slash dispatch, `shortcuts`, `cur_cols` + WINCH re-measure) and `wearsic-server/tests/ui-layout-test.sh` in CI.
 
 ## 🌐 Public Setup (exposing the server beyond your LAN)
 - **`wearsic funnel` distinguishes a dead daemon from a logged-out phone.** The old flow probed `tailscale status` to answer both "is tailscaled running?" and "am I authenticated?" — but that command exits non-zero in *both* cases, so the two were indistinguishable. A logged-out node was reported as `Tailscale daemon is not running. Try: tailscaled-start` (the wrong remedy), and the `tailscale up` branch was unreachable code that could never execute. `ts_state` now reads Tailscale's `BackendState` (`Running` / `NeedsLogin` / `Stopped` / `NoState`) and acts on each state, with a fallback for older builds that have no `--json`.

@@ -402,6 +402,12 @@ A YouTube cookie is an authentication credential. Treat it like a password.
 | Start public Funnel | wearsic funnel |
 | Public URL options | wearsic public |
 | Installed version | wearsic version |
+| Install one-word shortcuts | wearsic shortcuts |
+
+Shortcuts: after `wearsic shortcuts`, `ws-start`, `ws-stop`, `ws-status`,
+`ws-logs`, `ws-health`, `ws-url`, `ws-ip`, `ws-pair`, `ws-update`,
+`ws-doctor`, `ws-cf`, etc. work as single words. A leading slash also
+works anywhere: `wearsic /start` ⇔ `wearsic start`.
 
 Install (or update) the watch app over adb. This needs `android-tools` on
 the phone (`pkg install android-tools`) and Wireless debugging enabled on

@@ -20,12 +20,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.wearsicSecondaryText
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicAccentPeach
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -56,8 +54,6 @@ import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.wearsicListContentPadding
-import com.wearsic.app.ui.theme.WearsicGlassBorder
-import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
@@ -106,27 +102,6 @@ fun ArtistsScreen(
                         title = selected!!.name,
                         subtitle = "${selected!!.songs.size} songs"
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    // Back control: a clean, centred circular chip with a
-                    // clear gap below the headline — never touching it, and
-                    // comfortably inside the round safe area.
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(WearsicGlassFill)
-                            .border(1.dp, WearsicGlassBorder, CircleShape)
-                            .wearsicClickable { selected = null }
-                            .testTag("artist_clear"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Back to artists",
-                            tint = LocalWearsicAccent.current,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
                 }
             }
 

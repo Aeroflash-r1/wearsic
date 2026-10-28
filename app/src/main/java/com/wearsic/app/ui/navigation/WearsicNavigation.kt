@@ -277,6 +277,9 @@ fun WearsicApp(
                     onSeekBack = {
                         playbackVM.seekBack()
                     },
+                    onSeekTo = { positionMs ->
+                        playbackVM.seekTo(positionMs)
+                    },
                     onToggleFavorite = {
                         // Network version: POST/DELETE /api/favorites + refresh.
                         // (playbackVM.toggleFavorite() only flips the icon locally.)

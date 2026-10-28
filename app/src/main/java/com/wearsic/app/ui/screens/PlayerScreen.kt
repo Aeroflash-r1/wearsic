@@ -6,7 +6,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
@@ -44,7 +44,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -53,8 +52,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -63,6 +60,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -155,6 +153,8 @@ fun PlayerScreen(
     onArtworkColor: ((ArtworkColors) -> Unit)? = null,
     /** Whether the album-art disc rotates slowly with the song (setting). */
     rotateArtwork: Boolean = true,
+    /** Drag the disc along the ring to scrub to a position (ms). */
+    onSeekTo: (Long) -> Unit = {},
     /** Hook to save the current artwork accent as the app colour. */
     onSaveArtworkAccent: ((Color) -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -198,11 +198,40 @@ fun PlayerScreen(
 
         val pagerState = rememberPagerState(pageCount = { 2 })
 
-        ScreenScaffold(modifier = Modifier.fillMaxSize()) { contentPadding: PaddingValues ->
+        // Touch-bezel / crown control: rotating the bezel slides between the
+        // Now Playing page and the Actions page (volume, queue, favorite,
+        // colour, download). Small rotations accumulate; a firm turn past
+        // the threshold switches page — the cue a full bezel step needs on
+        // a Galaxy Watch 7 / 44mm faces.
+        var rotaryCumulative by remember { mutableStateOf(0f) }
+        val rotaryAccumulator = { event: androidx.compose.ui.input.rotary.RotaryScrollEvent ->
+            val d = event.verticalScrollPixels
+            if (d == 0f) {
+                false
+            } else {
+                if ((rotaryCumulative > 0f && d < 0f) || (rotaryCumulative < 0f && d > 0f)) {
+                    rotaryCumulative = 0f
+                }
+                rotaryCumulative += d
+                if (kotlin.math.abs(rotaryCumulative) >= 90f) {
+                    val target = if (rotaryCumulative > 0f) 1 else 0
+                    if (target != pagerState.currentPage) {
+                        scope.launch { pagerState.animateScrollToPage(target) }
+                    }
+                    rotaryCumulative = 0f
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+                ScreenScaffold(modifier = Modifier.fillMaxSize()) { contentPadding: PaddingValues ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(contentPadding)
+                    .onRotaryScrollEvent(rotaryAccumulator)
             ) {
                 HorizontalPager(
                     state = pagerState,
@@ -222,6 +251,7 @@ fun PlayerScreen(
                             onSkipNext = onSkipNext,
                             onSeekForward = onSeekForward,
                             onSeekBack = onSeekBack,
+                            onSeekTo = onSeekTo,
                             haptic = haptic,
                             colors = artworkColors,
                             active = pagerState.currentPage == 0,
@@ -301,27 +331,12 @@ private fun NowPlayingPage(
     onSkipNext: () -> Unit,
     onSeekForward: () -> Unit,
     onSeekBack: () -> Unit,
+    onSeekTo: (Long) -> Unit = {},
     haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
     colors: ArtworkColors,
     active: Boolean,
     rotateArtwork: Boolean = true
 ) {
-    val focusRequester = remember { FocusRequester() }
-    // Rotary seek needs focus. The pager may not have attached this page's
-    // focus node on the very first frame, so retry across a couple of frames
-    // instead of throwing (the same defensive pattern as wearsicRotaryScroll).
-    LaunchedEffect(active) {
-        if (!active) return@LaunchedEffect
-        repeat(3) {
-            try {
-                focusRequester.requestFocus()
-                return@LaunchedEffect
-            } catch (_: IllegalStateException) {
-                withFrameNanos { }
-            }
-        }
-    }
-
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         // Short viewports (a clipped scrim, or a smaller round face) get a
         // tighter scale instead of a clipped control.
@@ -332,18 +347,7 @@ private fun NowPlayingPage(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = WearsicDimens.ScreenPaddingH)
-                .focusRequester(focusRequester)
-                .onRotaryScrollEvent { event ->
-                    if (!active || !hasTrack || event.verticalScrollPixels == 0f) {
-                        false
-                    } else {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        if (event.verticalScrollPixels > 0f) onSeekForward() else onSeekBack()
-                        true
-                    }
-                }
-                .focusable(),
+                .padding(horizontal = WearsicDimens.ScreenPaddingH),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Weighted top space keeps the artwork slightly above centre —
@@ -358,10 +362,29 @@ private fun NowPlayingPage(
                 colors = colors,
                 size = discSize,
                 rotateArtwork = rotateArtwork,
-                // One-shot entrance, replayed only when the track changes:
-                // `key` recreates the composable (and its entrance state) per
-                // track instead of replaying on every recomposition.
-                modifier = Modifier.wearsicEntrance(fromScale = 0.90f, riseDp = 10f)
+                // Drag the disc along its ring to scrub: angular position
+                // maps to the track duration (top = 0, clockwise). Falls
+                // back to the transport buttons when duration is unknown.
+                modifier = Modifier
+                    .wearsicEntrance(fromScale = 0.90f, riseDp = 10f)
+                    .pointerInput(hasTrack, track.id, durationMs) {
+                        if (!hasTrack || durationMs <= 0L) return@pointerInput
+                        detectDragGestures(
+                            onDragStart = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val sizePx = size.width.toFloat()
+                                val cx = sizePx / 2f
+                                val cy = size.height.toFloat() / 2f
+                                val dx = change.position.x - cx
+                                val dy = change.position.y - cy
+                                val rad = kotlin.math.atan2(dy, dx)
+                                // -90° (up) = 0: clockwise fraction.
+                                val frac = ((rad * 180f / kotlin.math.PI.toFloat()) + 90f + 360f) % 360f / 360f
+                                onSeekTo((durationMs * frac).toLong().coerceIn(0L, durationMs))
+                            }
+                        )
+                    }
             )
             }
 

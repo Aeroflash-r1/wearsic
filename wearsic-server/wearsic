@@ -141,6 +141,28 @@ COLS="$(term_cols)"
 case "${COLUMNS:-}" in ''|*[!0-9]*) WRAP_OK="$TTY_OUT" ;; *) WRAP_OK=1 ;; esac
 export COLUMNS="$COLS"
 
+# --- live terminal width -----------------------------------------------------
+# The phone can be rotated / re-fonted while a command runs; re-measure on
+# demand (cached for ~1s, invalidated on SIGWINCH) so panels, rules and
+# progress bars always fit the CURRENT size instead of the startup width.
+_COLS_CACHE=""; _COLS_AT=0
+cur_cols() {
+  local now c
+  now="$(date +%s)"
+  if [ -n "$_COLS_CACHE" ] && [ $(( now - _COLS_AT )) -lt 1 ]; then
+    printf '%s' "$_COLS_CACHE"; return 0
+  fi
+  c="${COLUMNS:-}"
+  case "$c" in
+    ''|*[!0-9]*) if command -v stty >/dev/null 2>&1; then c="$(stty size 2>/dev/null | awk '{print $2}')"; fi ;;
+  esac
+  case "$c" in ''|*[!0-9]*) c=80 ;; esac
+  [ "$c" -lt 34 ] && c=34
+  _COLS_CACHE="$c"; _COLS_AT="$now"
+  printf '%s' "$c"
+}
+trap '_COLS_CACHE=""' WINCH 2>/dev/null || true
+
 ESC="$(printf '\033')"
 
 # Visible width of a string: colour codes stripped, then the CHARACTER count
@@ -550,9 +572,27 @@ shim_width() { # room for the live line
   printf '%s' $(( w - 4 ))
 }
 
+# Draw the live line, replacing whatever is on the current line. The 22
+# gradient frames are computed ONCE per label (cached) — per-tick work is a
+# single frame print, so the text shimmer stays smooth on a phone even with
+# a long label (previously every frame re-rendered each character).
+SHIM_FRAMES=()
+SHIM_CACHE_KEY=""
+
+shim_collect_frames() { # $1 = text, $2 = half
+  local text="$1" half="$2" f centre
+  SHIM_FRAMES=()
+  f=0
+  while [ "$f" -lt "$SHIM_LOOP_FRAMES" ]; do
+    centre=$(( -half + (${#text} + 2 * half) * f / SHIM_LOOP_FRAMES ))
+    SHIM_FRAMES[$f]="$(shim_render "$text" "$centre" "$half")"
+    f=$(( f + 1 ))
+  done
+}
+
 # Draw the live line, replacing whatever is on the current line.
 shim_draw_live() { # $1 = frame index
-  local frame="$1" text="$SHIM_LIVE_TEXT" n half centre maxw
+  local frame="$1" text="$SHIM_LIVE_TEXT" n half maxw key
   [ "$SHIM_DEPTH" = "0" ] && return 0
   [ "$TTY_OUT" = "1" ] || return 0
   n=${#text}
@@ -572,9 +612,12 @@ shim_draw_live() { # $1 = frame index
   fi
   half=$(( n * SHIM_BAND_PCT / 100 / 2 ))
   [ "$half" -lt 3 ] && half=3
-  centre=$(( -half + (n + 2 * half) * frame / SHIM_LOOP_FRAMES ))
-  printf '\r%s[K' "$SHIM_ESC"
-  shim_render "$text" "$centre" "$half"
+  key="${text}|${SHIM_LIVE_SHORT}|${SHIM_DEPTH}|${maxw}"
+  if [ "$key" != "$SHIM_CACHE_KEY" ]; then
+    shim_collect_frames "$text" "$half"
+    SHIM_CACHE_KEY="$key"
+  fi
+  printf '\r%s[K%s' "$SHIM_ESC" "${SHIM_FRAMES[$frame]}"
   SHIM_LIVE_ACTIVE=1
 }
 
@@ -1291,7 +1334,7 @@ box_check() {
 }
 box_end() {
   local tw pw bd tlt i n p line ind
-  tw=$(( COLS - 4 )); [ "$tw" -gt 76 ] && tw=76
+  tw=$(( $(cur_cols) - 4 )); [ "$tw" -gt 76 ] && tw=76
   pw=$(( tw - 4 ))
   case "$BOX_HUE" in
     ok)   bd="$C_BD_OK";   tlt="$C_TLT_OK" ;;
@@ -1339,7 +1382,7 @@ EOF
 
 # Dim horizontal rule, terminal width (sets long guidance apart).
 hr() {
-  local i=$(( COLS - 4 ))
+  local i=$(( $(cur_cols) - 4 ))
   printf '\n  %s' "$C_DIM"
   while [ "$i" -gt 0 ]; do printf '─'; i=$((i - 1)); done
   printf '%s\n' "$C_RESET"
@@ -5594,6 +5637,59 @@ cmd_public() {
   say "you; or set your own: wearsic api-key <your-key>"
 }
 
+# Installs tiny symlinks (ws-start, ws-stop, …) that forward straight to
+# this CLI, so everyday commands are one short word instead of
+# `wearsic <long-command>`. Safe: only creates names that don't exist yet
+# and never overwrites an unrelated binary.
+cmd_shortcuts() {
+  installed
+  local bin
+  bin="$(dirname "$(command -v wearsic 2>/dev/null || printf '%s' "$CLI_DIR/wearsic")")"
+  if ! [ -w "$bin" ]; then
+    bin="${PREFIX:-/data/data/com.termux/files/usr}/bin"
+    if ! [ -w "$bin" ]; then
+      die "No writable bin directory ($bin) — install shortcuts manually or run from a writable PATH"
+    fi
+  fi
+  local cli
+  cli="$(command -v wearsic 2>/dev/null || printf '%s' "$CLI_DIR/wearsic")"
+  local pairs=(
+    start ws-start
+    stop ws-stop
+    restart ws-restart
+    status ws-status
+    logs ws-logs
+    health ws-health
+    url ws-url
+    ip ws-ip
+    pair ws-pair
+    update ws-update
+    version ws-version
+    dashboard ws-dashboard
+    doctor ws-doctor
+    cloudflare ws-cf
+    funnel ws-funnel
+    cookies ws-cookies
+    'ip set' ws-ip-set
+  )
+  local created=0 i n
+  for (( i = 0; i < ${#pairs[@]}; i += 2 )); do
+    n="${pairs[$((i + 1))]}"
+    if [ -e "$bin/$n" ]; then continue; fi
+    ln -s "$cli" "$bin/$n" 2>/dev/null && created=$((created + 1))
+  done
+  if [ "$created" -eq 0 ]; then
+    say "Shortcuts already installed in $bin."
+  else
+    ok "Created $created shortcuts in $bin:"
+    say "  ws-start  ws-stop  ws-restart  ws-status  ws-logs"
+    say "  ws-health ws-url   ws-ip      ws-pair  ws-update"
+    say "  ws-dashboard ws-doctor ws-cf ws-funnel ws-cookies"
+    say ""
+    say "Examples:  ws-start   ·   ws-cf status   ·   ws-status"
+  fi
+}
+
 # ── crash-safe update ─────────────────────────────────────────────────────
 # Downloads the latest release, VERIFIES its published SHA-256, stages and
 # validates it, swaps it in with a kept rollback copy, restarts and health-
@@ -6876,6 +6972,11 @@ usage() {
   item "public" "other public recipes" "public URL recipes (Tailscale / Cloudflare)"
   item "cookies [cookie]" "fix bot-wall errors" "set the YouTube cookie (fixes bot-wall errors)"
 
+  ICOL=16
+  section "Shortcuts" green
+  item "shortcuts" "install ws-* links" "install 1-word aliases (ws-start, ws-stop, …) for this phone"
+  item "update" "keep it current" "update to the latest release (verified, rollback-safe)"
+
   printf '\n'
   if [ "$COLS" -ge 52 ]; then
     printf '  %s%s%s\n' "$C_DIM" "the classic form works too: wearsic server start" "$C_RESET"
@@ -6887,7 +6988,12 @@ usage() {
 
 # --- dispatch ---------------------------------------------------------
 # Both forms work: flat (`wearsic start`) and classic nested
-# (`wearsic server start`).
+# (`wearsic server start`). A leading slash is also accepted
+# (`wearsic /start`) so a shortcut/alias that forwards a "/"-style
+# command (`/start`) never breaks.
+if [ $# -gt 0 ] && [ "${1:0:1}" = "/" ]; then
+  set -- "${1#/}" "$@"
+fi
 case "${1:-}" in
   server)
     case "${2:-}" in
@@ -6942,6 +7048,7 @@ case "${1:-}" in
   funnel)    cmd_funnel ;;
   cloudflare) shift; cmd_cloudflare "$@" ;;
   public)    cmd_public ;;
+  shortcuts)  cmd_shortcuts ;;
   port)      shift; cmd_port "$@" ;;
   __cf_supervise) shift; cf_supervise "$@" ;;
   ""|help|-h|--help) usage ;;

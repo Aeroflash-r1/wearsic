@@ -218,9 +218,27 @@ shim_width() { # room for the live line
   printf '%s' $(( w - 4 ))
 }
 
+# Draw the live line, replacing whatever is on the current line. The 22
+# gradient frames are computed ONCE per label (cached) — per-tick work is a
+# single frame print, so the text shimmer stays smooth on a phone even with
+# a long label (previously every frame re-rendered each character).
+SHIM_FRAMES=()
+SHIM_CACHE_KEY=""
+
+shim_collect_frames() { # $1 = text, $2 = half
+  local text="$1" half="$2" f centre
+  SHIM_FRAMES=()
+  f=0
+  while [ "$f" -lt "$SHIM_LOOP_FRAMES" ]; do
+    centre=$(( -half + (${#text} + 2 * half) * f / SHIM_LOOP_FRAMES ))
+    SHIM_FRAMES[$f]="$(shim_render "$text" "$centre" "$half")"
+    f=$(( f + 1 ))
+  done
+}
+
 # Draw the live line, replacing whatever is on the current line.
 shim_draw_live() { # $1 = frame index
-  local frame="$1" text="$SHIM_LIVE_TEXT" n half centre maxw
+  local frame="$1" text="$SHIM_LIVE_TEXT" n half maxw key
   [ "$SHIM_DEPTH" = "0" ] && return 0
   [ "$TTY_OUT" = "1" ] || return 0
   n=${#text}
@@ -240,9 +258,12 @@ shim_draw_live() { # $1 = frame index
   fi
   half=$(( n * SHIM_BAND_PCT / 100 / 2 ))
   [ "$half" -lt 3 ] && half=3
-  centre=$(( -half + (n + 2 * half) * frame / SHIM_LOOP_FRAMES ))
-  printf '\r%s[K' "$SHIM_ESC"
-  shim_render "$text" "$centre" "$half"
+  key="${text}|${SHIM_LIVE_SHORT}|${SHIM_DEPTH}|${maxw}"
+  if [ "$key" != "$SHIM_CACHE_KEY" ]; then
+    shim_collect_frames "$text" "$half"
+    SHIM_CACHE_KEY="$key"
+  fi
+  printf '\r%s[K%s' "$SHIM_ESC" "${SHIM_FRAMES[$frame]}"
   SHIM_LIVE_ACTIVE=1
 }
 

@@ -48,7 +48,7 @@ X-Wearsic-Key: <key>
 ```json
 {
   "status": "ok",
-  "version": "1.9.37",
+  "version": "1.9.38",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -82,7 +82,7 @@ auto-installing a checksum-verified newer release when one exists (see
   "database": true,
   "extractor": true,
   "transcoder": true,
-  "engineVersion": "1.9.37"
+  "engineVersion": "1.9.38"
 }
 ```
 

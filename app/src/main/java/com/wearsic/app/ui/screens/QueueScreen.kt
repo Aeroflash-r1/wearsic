@@ -2,7 +2,6 @@ package com.wearsic.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -85,6 +84,7 @@ import com.wearsic.app.ui.theme.WearsicTheme
 
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
+import com.wearsic.app.ui.util.wearsicLongPressDrag
 import com.wearsic.app.ui.util.wearsicRotaryScroll
 import kotlinx.coroutines.launch
 
@@ -281,8 +281,10 @@ fun QueueScreen(
                         val shift = shiftFor(index)
                         QueueTrackItem(
                             track = track,
-                            onClick = { onPlayItem(index) },
-                            onRemove = { onRemoveItem(index) },
+                            // While a drag is in progress the release must not
+                            // also fire the row click (play/remove).
+                            onClick = { if (dragIndex == null) onPlayItem(index) },
+                            onRemove = { if (dragIndex == null) onRemoveItem(index) },
                             modifier = Modifier
                                 .then(
                                     if (isDragged) {
@@ -301,56 +303,52 @@ fun QueueScreen(
                                         Modifier
                                     }
                                 )
-                                .pointerInput(track.id, index) {
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            dragIndex = index
-                                            dragTarget = index
-                                            dragDy = 0f
-                                        },
-                                        onDrag = { change, amount ->
-                                            change.consume()
-                                            dragDy += amount.y
-                                            val rowPx = with(density) { dragRowHeight.toPx() }
-                                            var target = index + (dragDy / rowPx).toInt()
-                                            target = target.coerceIn(1, queue.lastIndex)
-                                            dragTarget = target
-                                            // Auto-scroll near the viewport edges:
-                                            // the list scrolls (up when dragging
-                                            // toward the top, down toward the
-                                            // bottom) so a long queue can be
-                                            // traversed without lifting the finger.
-                                            val vp = listState.layoutInfo.viewportSize.height
-                                            val yPx = change.position.y
-                                            val edge = with(density) { 72.dp.toPx() }
-                                            val nowMs = System.currentTimeMillis()
-                                            if (nowMs - lastAutoScrollMs > 90L) {
-                                                val firstVisible = listState.layoutInfo.visibleItemsInfo
-                                                    .minByOrNull { it.index }?.index ?: 0
-                                                val lastVisible = listState.layoutInfo.visibleItemsInfo
-                                                    .maxByOrNull { it.index }?.index ?: firstVisible
-                                                if (yPx < edge && firstVisible > 0) {
-                                                    scope.launch {
-                                                        listState.animateScrollToItem((firstVisible - 1).coerceAtLeast(0))
-                                                    }
-                                                    lastAutoScrollMs = nowMs
-                                                } else if (yPx > vp - edge && lastVisible < queue.lastIndex) {
-                                                    scope.launch {
-                                                        listState.animateScrollToItem((lastVisible + 1).coerceAtMost(queue.lastIndex))
-                                                    }
-                                                    lastAutoScrollMs = nowMs
+                                .wearsicLongPressDrag(
+                                    onDragStart = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        dragIndex = index
+                                        dragTarget = index
+                                        dragDy = 0f
+                                    },
+                                    onDrag = { deltaY, positionY ->
+                                        dragDy += deltaY
+                                        val rowPx = with(density) { dragRowHeight.toPx() }
+                                        var target = index + (dragDy / rowPx).toInt()
+                                        target = target.coerceIn(1, queue.lastIndex)
+                                        dragTarget = target
+                                        // Auto-scroll near the viewport edges:
+                                        // the list scrolls (up when dragging
+                                        // toward the top, down toward the
+                                        // bottom) so a long queue can be
+                                        // traversed without lifting the finger.
+                                        val vp = listState.layoutInfo.viewportSize.height
+                                        val edge = with(density) { 72.dp.toPx() }
+                                        val nowMs = System.currentTimeMillis()
+                                        if (nowMs - lastAutoScrollMs > 90L) {
+                                            val firstVisible = listState.layoutInfo.visibleItemsInfo
+                                                .minByOrNull { it.index }?.index ?: 0
+                                            val lastVisible = listState.layoutInfo.visibleItemsInfo
+                                                .maxByOrNull { it.index }?.index ?: firstVisible
+                                            if (positionY < edge && firstVisible > 0) {
+                                                scope.launch {
+                                                    listState.animateScrollToItem((firstVisible - 1).coerceAtLeast(0))
                                                 }
+                                                lastAutoScrollMs = nowMs
+                                            } else if (positionY > vp - edge && lastVisible < queue.lastIndex) {
+                                                scope.launch {
+                                                    listState.animateScrollToItem((lastVisible + 1).coerceAtMost(queue.lastIndex))
+                                                }
+                                                lastAutoScrollMs = nowMs
                                             }
-                                        },
-                                        onDragEnd = { commitDrag() },
-                                        onDragCancel = {
-                                            dragIndex = null
-                                            dragTarget = -1
-                                            dragDy = 0f
                                         }
-                                    )
-                                }
+                                    },
+                                    onDragEnd = { commitDrag() },
+                                    onDragCancel = {
+                                        dragIndex = null
+                                        dragTarget = -1
+                                        dragDy = 0f
+                                    },
+                                )
                         )
                     }
                 }

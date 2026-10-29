@@ -138,6 +138,18 @@ def main() -> None:
         f"WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v{new}/"
         f"wearsic-server-termux-v{new}.zip",
     )
+    # Quick-start download links carry the version in the filename — these
+    # drifted twice because the patterns were missing. Exactly one each.
+    p.edit(
+        "readme",
+        rf"wearsic-server-v{re.escape(old)}\.sh",
+        f"wearsic-server-v{new}.sh",
+    )
+    p.edit(
+        "readme",
+        rf"Wearsic-v{re.escape(old)}\.apk",
+        f"Wearsic-v{new}.apk",
+    )
     p.edit(
         "readme",
         rf"git tag v{re.escape(old)} && git push origin v{re.escape(old)}",

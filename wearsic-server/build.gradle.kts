@@ -1,6 +1,6 @@
 // Wearsic Server — source-level rewrite of the previously jar-only backend.
 // Builds against the dependency versions proven in the Termux deployment
-// (Ktor 2.3.12, NewPipeExtractor v0.26.4 via JitPack, sqlite-jdbc).
+// (Ktor 2.3.12, NewPipeExtractor v0.26.5 via JitPack, sqlite-jdbc).
 //
 // `./gradlew :wearsic-server:installDist` produces
 // wearsic-server/build/install/wearsic-server/{bin,lib} — the same shape as

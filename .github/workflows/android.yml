@@ -188,6 +188,11 @@ jobs:
       - name: Run CLI shell tests (terminal shimmer + stages)
         run: bash wearsic-server/tests/shimmer-test.sh
 
+      # Slash-dispatch, one-word shortcuts and live terminal re-measure
+      # (WINCH) — the fix that keeps the CLI usable in any terminal.
+      - name: Run CLI shell tests (slash dispatch + shortcuts + resize)
+        run: bash wearsic-server/tests/cli-shortcuts-test.sh
+
       # The Worker itself is JavaScript, so it gets a real JS engine rather
       # than a grep. Pins the two properties that decide whether audio works
       # through the front door: Range must be forwarded, and the body must
@@ -400,7 +405,11 @@ jobs:
           path: dist/Wearsic-v*.apk
 
       - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        # Only version tags publish a GitHub Release — plain main pushes build,
+        # verify and upload the artifact but never create/replace a release (a
+        # release pinned to an untagged commit would be served as "latest" to
+        # every updater).
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
           # Empty = publish as a NORMAL release. Set to "true" to cut a beta.

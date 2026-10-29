@@ -102,8 +102,7 @@ export WEARSIC_DB_PATH="${WEARSIC_DB_PATH:-$SCRIPT_DIR/wearsic.db}"
 if ! java -version >/dev/null 2>&1; then
   _shim="${WEARSIC_JVM_SHIM:-}"
   if [ -z "$_shim" ]; then
-    for _c in "/public/dev/android/toolchains/jvm-shim/libmprotect-shim.so" \
-               "$HOME/.wearsic/libmprotect-shim.so"; do
+    for _c in "$HOME/.wearsic/libmprotect-shim.so"; do
       [ -f "$_c" ] && { _shim="$_c"; break; }
     done
   fi

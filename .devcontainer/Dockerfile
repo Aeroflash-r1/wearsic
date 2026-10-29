@@ -48,10 +48,11 @@ RUN chown -R vscode:vscode "${ANDROID_HOME}"
 
 USER vscode
 
-# OpenCode CLI
-RUN curl -fsSL https://opencode.ai/install | bash
-
-# Freebuff CLI (free/ad-supported Codebuff build)
-RUN sudo npm install -g freebuff
+# Optional CLI tooling — intentionally NOT baked in: the installers are
+# remote pipe-to-bash / unpinned npm packages, and a supply-chain change at
+# image build time would affect every developer container. Install them
+# manually when needed, e.g.:
+#   curl -fsSL https://opencode.ai/install | bash
+#   sudo npm install -g freebuff
 
 WORKDIR /workspaces

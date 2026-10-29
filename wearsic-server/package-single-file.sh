@@ -166,7 +166,7 @@ case "$cmd" in
   uninstall)
     uninstall_bundle
     ;;
-  start|stop|restart|status|logs|health|url|ip|api|cookies|funnel|public|update|version|doctor)
+  start|stop|restart|status|logs|health|url|ip|api|cookies|funnel|public|update|doctor)
     [ -x "$CLI" ] || install_bundle
     # bash explicitly: the CLI's shebang points at the Termux bash path,
     # which only exists on Termux. Dispatch works everywhere.

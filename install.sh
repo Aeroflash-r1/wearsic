@@ -994,12 +994,21 @@ env_value() {  # $1 = key name, $2 = file (default $DEST/.env)
 }
 
 write_env_value() {  # $1 = key, $2 = value, $3 = file (default $DEST/.env)
-  local f="${3:-$DEST/.env}"
+  local f="${3:-$DEST/.env}" val="$2" esc
+  # The API key lands in .env and is later read by the server: enforce the
+  # same shape the server accepts so a malformed key cannot corrupt .env or
+  # break auth on the next boot.
+  if [ "$1" = "WEARSIC_API_KEY" ] && ! printf '%s' "$val" | grep -qE '^[A-Za-z0-9]{8,64}$'; then
+    die "Invalid WEARSIC_API_KEY (expected 8-64 alphanumeric characters)"
+  fi
   touch "$f"
+  # Escape sed metacharacters so a value can never corrupt .env or inject
+  # extra text (e.g. a value containing | / & / newline).
+  esc=$(printf '%s' "$val" | sed -e 's/[\\&|]/\\&/g' -e ':a;N;$!ba;s/\n/\\n/g')
   if grep -q "^$1=" "$f" 2>/dev/null; then
-    sed -i "s|^$1=.*|$1=$2|" "$f"
+    sed -i "s|^$1=.*|$1=$esc|" "$f"
   else
-    printf '%s=%s\n' "$1" "$2" >> "$f"
+    printf '%s=%s\n' "$1" "$val" >> "$f"
   fi
 }
 
@@ -1102,9 +1111,15 @@ deps_start() {
     pkg list-installed 2>/dev/null | grep -q "^${p}/" || PKG_NEED="$PKG_NEED $p"
   done
   [ -n "$PKG_NEED" ] || return 0
-  ( pkg update -y >/dev/null 2>&1
-    # shellcheck disable=SC2086
-    pkg install -y $PKG_NEED >/dev/null 2>&1 ) >"$WORK/pkg.log" 2>&1 &
+  ( if command -v timeout >/dev/null 2>&1; then
+      timeout 600 pkg update -y >/dev/null 2>&1
+      # shellcheck disable=SC2086
+      timeout 600 pkg install -y $PKG_NEED >/dev/null 2>&1
+    else
+      pkg update -y >/dev/null 2>&1
+      # shellcheck disable=SC2086
+      pkg install -y $PKG_NEED >/dev/null 2>&1
+    fi ) >"$WORK/pkg.log" 2>&1 &
   PKG_PID=$!
 }
 
@@ -1157,7 +1172,7 @@ else
   if [ -z "$ZIP_URL" ]; then
     shim_stage_status "finding the latest release"
     API="https://api.github.com/repos/${REPO}/releases/latest"
-    JSON="$(curl -fsSL --retry 2 "$API" 2>/dev/null || true)"
+    JSON="$(curl -fsSL --retry 2 --max-time 20 "$API" 2>/dev/null || true)"
     ZIP_URL="$(printf '%s' "$JSON" \
       | grep -o '"browser_download_url"[^"]*"[^"]*wearsic-server-termux[^"]*\.zip"' \
       | head -1 \

@@ -1,6 +1,7 @@
 package com.wearsic.app.ui.util
 
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 
@@ -11,14 +12,15 @@ import androidx.compose.ui.input.pointer.pointerInput
  * when a row lives inside a scroll container (ScalingLazyColumn), the
  * container's own vertical-scroll handler usually wins the arbitration before
  * the standard long-press detector can claim the gesture — the row never
- * lifts and the finger just scrolls the list. This implementation performs
- * the long-press wait itself and, once the hold exceeds the long-press
- * timeout, CONSUMES every subsequent pointer change so the container can
- * never steal the drag.
+ * lifts and the finger just scrolls the list.
  *
- * It relies only on the stable [androidx.compose.ui.input.pointer.AwaitPointerEventScope]
- * primitives — no experimental gesture helpers, so it survives Compose
- * foundation/UI bumps.
+ * Critical detail: all events here are read in [PointerEventPass.Initial],
+ * which is dispatched BEFORE the Main pass where scroll containers consume
+ * movement. Once the long-press hold is achieved we consume every change in
+ * the Initial pass, so the lazy column's Main-pass handler sees an already
+ * consumed change and can never turn our drag into a scroll. Before the
+ * hold is achieved we consume nothing, so normal scrolling and taps work
+ * exactly as before.
  *
  * Contract (mirrors `detectDragGesturesAfterLongPress`):
  *  - touch down, hold still past [androidx.compose.ui.platform.ViewConfiguration.longPressTimeoutMillis]
@@ -34,16 +36,23 @@ fun Modifier.wearsicLongPressDrag(
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit,
 ): Modifier = pointerInput(Unit) {
-    val longPressMillis = viewConfiguration.longPressTimeoutMillis
-    val slop = viewConfiguration.touchSlop
+    // On a small round watch a full 400ms hold feels sluggish; 300ms is
+    // still unambiguous against a scroll (which needs movement) but keeps
+    // the lift feeling immediate. Watch touch is coarse: allow a generous
+    // stillness window so finger micro-drift during the hold doesn't
+    // cancel the lift.
+    val longPressMillis = 300L
+    val slop = viewConfiguration.touchSlop * 1.6f
 
     awaitPointerEventScope {
         while (true) {
-            // Wait for a fresh press not already claimed by another handler.
+            // Wait for a fresh press. Some watch scaffolds consume the down
+            // event before a row's pointer input sees it, so we accept ANY
+            // pressed change — being strict here made the drag dead on-device.
             var down: PointerInputChange? = null
             while (down == null) {
-                val event = awaitPointerEvent()
-                down = event.changes.firstOrNull { it.pressed && !it.isConsumed }
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                down = event.changes.firstOrNull { it.pressed }
                 if (down == null && event.changes.isEmpty()) break
             }
             val first = down ?: break
@@ -54,7 +63,7 @@ fun Modifier.wearsicLongPressDrag(
             var done = false
 
             while (!done) {
-                val event = awaitPointerEvent()
+                val event = awaitPointerEvent(PointerEventPass.Initial)
                 val change = event.changes.firstOrNull { it.id == first.id }
 
                 if (change == null || !change.pressed) {
@@ -64,7 +73,9 @@ fun Modifier.wearsicLongPressDrag(
                     break
                 }
                 if (change.isConsumed) {
-                    // Someone else claimed the gesture mid-flight.
+                    // Someone else claimed the gesture before us (e.g. the
+                    // scroll container decided it is a scroll). We never
+                    // fight an already-lost gesture.
                     if (started) onDragCancel()
                     done = true
                     break
@@ -74,10 +85,15 @@ fun Modifier.wearsicLongPressDrag(
                 if (!started) {
                     val heldLongEnough = change.uptimeMillis - startTime >= longPressMillis
                     if (heldLongEnough && moved <= slop) {
+                        // Long press achieved: claim NOW, in the Initial pass,
+                        // so every later handler (including the column's
+                        // scroll) sees the events as consumed. No synthetic
+                        // drag event is emitted here — auto-scroll and row
+                        // movement must react only to REAL finger movement,
+                        // never to the press itself.
                         started = true
                         change.consume()
                         onDragStart()
-                        onDrag(0f, change.position.y)
                     } else if (moved > slop) {
                         // Moved before the long press: hand the gesture to the
                         // scroll container (nothing consumed).

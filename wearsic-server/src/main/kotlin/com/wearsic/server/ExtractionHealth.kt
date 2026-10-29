@@ -33,8 +33,22 @@ class ExtractionHealthMeter {
     fun recordFailure(message: String?) {
         failures.incrementAndGet()
         lastFailureAt.set(System.currentTimeMillis())
-        lastErrorMessage.set(message?.take(200))
+        lastErrorMessage.set(sanitizeForPublicHealth(message)?.take(200))
         consecutiveFailures.incrementAndGet()
+    }
+
+    /**
+     * /health is public (no auth), so failure strings must not expose query
+     * fragments or URL text from failed extractions. Strip URLs and collapse
+     * whitespace; keep enough text for a human to see what class of failure
+     * occurred.
+     */
+    private fun sanitizeForPublicHealth(message: String?): String? {
+        if (message == null) return null
+        return message
+            .replace(Regex("https?://\\S+"), "[url]")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 
     val successCount: Int get() = successes.get()

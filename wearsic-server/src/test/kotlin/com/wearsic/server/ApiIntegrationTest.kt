@@ -146,6 +146,49 @@ class ApiIntegrationTest {
         assertEquals(HttpStatusCode.OK, resp.status)
     }
 
+    @Test
+    fun `auth interceptor covers every protected route and method`() = withServer(apiKey = "secret") {
+        val protectedPaths = listOf(
+            "/api/search?q=test",
+            "/api/suggestions?q=test",
+            "/api/related/abc123",
+            "/api/search/albums?q=test",
+            "/api/playlist?url=abc",
+            "/api/stream/abc123",
+            "/api/prewarm/abc123",
+            "/api/favorites",
+            "/api/playlists",
+            "/api/config/youtube-cookie",
+        )
+        for (path in protectedPaths) {
+            val resp = client.get(path) { header("X-Wearsic-Key", "wrong") }
+            assertEquals(HttpStatusCode.Unauthorized, resp.status, "expected 401 for $path")
+        }
+        // Mutations too — POST/DELETE must never bypass the interceptor.
+        val post = client.post("/api/favorites") {
+            header("X-Wearsic-Key", "wrong")
+            contentType(ContentType.Application.Json)
+            setBody("""{"videoId":"v1","title":"t","uploader":"u","durationMs":100}""")
+        }
+        assertEquals(HttpStatusCode.Unauthorized, post.status)
+        val del = client.delete("/api/favorites/v1") { header("X-Wearsic-Key", "wrong") }
+        assertEquals(HttpStatusCode.Unauthorized, del.status)
+    }
+
+    @Test
+    fun `health redacts urls and query fragments from extraction errors`() =
+        withServer(
+            apiKey = "secret",
+            healthMeter = ExtractionHealthMeter().apply {
+                recordFailure("search failed: https://example.com/watch?v=xyz&q=secret")
+            },
+        ) {
+            val body = client.get("/health").bodyAsText()
+            assertTrue(!body.contains("example.com"), body)
+            assertTrue(!body.contains("v=xyz"), body)
+            assertTrue(body.contains("[url]"), body)
+        }
+
     // ---------------- Error mapping ----------------
 
     @Test

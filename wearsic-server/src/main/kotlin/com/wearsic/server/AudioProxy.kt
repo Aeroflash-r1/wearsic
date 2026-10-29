@@ -359,12 +359,11 @@ class AudioProxy(
             }
             call.response.header(HttpHeaders.AcceptRanges, "bytes")
 
-            // The client's declared window. The open pump runs to the natural
-            // EOF — never stop it early. A write-clamped early exit was
-            // live-tested and left tiny-window requests (the app's `bytes=0-0`
-            // warm-ups) hanging with the socket silent; the watch app closes
-            // its warm-up body right after the headers, so the response tears
-            // down on the client's disconnect instead.
+            // The client's declared window. The open pump is clamped to it
+            // (see tryOpenStream): a seek or probe range pulls exactly the
+            // requested bytes instead of relaying the whole song, then the
+            // response ends normally. The closed-range chunk fallback below
+            // is inherently bounded by lastByte.
             val expectedRemaining = lastByte - start + 1
             val countWrite: (Int) -> Unit = { n ->
                 written += n
@@ -387,7 +386,7 @@ class AudioProxy(
                     // a live response (a replay would corrupt the byte window
                     // the watch already accepted and stall/blur the stream).
                     val openStarted = System.currentTimeMillis()
-                    val (openDone, openWritten) = tryOpenStream(target.url, start, onBytes = countWrite)
+                    val (openDone, openWritten) = tryOpenStream(target.url, start, budgetBytes = expectedRemaining, onBytes = countWrite)
                     openMs = System.currentTimeMillis() - openStarted
                     // `openDone` alone is NOT enough: the CDN can END the open
                     // stream at its per-URL transfer budget (~1 MB, measured)
@@ -448,15 +447,16 @@ class AudioProxy(
      * arbitrary total elapsed time (that was the old fixed 20s cap).
      * Throws when the caller goes away (mapped to Aborted above).
      *
-     * A bounded client window (the watch app's `bytes=0-0` warm-ups) is NOT
-     * clamped here: the pump runs to the natural EOF and the client's own
-     * disconnect ends it. A write-clamped early exit was live-tested and
-     * left tiny-window requests hanging with the socket silent — never
-     * abandon an upstream body mid-transfer inside Ktor's writer.
+     * A bounded client window ([budgetBytes]) IS clamped: once the window is
+     * satisfied the stream stops and the response ends normally — a seek or
+     * probe range never relays the whole song. (An earlier experimental
+     * write-clamp aborted mid-pump and left sockets hanging; ending cleanly
+     * at the window boundary has no such issue.)
      */
     private suspend fun io.ktor.utils.io.ByteWriteChannel.tryOpenStream(
         url: String,
         start: Long,
+        budgetBytes: Long? = null,
         onBytes: (Int) -> Unit = {},
     ): Pair<Boolean, Long> {
         var written = 0L
@@ -487,9 +487,13 @@ class AudioProxy(
                         channel.awaitContent()
                         continue
                     }
-                    writeFully(buf, 0, n)
-                    written += n
-                    onBytes(n)
+                    val remaining = budgetBytes?.minus(written) ?: Long.MAX_VALUE
+                    if (remaining <= 0L) break
+                    val take = minOf(n.toLong(), remaining).toInt()
+                    writeFully(buf, 0, take)
+                    written += take
+                    onBytes(take)
+                    if (take < n) break // window satisfied; drop the rest of this chunk
                 }
                 ok = true
             }

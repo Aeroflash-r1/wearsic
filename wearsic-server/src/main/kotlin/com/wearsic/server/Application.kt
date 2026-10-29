@@ -10,6 +10,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationStarted
 import io.ktor.server.application.call
 import io.ktor.server.application.install
@@ -258,6 +259,18 @@ fun main() {
     )
 
     if (apiKey == null) {
+        // Hard opt-in for public exposure: WEARSIC_REQUIRE_KEY=1 refuses to
+        // boot an open server instead of merely warning — a forgotten key
+        // must never silently expose the API (stream proxy, mutable state).
+        val requireKey = System.getenv("WEARSIC_REQUIRE_KEY")
+            ?.equals("1", ignoreCase = true) == true
+        if (requireKey) {
+            bootLog.error(
+                "WEARSIC_REQUIRE_KEY=1 is set but WEARSIC_API_KEY is missing — " +
+                    "refusing to start an open server."
+            )
+            kotlin.system.exitProcess(1)
+        }
         bootLog.warn(
             "WEARSIC_API_KEY is not set — the server is OPEN to anyone who can reach it. " +
                 "Fine for private LAN/Tailscale use; REQUIRED for any public/tunnel deployment."
@@ -556,36 +569,18 @@ fun Application.module(
                 permitsPerMinute = 90.0,
                 burstCapacity = 30,
             )
+            // Extraction-triggering metadata endpoints (search, related, albums,
+            // playlist) also hit YouTube and fire CDN prefetches; on an open
+            // server they must not be unlimited work. Separate bucket so a
+            // search burst never starves playback or warm-ups.
+            val metaLimiter = RateLimiter(
+                permitsPerMinute = 60.0,
+                burstCapacity = 20,
+            )
 
             get("/stream/{videoId}") {
                 val requestedId = call.parameters["videoId"]!!
-                // Per-client bucket: authenticated callers share the API-key
-                // bucket; open servers bucket by real client IP. Must use
-                // origin.remoteHost — request.host() is the SERVER's Host
-                // header (same for everyone), which collapsed all open-mode
-                // callers into one global bucket.
-                // SECURITY: the header is only used as the bucket key AFTER it
-                // is verified against the server secret (constant-time). In
-                // open mode any LAN device could otherwise rotate the header
-                // and mint a fresh bucket per request, defeating the 30/min
-                // throttle that exists precisely to keep an unauthenticated
-                // server from becoming a free YouTube proxy.
-                val headerKey = call.request.headers["X-Wearsic-Key"]
-                val clientKey = if (apiKey != null && headerKey != null &&
-                    MessageDigest.isEqual(
-                        headerKey.toByteArray(Charsets.UTF_8),
-                        apiKey.toByteArray(Charsets.UTF_8)
-                    )
-                ) {
-                    headerKey
-                } else {
-                    call.request.origin.remoteHost ?: "unknown"
-                }
-                if (!streamLimiter.tryAcquire(clientKey)) {
-                    call.respond(
-                        HttpStatusCode.ServiceUnavailable,
-                        ErrorResponse("Too many stream requests; slow down and retry shortly")
-                    )
+                if (!call.checkRateLimited(streamLimiter, apiKey, "Too many stream requests; slow down and retry shortly")) {
                     return@get
                 }
                 // YTM search ids are already real YouTube videoIds -
@@ -611,25 +606,7 @@ fun Application.module(
             // song over Tailscale Funnel before noticing the client left).
             get("/prewarm/{videoId}") {
                 val requestedId = call.parameters["videoId"]!!
-                // Same verified-key bucket rule as /stream (see comment there):
-                // header is trusted as a bucket key only after it matches the
-                // configured secret; otherwise bucket by real peer address.
-                val headerKey = call.request.headers["X-Wearsic-Key"]
-                val clientKey = if (apiKey != null && headerKey != null &&
-                    MessageDigest.isEqual(
-                        headerKey.toByteArray(Charsets.UTF_8),
-                        apiKey.toByteArray(Charsets.UTF_8)
-                    )
-                ) {
-                    headerKey
-                } else {
-                    call.request.origin.remoteHost ?: "unknown"
-                }
-                if (!prewarmLimiter.tryAcquire(clientKey)) {
-                    call.respond(
-                        HttpStatusCode.ServiceUnavailable,
-                        ErrorResponse("Too many warm-up requests; slow down and retry shortly")
-                    )
+                if (!call.checkRateLimited(prewarmLimiter, apiKey, "Too many warm-up requests; slow down and retry shortly")) {
                     return@get
                 }
                 if (searchOrchestrator.prewarm(requestedId)) {
@@ -643,6 +620,9 @@ fun Application.module(
             }
 
             get("/search") {
+                if (!call.checkRateLimited(metaLimiter, apiKey, "Too many search requests; slow down and retry shortly")) {
+                    return@get
+                }
                 val q = call.request.queryParameters["q"].orEmpty()
                 // "Show more" paging: first page 15, each later page fetches
                 // the next window via offset. Clamped server-side — a huge
@@ -660,11 +640,17 @@ fun Application.module(
             }
 
             get("/suggestions") {
+                if (!call.checkRateLimited(metaLimiter, apiKey, "Too many suggestion requests; slow down and retry shortly")) {
+                    return@get
+                }
                 val q = call.request.queryParameters["q"].orEmpty()
                 call.respond(SuggestionsResponse(gateway.suggestions(q)))
             }
 
             get("/related/{videoId}") {
+                if (!call.checkRateLimited(metaLimiter, apiKey, "Too many related requests; slow down and retry shortly")) {
+                    return@get
+                }
                 val requestedId = call.parameters["videoId"]!!
                 // RADIO: search ids are already real videoIds; legacy `it:`
                 // ids resolve via the match store first.
@@ -681,11 +667,17 @@ fun Application.module(
             }
 
             get("/search/albums") {
+                if (!call.checkRateLimited(metaLimiter, apiKey, "Too many album-search requests; slow down and retry shortly")) {
+                    return@get
+                }
                 val q = call.request.queryParameters["q"].orEmpty()
                 call.respond(gateway.searchAlbums(q))
             }
 
             get("/playlist") {
+                if (!call.checkRateLimited(metaLimiter, apiKey, "Too many playlist requests; slow down and retry shortly")) {
+                    return@get
+                }
                 val url = call.request.queryParameters["url"]
                 if (url.isNullOrBlank()) {
                     call.respond(HttpStatusCode.BadRequest, ErrorResponse("Missing 'url' query parameter"))
@@ -801,6 +793,48 @@ private fun String.removePrefixIfBearer(): String {
     val scheme = substring(0, idx)
     if (!scheme.equals("Bearer", ignoreCase = true)) return this
     return substring(idx + 1).trim()
+}
+
+/**
+ * Per-client bucket key for rate limiting.
+ *
+ * Authenticated callers share the verified API-key bucket (the secret is the
+ * same for every authorized user, so a per-user layer would need real
+ * identity — out of scope here). Everyone else is bucketed by peer address.
+ * When a request arrives through the local Cloudflare tunnel (cloudflared
+ * connects from loopback), the real client's address is carried in
+ * CF-Connecting-IP (preferred) or the leftmost X-Forwarded-For entry; those
+ * headers are trusted ONLY from a loopback peer, so a remote client can
+ * never forge them to mint a fresh bucket per request and defeat the
+ * throttle. Previously every front-door caller shared one global bucket (the
+ * tunnel peer address) — one heavy user exhausted playback for everyone.
+ */
+private fun ApplicationCall.clientBucketKey(apiKey: String?): String {
+    val headerKey = request.headers["X-Wearsic-Key"]
+    if (apiKey != null && headerKey != null &&
+        MessageDigest.isEqual(
+            headerKey.toByteArray(Charsets.UTF_8),
+            apiKey.toByteArray(Charsets.UTF_8)
+        )
+    ) return headerKey
+    val peerHost = request.origin.remoteHost ?: ""
+    val trustedProxy = peerHost == "127.0.0.1" || peerHost == "::1" || peerHost == "localhost"
+    if (trustedProxy) {
+        request.headers["CF-Connecting-IP"]?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        request.headers["X-Forwarded-For"]?.split(',')?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    }
+    return peerHost.ifEmpty { "unknown" }
+}
+
+/** Acquires a rate-limit permit or responds 503 and returns false. */
+private suspend fun ApplicationCall.checkRateLimited(
+    limiter: RateLimiter,
+    apiKey: String?,
+    message: String,
+): Boolean {
+    if (limiter.tryAcquire(clientBucketKey(apiKey))) return true
+    respond(HttpStatusCode.ServiceUnavailable, ErrorResponse(message))
+    return false
 }
 
 /** Maps request-parsing failures to the (400, message) pair. */

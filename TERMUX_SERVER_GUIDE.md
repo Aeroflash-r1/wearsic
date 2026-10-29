@@ -67,7 +67,7 @@ The installer will:
 It does all of that in **seven quiet stages** —
 
 ~~~text
-  ✓ Download    wearsic-server-termux-v1.9.5.zip · checksum verified
+  ✓ Download    wearsic-server-termux-v1.9.36.zip · checksum verified
   ✓ Install     engine in ~/wearsic-server
   ✓ Configure   API key created
   ✓ Build       prebuilt engine — nothing to compile
@@ -415,7 +415,7 @@ the watch:
 
 ~~~bash
 wearsic sideload                         # latest release → the connected watch
-wearsic sideload v1.9.36                  # a specific release
+wearsic sideload v1.9.37                  # a specific release
 wearsic sideload --apk app-release.apk   # a local build
 ~~~
 
@@ -739,7 +739,7 @@ You get a readable snapshot (status, version, extraction success, crashes):
   │                                        │
   │     ok   127.0.0.1:8080 · 4ms          │
   │    ────────────────────────────────    │
-  │    version     v1.9.36                  │
+  │    version     v1.9.37                  │
   │    transcoder  available               │
   │    extraction  75 ok · 1 failed (1%)   │
   │    crashes     0                       │

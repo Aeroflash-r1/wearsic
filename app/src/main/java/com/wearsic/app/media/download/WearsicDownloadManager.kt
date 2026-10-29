@@ -250,11 +250,14 @@ class WearsicDownloadManager(
             if (!autoCached) applyManualPromotion(track.id)
             return
         }
-        if (activeJobs.size >= MAX_CONCURRENT_DOWNLOADS) {
-            // At/over the live-job cap: un-register so the slot stays free
-            // for what is actually running, then queue. The request stays
-            // pending (with its MANUAL-intent set) until a slot frees;
-            // draining re-admits it through the normal path.
+        if (activeJobs.size > MAX_CONCURRENT_DOWNLOADS) {
+            // Over the live-job cap. NOTE: this job is already registered
+            // (putIfAbsent above), so `size > MAX` means at most MAX jobs are
+            // running and any beyond that queue — e.g. with MAX=2 the third
+            // concurrent request queues while two run. Un-register so the
+            // slot stays free for what is actually running, then queue. The
+            // request stays pending (with its MANUAL-intent set) until a slot
+            // frees; draining re-admits it through the normal path.
             activeJobs.remove(track.id, holder)
             pendingQueue.add(PendingDownload(track, autoCached))
             return

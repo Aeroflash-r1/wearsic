@@ -372,12 +372,47 @@ class YoutubeGateway(
             searchSingleFlight.run(cacheKey) {
                 searchCache.get(cacheKey)?.let { if (it.expiresAt > System.currentTimeMillis()) return@run it.value.take(want) }
                 val results = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
-                    searchPage(normalized, emptyList())
+                    // Music-first, just like the main path: general YouTube is
+                    // only a rescue for MUSIC uploads (unreleased audio, rips)
+                    // — never a source of non-music videos. "maths" should
+                    // surface nothing, not lecture videos.
+                    searchPage(normalized, listOf("music_songs"))
+                        .ifEmpty { searchPage(normalized, emptyList()) }
+                        .filter { it.isMusicLikely() }
                 } ?: emptyList()
                 if (results.isNotEmpty()) searchCache.put(cacheKey, Timed(results, now + SEARCH_TTL_MS))
                 results.take(want)
             }
         }
+
+    /**
+     * A conservative music gate for rescue results: to keep Wearsic a music
+     * server, general-YouTube hits are kept only when they LOOK like music —
+     * a music category tag when we can get one, or a strong heuristic (has a
+     * non-trivial title AND uploader, no lecture/playlist/course wording).
+     * Unreleased audio/rips ("Artist - Song (Unreleased Audio)") pass the
+     * heuristic; "maths", "how to", "lecture", "documentary" do not.
+     */
+    internal fun TrackDto.isMusicLikely(): Boolean {
+        val title = (title ?: "").trim()
+        val uploader = (uploader ?: "").trim()
+        if (title.length < 2 || uploader.length < 2) return false
+        val lower = title.lowercase()
+        val bad = listOf(
+            "lecture", "course", "lesson", "tutorial", "how to", "explained",
+            "documentary", "review", "trailer", "gameplay", "walkthrough",
+            "math", "physics", "chemistry", "history", "geography", "science",
+            "grammar", "coding", "programming", "english ", "spanish lesson",
+            "full movie", "episode", "audiobook", "podcast #", "podcast",
+            "news", "debate", "interview", "speech", "documentary", "analysis",
+        )
+        for (w in bad) {
+            if (lower.contains(w)) return false
+        }
+        // A music upload usually has a title that is not a bare number/ID.
+        if (title.all { it.isDigit() || it.isWhitespace() }) return false
+        return true
+    }
 
     private fun searchSecondPage(query: String): List<TrackDto> {
         val extractor = ServiceList.YouTube.getSearchExtractor(query, listOf("music_songs"), "")

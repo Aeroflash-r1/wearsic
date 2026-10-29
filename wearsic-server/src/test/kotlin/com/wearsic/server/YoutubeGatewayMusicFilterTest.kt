@@ -2,6 +2,7 @@ package com.wearsic.server
 
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -36,6 +37,37 @@ class YoutubeGatewayMusicFilterTest {
             assertFalse(kept.any { it.videoId == "v4" }, "movie must be filtered")
             assertFalse(kept.any { it.videoId == "v5" }, "trailer must be filtered")
             assertFalse(kept.any { it.videoId == "v6" }, "numeric-only title must be filtered")
+        }
+    }
+
+    @Test
+    fun `weak music page triggers the general rescue and keeps the target`() = runTest {
+        // The Mary Jane regression: the music-filtered page for the exact
+        // long title comes back WEAK (unrelated covers) but non-empty, so
+        // the old `ifEmpty` guard skipped the general rescue entirely. The
+        // weakness threshold must trigger the general fetch; the merged,
+        // music-gated, token-ranked list must put the unreleased upload
+        // first.
+        with(gateway) {
+            val music = listOf(
+                TrackDto(videoId = "weak1", title = "Some Other Track", uploader = "Various Artists"),
+                TrackDto(videoId = "weak2", title = "Another Cover", uploader = "Various Artists"),
+            )
+            val general = listOf(
+                TrackDto(videoId = "a1v9-KOobOo", title = "Mary Jane (Unreleased Audio)", uploader = "Lil Tjay"),
+            )
+            val query = "Lil Tjay x Pop Smoke - Mary Jane (Unreleased Audio)"
+            // Same decision the gateway makes: merge when the music page is
+            // weak, gate, then rank by token overlap.
+            val strongCount = music.count { tokenOverlap(it, query) >= 0.5f }
+            val needGeneral = music.isEmpty() || strongCount < 2
+            assertTrue(needGeneral, "weak music page must trigger the general rescue")
+            val merged = (music + general)
+                .distinctBy { it.videoId }
+                .filter { it.isMusicLikely() }
+                .sortedByDescending { tokenOverlap(it, query) }
+            assertTrue(merged.any { it.videoId == "a1v9-KOobOo" }, "general rescue must surface the unreleased upload")
+            assertEquals("a1v9-KOobOo", merged.first().videoId)
         }
     }
 }

@@ -372,18 +372,38 @@ class YoutubeGateway(
             searchSingleFlight.run(cacheKey) {
                 searchCache.get(cacheKey)?.let { if (it.expiresAt > System.currentTimeMillis()) return@run it.value.take(want) }
                 val results = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
-                    // Music-first, just like the main path: general YouTube is
-                    // only a rescue for MUSIC uploads (unreleased audio, rips)
-                    // — never a source of non-music videos. "maths" should
-                    // surface nothing, not lecture videos.
-                    searchPage(normalized, listOf("music_songs"))
-                        .ifEmpty { searchPage(normalized, emptyList()) }
-                        .filter { it.isMusicLikely() }
+                    // Music-first, matching the main path. General YouTube is a
+                    // rescue for MUSIC uploads (unreleased audio, rips) — but
+                    // only when the music page is EMPTY or WEAK: a weak-but-
+                    // non-empty music page (e.g. unrelated covers for a very
+                    // specific title) must not block the general rescue. The
+                    // merged set is then music-gated so non-music videos
+                    // (lectures, movies, …) never reach the watch.
+                    val music = searchPage(normalized, listOf("music_songs"))
+                    val strongCount = music.count { tokenOverlap(it, normalized) >= 0.5f }
+                    val needGeneral = music.isEmpty() || strongCount < kotlin.math.max(2, want / 2)
+                    val merged = if (needGeneral) {
+                        (music + searchPage(normalized, emptyList()))
+                            .distinctBy { it.videoId }
+                    } else {
+                        music
+                    }
+                    merged.filter { it.isMusicLikely() }
+                        .sortedByDescending { tokenOverlap(it, normalized) }
                 } ?: emptyList()
                 if (results.isNotEmpty()) searchCache.put(cacheKey, Timed(results, now + SEARCH_TTL_MS))
                 results.take(want)
             }
         }
+
+    /** Fraction of query tokens present in a track's title/uploader. */
+    internal fun tokenOverlap(t: TrackDto, q: String): Float {
+        val qt = queryTokens(q)
+        if (qt.isEmpty()) return 0f
+        val ht = queryTokens((t.title ?: "") + " " + (t.uploader ?: ""))
+        val hits = ht.count { it in qt }
+        return hits.toFloat() / qt.size
+    }
 
     /**
      * A conservative music gate for rescue results: to keep Wearsic a music

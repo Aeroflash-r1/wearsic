@@ -106,6 +106,7 @@ class WearsicPlayerViewModel(
                 val protectedLocalId = state.currentTrack.id.takeIf {
                     it.isNotBlank() && state.currentTrack.mediaUri.startsWith("/")
                 }
+                downloadsViewModel.setCurrentLocalTrackId(protectedLocalId)
                 if (protectedLocalId != null) {
                     downloadsViewModel.flushPendingDeletions()
                 }
@@ -127,6 +128,7 @@ class WearsicPlayerViewModel(
                     }
                     if (protectedLocalId != lastLocalProtectedId) {
                         lastLocalProtectedId = protectedLocalId
+                        downloadsViewModel.setCurrentLocalTrackId(protectedLocalId)
                         downloadsViewModel.flushPendingDeletions()
                     }
                     if (track.id.isNotBlank()) {
@@ -628,6 +630,11 @@ class WearsicPlayerViewModel(
         // download jobs outlive the screen.
         playbackViewModel.release()
         downloadsViewModel.release()
+        // These children are constructed directly (not through a ViewModelStore),
+        // so their scopes must be torn down here too — otherwise their DataStore
+        // collectors and stateIn jobs live until process death.
+        libraryViewModel.release()
+        settingsViewModel.release()
         super.onCleared()
     }
 

@@ -55,8 +55,8 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads WHERE downloadState = 'CANCELLED'")
     suspend fun getCancelledDownloads(): List<WearsicDownloadEntity>
 
-    /** Completed AUTO rows with a persisted deferred-deletion request. */
-    @Query("SELECT * FROM downloads WHERE pendingDeletion = 1 AND autoCached = 1 AND downloadState = 'COMPLETED'")
+    /** Completed rows with a persisted deferred-deletion request (AUTO or MANUAL). */
+    @Query("SELECT * FROM downloads WHERE pendingDeletion = 1 AND downloadState = 'COMPLETED'")
     suspend fun getPendingDeletionDownloads(): List<WearsicDownloadEntity>
 
     /** Records or clears the deferred-deletion intent for a row. */

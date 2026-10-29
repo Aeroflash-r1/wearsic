@@ -427,8 +427,7 @@ fun WearsicApp(
                         downloadsVM.cancelDownload(trackId)
                     },
                     onRetryDownload = { track ->
-                        downloadsVM.deleteDownload(track.id)
-                        downloadsVM.startDownload(track)
+                        downloadsVM.retryDownload(track)
                     },
                     onClearAllDownloads = {
                         downloadsVM.clearAllDownloads()

@@ -85,7 +85,7 @@ object PairingImporter {
         }
 
         cleanUrl?.let { prefs.saveServerUrl(it) }
-        if (appliedKey != null) WearsicHttp.apiKey = appliedKey.trim()
+        if (appliedKey != null) WearsicHttp.setApiKey(appliedKey.trim())
 
         file.delete()
         Log.i(TAG, "pairing applied (url=${cleanUrl != null}, key=${appliedKey != null})")

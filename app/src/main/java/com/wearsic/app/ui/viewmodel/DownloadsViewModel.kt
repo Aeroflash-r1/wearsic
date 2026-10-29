@@ -103,6 +103,26 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
         downloadManager.flushPendingDeletions()
     }
 
+    /** Wires the playback-protection predicate: deletes/evictions of the
+     *  currently-playing local track are deferred until playback releases it
+     *  (null = no local track is playing). */
+    fun setCurrentLocalTrackId(trackId: String?) {
+        downloadManager.isTrackProtected = { id -> id == trackId }
+    }
+
+    /** Retries a failed download preserving its ownership intent (AUTO vs
+     *  MANUAL): a failed auto-cache must come back as auto-cache, not become
+     *  a permanent manual download (which would evade the eviction cap). */
+    fun retryDownload(track: Track) {
+        viewModelScope.launch {
+            val existing = withContext(Dispatchers.IO) {
+                downloadManager.downloadEntityFor(track.id)
+            }
+            deleteDownload(track.id)
+            startDownload(track, autoCached = existing?.autoCached ?: false)
+        }
+    }
+
     // ============================================================================
     // Storage Management
     // ============================================================================

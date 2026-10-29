@@ -56,6 +56,11 @@ abstract class WearsicDatabase : RoomDatabase() {
                     "wearsic_database.db"
                 )
                     .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    // Safety net: a future schema change that ships without a
+                    // migration (or a DB created by a package-rename build)
+                    // must not crash on open — Room rebuilds empty and the
+                    // app re-downloads/re-creates content.
+                    .fallbackToDestructiveMigration(true)
                     .build().also { INSTANCE = it }
             }
         }

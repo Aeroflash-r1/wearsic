@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.StatFs
 import com.wearsic.app.data.WearsicDownloadRepository
+import com.wearsic.app.data.db.WearsicDownloadEntity
 import com.wearsic.app.model.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -154,6 +155,10 @@ class WearsicDownloadManager(
         return activeJobs.containsKey(trackId)
     }
 
+    /** Reads the persisted row for a track (used to preserve ownership on retry). */
+    suspend fun downloadEntityFor(trackId: String): WearsicDownloadEntity? =
+        runCatching { repository.getDownloadEntity(trackId) }.getOrNull()
+
     /**
      * Startup hygiene, invoked by the ViewModel once the manager exists:
      *
@@ -245,11 +250,11 @@ class WearsicDownloadManager(
             if (!autoCached) applyManualPromotion(track.id)
             return
         }
-        if (activeJobs.size > MAX_CONCURRENT_DOWNLOADS) {
-            // Over the live-job cap: un-register so the slot stays free for
-            // what is actually running, then queue. The request stays pending
-            // (with its MANUAL-intent set) until a slot frees; draining re-
-            // admits it through the normal path.
+        if (activeJobs.size >= MAX_CONCURRENT_DOWNLOADS) {
+            // At/over the live-job cap: un-register so the slot stays free
+            // for what is actually running, then queue. The request stays
+            // pending (with its MANUAL-intent set) until a slot frees;
+            // draining re-admits it through the normal path.
             activeJobs.remove(track.id, holder)
             pendingQueue.add(PendingDownload(track, autoCached))
             return
@@ -636,17 +641,15 @@ class WearsicDownloadManager(
         if (pending.isEmpty()) return
         for (entity in pending) {
             val live = repository.getDownloadEntity(entity.trackId) ?: continue
-            if (!live.autoCached || live.downloadState != "COMPLETED") {
-                // Promoted to MANUAL (or mid-download): never cut it. If it
-                // became MANUAL, the flag is meaningless — clear it.
-                if (!live.autoCached) repository.markDeletionPending(live.trackId, false)
+            if (live.downloadState != "COMPLETED") {
+                // Mid-download: keep the flag until the download settles.
                 continue
             }
             if (activeJobs.containsKey(live.trackId)) continue
             if (isTrackProtected(live.trackId) || manualPromotionRequests.contains(live.trackId)) continue
             val file = File(live.localFilePath)
             if (!file.isFile || file.length() <= 0L) {
-                // File already gone; drop the stale AUTO row too.
+                // File already gone; drop the stale row too.
                 repository.deleteDownload(live.trackId)
                 continue
             }
@@ -692,11 +695,11 @@ class WearsicDownloadManager(
     }
 
     /**
-     * User delete. MANUAL files and incomplete downloads are removed
-     * immediately. A COMPLETED AUTO file currently in use by playback is
-     * DEFERRED — the persisted `pendingDeletion` flag is set on the row and
-     * the deletion is retried once the file is released (same playback-safety
-     * rule as eviction and Clear auto-saved, and survives process death).
+     * User delete. Incomplete downloads are removed immediately. A COMPLETED
+     * file currently in use by playback (AUTO or MANUAL) is DEFERRED — the
+     * persisted `pendingDeletion` flag is set on the row and the deletion is
+     * retried once the file is released (same playback-safety rule as
+     * eviction and Clear auto-saved, and survives process death).
      */
     fun deleteDownload(trackId: String) {
         activeJobs.remove(trackId)?.job?.cancel()
@@ -705,11 +708,14 @@ class WearsicDownloadManager(
             try {
                 stateMutex.withLock {
                     val row = repository.getDownloadEntity(trackId)
-                    val isPlayingAuto = row != null &&
+                    // Defer deletion of ANY completed file currently in use by
+                    // playback (AUTO or MANUAL): unlinking it would break the
+                    // active session on its next reopen. The persisted flag
+                    // survives process death and is honored by the flush pass.
+                    val inUse = row != null &&
                         row.downloadState == "COMPLETED" &&
-                        row.autoCached &&
                         (isTrackProtected(trackId) || manualPromotionRequests.contains(trackId))
-                    if (isPlayingAuto) {
+                    if (inUse) {
                         repository.markDeletionPending(trackId, true)
                     } else {
                         repository.deleteDownload(trackId)
@@ -728,17 +734,16 @@ class WearsicDownloadManager(
             try {
                 stateMutex.withLock {
                     // Same playback-safety rule the per-row path enforces: a
-                    // COMPLETED AUTO file the player is currently streaming
-                    // from is only FLAGGED (the pendingDeletion intent
-                    // survives process death and is deleted once the file is
-                    // released) instead of deleted out from under the reader —
+                    // COMPLETED file the player is currently streaming from is
+                    // only FLAGGED (the pendingDeletion intent survives
+                    // process death and is deleted once the file is released)
+                    // instead of deleted out from under the reader —
                     // previously this wiped ALL rows and files with no mutex
                     // and no in-use check, which could pull the bytes out of
                     // the file the active session was reading. Every other
-                    // row (manual included — this is an explicit wipe-all) is
-                    // deleted now, along with its .part leftovers.
+                    // row is deleted now, along with its .part leftovers.
                     for (entity in repository.getAllDownloadEntities()) {
-                        if (isTrackProtected(entity.trackId) && entity.autoCached) {
+                        if (isTrackProtected(entity.trackId) && entity.downloadState == "COMPLETED") {
                             repository.markDeletionPending(entity.trackId, true)
                         } else {
                             repository.deleteDownload(entity.trackId)

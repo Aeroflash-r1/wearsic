@@ -39,7 +39,7 @@ class PairingImportTest {
     fun setUp() {
         runBlocking(Dispatchers.IO) {
             context = ApplicationProvider.getApplicationContext()
-            WearsicHttp.apiKey = ""
+            WearsicHttp.setApiKey("")
             val dir = context.getExternalFilesDir(null)!!.apply { mkdirs() }
             pairingFile = File(dir, PairingImporter.FILE_NAME)
             pairingFile.delete()
@@ -102,7 +102,7 @@ class PairingImportTest {
     @Test
     fun pairingFile_blankKey_clearsTheStoredKey() = runBlocking {
         prefs().saveApiKey("old-secret-key")
-        WearsicHttp.apiKey = "old-secret-key"
+        WearsicHttp.setApiKey("old-secret-key")
 
         pairingFile.writeText(
             "WEARSIC_SERVER_URL=http://192.168.1.50:8080\n" +

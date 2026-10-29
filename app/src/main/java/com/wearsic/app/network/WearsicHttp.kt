@@ -37,6 +37,19 @@ object WearsicHttp {
 
     @Volatile
     var apiKey: String = ""
+        private set
+
+    /**
+     * Applies a new API key process-wide. Changing the key invalidates the
+     * response disk cache: OkHttp keys cached responses by URL only (the key
+     * rides in a header), so without eviction a rotated key could be served
+     * another profile's cached favorites/playlists for up to a max-age.
+     */
+    fun setApiKey(key: String) {
+        if (key == apiKey) return
+        apiKey = key
+        runCatching { client.cache?.evictAll() }
+    }
 
     /**
      * Disk budget for cached API responses. Deliberately small for a watch:

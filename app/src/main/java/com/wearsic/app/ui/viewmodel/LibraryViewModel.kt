@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -63,6 +64,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     val recentTracks: StateFlow<List<Track>> = recentRepository.recentTracksFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * Tears down this manually-constructed ViewModel's scope when the owning
+     * player ViewModel is cleared (the framework never calls onCleared here).
+     */
+    fun release() {
+        viewModelScope.cancel()
+    }
 
     // ============================================================================
     // Server reachability (drives the offline surface)

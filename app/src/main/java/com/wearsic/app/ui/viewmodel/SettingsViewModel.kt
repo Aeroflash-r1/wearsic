@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -58,6 +59,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     val offlineLimit: StateFlow<Int> = preferencesRepository.offlineLimitFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), WearsicPreferencesRepository.DEFAULT_OFFLINE_LIMIT)
+
+    /**
+     * Tears down this manually-constructed ViewModel's scope when the owning
+     * player ViewModel is cleared (the framework never calls onCleared here).
+     */
+    fun release() {
+        viewModelScope.cancel()
+    }
 
     /** Crossfade window between queue tracks, in ms; OFF keeps the plain hand-off. */
     val crossfadeMs: StateFlow<Long> = preferencesRepository.crossfadeMsFlow

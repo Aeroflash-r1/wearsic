@@ -93,7 +93,9 @@ class WearsicHttpApiClient(
                     json.decodeFromString<ServerHealthDto>(bodyString)
                 } catch (e: Exception) {
                     logDecodeFailure(e)
-                    ServerHealthDto()
+                    return@withContext Result.failure(
+                        UnknownError("Server returned an unreadable /health response", e)
+                    )
                 }
 
                 Result.success(dto)
@@ -137,7 +139,9 @@ class WearsicHttpApiClient(
                     json.decodeFromString<ReadyResponseDto>(bodyString)
                 } catch (e: Exception) {
                     logDecodeFailure(e)
-                    ReadyResponseDto()
+                    return@withContext Result.failure(
+                        UnknownError("Server returned an unreadable /ready response", e)
+                    )
                 }
 
                 Result.success(dto)

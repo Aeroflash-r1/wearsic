@@ -33,7 +33,7 @@ class WearsicMusicRepository(
     /** Pushes the stored API key into the shared HTTP client so every
      *  request (API, media streams, downloads) carries it. */
     suspend fun refreshApiKeyWith(key: String) {
-        com.wearsic.app.network.WearsicHttp.apiKey = key.trim()
+        com.wearsic.app.network.WearsicHttp.setApiKey(key.trim())
     }
 
     suspend fun saveApiKey(key: String) {

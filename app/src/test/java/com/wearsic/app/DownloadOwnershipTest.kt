@@ -857,6 +857,58 @@ class DownloadOwnershipTest {
         }
     }
 
+    // ----------- H: playback-safe deletion (1.9.36 audit fixes) ----------
+
+    @Test
+    fun `deleting a playing MANUAL download defers until the file is released`() = runBlocking {
+        startCdn()
+        val t = track("song_playing_manual")
+        manager.startDownload(t)
+        awaitCompleted("song_playing_manual")
+        assertTrue(fileFor("song_playing_manual").isFile)
+
+        // The player marks this track protected (the same predicate the
+        // ViewModel now wires from the playback state). Deleting while the
+        // file is in use must defer, not unlink.
+        manager.isTrackProtected = { it == "song_playing_manual" }
+        manager.deleteDownload("song_playing_manual")
+        Thread.sleep(300)
+
+        val e = entity("song_playing_manual")
+        assertNotNull("deferred row must survive while playing", e)
+        assertEquals(DownloadState.COMPLETED.name, e!!.downloadState)
+        assertTrue("deferred file must survive while playing", fileFor("song_playing_manual").isFile)
+        assertEquals("deletion intent must be persisted on the row", true, e.pendingDeletion)
+
+        // Playback moves on -> the flush pass deletes it.
+        manager.isTrackProtected = { false }
+        manager.flushPendingDeletions()
+        awaitRowGone("song_playing_manual")
+        assertTrue(!fileFor("song_playing_manual").exists())
+    }
+
+    @Test
+    fun `third concurrent download queues while two are active`() = runBlocking {
+        // Slow enough that three starts overlap (mid-body stall per track).
+        startCdn(totalBytes = 512 * 1024, delayMidBodyMs = 600)
+        val t1 = track("song_cap_1")
+        val t2 = track("song_cap_2")
+        val t3 = track("song_cap_3")
+        manager.startDownload(t1)
+        manager.startDownload(t2)
+        manager.startDownload(t3)
+        Thread.sleep(400)
+
+        assertTrue("first download must be active", manager.isDownloading("song_cap_1"))
+        assertTrue("second download must be active", manager.isDownloading("song_cap_2"))
+        assertTrue("third must be QUEUED, not active (cap is 2)", !manager.isDownloading("song_cap_3"))
+
+        awaitCompleted("song_cap_1")
+        awaitCompleted("song_cap_2")
+        awaitCompleted("song_cap_3")
+        assertTrue(fileFor("song_cap_3").isFile)
+    }
+
     // --------------------------- fake CDN ------------------------------
 
     private class FakeCdn(

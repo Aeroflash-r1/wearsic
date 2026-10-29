@@ -2,8 +2,8 @@ package com.wearsic.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,11 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowDownward
-import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Radio
@@ -37,19 +33,26 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.itemsIndexed
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
@@ -83,6 +86,7 @@ import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
+import kotlinx.coroutines.launch
 
 @Composable
 fun QueueScreen(
@@ -104,7 +108,44 @@ fun QueueScreen(
     val currentIndex = playbackState.currentTrackIndex
     val upcoming = queue.drop(currentIndex + 1)
     var showClearConfirmation by remember { mutableStateOf(false) }
-    var menuIndex by remember { mutableStateOf<Int?>(null) }
+    val haptic = LocalHapticFeedback.current
+
+    // ── Drag-to-reorder ──────────────────────────────────────────────────
+    // Long-press lifts a row; dragging up/down moves it through the queue.
+    // Near the top/bottom edges the list auto-scrolls so the drop can be
+    // placed precisely anywhere in a long queue. On release the move
+    // commits. No ⋯ button — rows keep their full width for the song name.
+    val dragRowHeight = 64.dp
+    var dragIndex by remember { mutableStateOf<Int?>(null) }
+    var dragTarget by remember { mutableStateOf(-1) }
+    var dragDy by remember { mutableStateOf(0f) }
+    val scope = rememberCoroutineScope()
+    var lastAutoScrollMs by remember { mutableStateOf(0L) }
+    val density = LocalDensity.current
+
+    fun commitDrag() {
+        val from = dragIndex ?: return
+        val to = dragTarget.coerceIn(1, queue.lastIndex)
+        if (to != from) onMoveItem(from, to)
+        dragIndex = null
+        dragTarget = -1
+        dragDy = 0f
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
+
+    // Whether a row needs to make room while a drag is over it.
+    fun shiftFor(index: Int): Float {
+        val from = dragIndex ?: return 0f
+        val to = dragTarget
+        if (from == to) return 0f
+        return if (from < to) {
+            // moving down: items above target shift up to fill the gap
+            if (index in (from + 1)..to) -with(density) { dragRowHeight.toPx() } else 0f
+        } else {
+            // moving up: items below target shift down to fill the gap
+            if (index in to until from) with(density) { dragRowHeight.toPx() } else 0f
+        }
+    }
 
     ScreenScaffold(
         scrollState = listState,
@@ -218,7 +259,7 @@ fun QueueScreen(
                 item {
                     WearsicEmptyState(
                         title = "Queue is empty",
-                        message = "Tap a search result to queue that whole list, or use the ⋯ menu on a track to add one song.",
+                        message = "Tap a search result to queue that whole list, or add songs from any track's ⋯ menu.",
                         icon = Icons.AutoMirrored.Rounded.QueueMusic
                     )
                 }
@@ -228,7 +269,7 @@ fun QueueScreen(
                 // the next track never remounts the whole list (rows keep
                 // their state and don't re-animate on every advance). The
                 // current track is a highlighted card; everything after it is
-                // an Up Next row with its own remove action.
+                // an Up Next row. Long-press + drag reorders.
                 itemsIndexed(queue, key = { index, _ -> "queue_index_$index" }) { index, track ->
                     if (index == currentIndex) {
                         QueueCurrentCard(
@@ -236,11 +277,80 @@ fun QueueScreen(
                             isPlaying = playbackState.isPlaying
                         )
                     } else {
+                        val isDragged = dragIndex == index
+                        val shift = shiftFor(index)
                         QueueTrackItem(
                             track = track,
                             onClick = { onPlayItem(index) },
                             onRemove = { onRemoveItem(index) },
-                            onMore = { menuIndex = index }
+                            modifier = Modifier
+                                .then(
+                                    if (isDragged) {
+                                        Modifier
+                                            .zIndex(2f)
+                                            .graphicsLayer {
+                                                translationY = dragDy
+                                                shadowElevation = 16f
+                                                alpha = 0.96f
+                                            }
+                                    } else if (shift != 0f) {
+                                        Modifier.graphicsLayer {
+                                            translationY = shift
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .pointerInput(track.id, index) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            dragIndex = index
+                                            dragTarget = index
+                                            dragDy = 0f
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragDy += amount.y
+                                            val rowPx = with(density) { dragRowHeight.toPx() }
+                                            var target = index + (dragDy / rowPx).toInt()
+                                            target = target.coerceIn(1, queue.lastIndex)
+                                            dragTarget = target
+                                            // Auto-scroll near the viewport edges:
+                                            // the list scrolls (up when dragging
+                                            // toward the top, down toward the
+                                            // bottom) so a long queue can be
+                                            // traversed without lifting the finger.
+                                            val vp = listState.layoutInfo.viewportSize.height
+                                            val yPx = change.position.y
+                                            val edge = with(density) { 72.dp.toPx() }
+                                            val nowMs = System.currentTimeMillis()
+                                            if (nowMs - lastAutoScrollMs > 90L) {
+                                                val firstVisible = listState.layoutInfo.visibleItemsInfo
+                                                    .minByOrNull { it.index }?.index ?: 0
+                                                val lastVisible = listState.layoutInfo.visibleItemsInfo
+                                                    .maxByOrNull { it.index }?.index ?: firstVisible
+                                                if (yPx < edge && firstVisible > 0) {
+                                                    scope.launch {
+                                                        listState.animateScrollToItem((firstVisible - 1).coerceAtLeast(0))
+                                                    }
+                                                    lastAutoScrollMs = nowMs
+                                                } else if (yPx > vp - edge && lastVisible < queue.lastIndex) {
+                                                    scope.launch {
+                                                        listState.animateScrollToItem((lastVisible + 1).coerceAtMost(queue.lastIndex))
+                                                    }
+                                                    lastAutoScrollMs = nowMs
+                                                }
+                                            }
+                                        },
+                                        onDragEnd = { commitDrag() },
+                                        onDragCancel = {
+                                            dragIndex = null
+                                            dragTarget = -1
+                                            dragDy = 0f
+                                        }
+                                    )
+                                }
                         )
                     }
                 }
@@ -295,91 +405,6 @@ fun QueueScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
-
-        // Row action menu: tap ⋯ (or long-press) on an Up Next row to move
-        // it around the queue. Overlay stays inside the circular safe area.
-        menuIndex?.let { index ->
-            val target = queue.getOrNull(index)
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.6f))
-                    .clickable { menuIndex = null },
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-                        .background(WearsicSurfaceRaised)
-                        .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {},
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = target?.title.orEmpty(),
-                        color = WearsicTextPrimary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    QueueMenuRow(Icons.Rounded.ArrowUpward, "Move to top") {
-                        onMoveItem(index, 0)
-                        menuIndex = null
-                    }
-                    QueueMenuRow(Icons.Rounded.ArrowDownward, "Move to bottom") {
-                        onMoveItem(index, queue.lastIndex)
-                        menuIndex = null
-                    }
-                    QueueMenuRow(Icons.Rounded.Delete, "Remove from queue", destructive = true) {
-                        onRemoveItem(index)
-                        menuIndex = null
-                    }
-                    QueueMenuRow(Icons.Rounded.Close, "Close") { menuIndex = null }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun QueueMenuRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    destructive: Boolean = false,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = WearsicDimens.SheetRowMinHeight)
-            .clip(CircleShape)
-            .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
-            .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = if (destructive) WearsicError else LocalWearsicAccent.current,
-            modifier = Modifier.size(15.dp)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = label,
-            color = if (destructive) WearsicError else WearsicTextPrimary,
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 
@@ -469,7 +494,6 @@ private fun QueueTrackItem(
     track: Track,
     onClick: () -> Unit,
     onRemove: () -> Unit,
-    onMore: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     WearsicSongRow(
@@ -480,22 +504,15 @@ private fun QueueTrackItem(
         modifier = modifier,
         testTag = "queue_track_${track.id}",
         trailing = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                WearsicSongRowActionButton(
-                    icon = Icons.Rounded.MoreHoriz,
-                    contentDescription = "Queue actions",
-                    onClick = onMore,
-                    testTag = "queue_more_${track.id}",
-                    tint = WearsicTextMuted
-                )
-                WearsicSongRowActionButton(
-                    icon = Icons.Rounded.Close,
-                    contentDescription = "Remove from Queue",
-                    onClick = onRemove,
-                    testTag = "queue_remove_${track.id}",
-                    tint = WearsicTextMuted
-                )
-            }
+            // Only the remove action stays inline — drag-to-reorder replaces
+            // the old ⋯ menu, so the song name keeps the full row width.
+            WearsicSongRowActionButton(
+                icon = Icons.Rounded.Close,
+                contentDescription = "Remove from Queue",
+                onClick = onRemove,
+                testTag = "queue_remove_${track.id}",
+                tint = WearsicTextMuted
+            )
         }
     )
 }

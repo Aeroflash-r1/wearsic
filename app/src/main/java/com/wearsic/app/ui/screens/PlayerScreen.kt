@@ -2,6 +2,7 @@ package com.wearsic.app.ui.screens
 
 import android.graphics.drawable.BitmapDrawable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -47,6 +48,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -198,6 +200,20 @@ fun PlayerScreen(
 
         val pagerState = rememberPagerState(pageCount = { 2 })
 
+        // Natural screen-open: a soft zoom + fade across ~220ms. Runs once
+        // per entry, layer-only (no recomposition), so it reads as a smooth,
+        // reliable push into the player.
+        var opened by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            withFrameNanos { }
+            opened = true
+        }
+        val openProgress by animateFloatAsState(
+            targetValue = if (opened) 1f else 0f,
+            animationSpec = tween(220, easing = FastOutSlowInEasing),
+            label = "playerOpen"
+        )
+
         // Touch-bezel / crown control: rotating the bezel slides between the
         // Now Playing page and the Actions page (volume, queue, favorite,
         // colour, download). Small rotations accumulate; a firm turn past
@@ -225,6 +241,15 @@ fun PlayerScreen(
                 }
             }
         }
+
+        // The whole player sits inside a layer that animates the open.
+        Box(modifier = Modifier.fillMaxSize().graphicsLayer {
+            val p = openProgress
+            val s = 0.96f + 0.04f * p
+            scaleX = s
+            scaleY = s
+            alpha = 0.7f + 0.3f * p
+        }) {
 
                 ScreenScaffold(modifier = Modifier.fillMaxSize()) { contentPadding: PaddingValues ->
             Box(
@@ -276,6 +301,7 @@ fun PlayerScreen(
 
             }
         }
+        } // end animated open wrapper
 
         // Page dots hug the VERY EDGE of the round face — outside the
         // scaffold's inset so they follow the display's curved boundary. The

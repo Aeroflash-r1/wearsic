@@ -889,7 +889,10 @@ class DownloadOwnershipTest {
 
     @Test
     fun `third concurrent download queues while two are active`() = runBlocking {
-        // Slow enough that three starts overlap (mid-body stall per track).
+        // The cap decision is made synchronously inside startDownload, so the
+        // state can be asserted immediately after the three calls — no sleeps,
+        // no wall-clock races. (The mid-body stall keeps the two admitted jobs
+        // alive long enough for the queue state to be meaningful.)
         startCdn(totalBytes = 512 * 1024, delayMidBodyMs = 600)
         val t1 = track("song_cap_1")
         val t2 = track("song_cap_2")
@@ -897,7 +900,6 @@ class DownloadOwnershipTest {
         manager.startDownload(t1)
         manager.startDownload(t2)
         manager.startDownload(t3)
-        Thread.sleep(400)
 
         assertTrue("first download must be active", manager.isDownloading("song_cap_1"))
         assertTrue("second download must be active", manager.isDownloading("song_cap_2"))

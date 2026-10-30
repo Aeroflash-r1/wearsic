@@ -184,6 +184,19 @@ data class SearchResultsResponseDto(
     val results: List<TrackDto> = emptyList()
 )
 
+/** "Made for you" recommendations response (server v1.9.39+). */
+@Serializable
+data class RecommendationsResponseDto(
+    val results: List<TrackDto> = emptyList()
+)
+
+@Serializable
+data class RecommendationsRequestDto(
+    val seedTrackIds: List<String> = emptyList(),
+    val topArtists: List<String> = emptyList(),
+    val excludeTrackIds: List<String> = emptyList(),
+)
+
 sealed interface ConnectionTestState {
     data object Idle : ConnectionTestState
     data object Testing : ConnectionTestState

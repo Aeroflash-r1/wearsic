@@ -139,3 +139,13 @@ data class YoutubeCookieRequest(val cookie: String)
 
 @Serializable
 data class YoutubeCookieStatus(val hasCookie: Boolean)
+
+@Serializable
+data class RecommendationsRequest(
+    val seedTrackIds: List<String> = emptyList(),
+    val topArtists: List<String> = emptyList(),
+    val excludeTrackIds: List<String> = emptyList(),
+)
+
+@Serializable
+data class RecommendationsResponse(val results: List<TrackDto>)

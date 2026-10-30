@@ -577,6 +577,11 @@ fun Application.module(
                 permitsPerMinute = 60.0,
                 burstCapacity = 20,
             )
+            // "Made for you" (Tier A+B): multi-seed related fetch, taste-profile
+            // scoring, 30-minute TTL cache. Cheap for the server because only
+            // the cache miss ever touches YouTube.
+            val recommendationEngine = RecommendationEngine(gateway)
+            val recommendationCache = RecommendationCache()
 
             get("/stream/{videoId}") {
                 val requestedId = call.parameters["videoId"]!!
@@ -672,6 +677,36 @@ fun Application.module(
                 }
                 val q = call.request.queryParameters["q"].orEmpty()
                 call.respond(gateway.searchAlbums(q))
+            }
+
+            post("/recommendations") {
+                if (!call.checkRateLimited(metaLimiter, apiKey, "Too many recommendation requests; slow down and retry shortly")) {
+                    return@post
+                }
+                val req = call.receive<RecommendationsRequest>()
+                val seeds = req.seedTrackIds.filter { it.isNotBlank() }.distinct().take(RecommendationEngine.MAX_SEEDS)
+                if (seeds.isEmpty()) {
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse("No seed tracks provided"))
+                    return@post
+                }
+                val artists = req.topArtists.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+                // Never recommend something the user already has (server-side
+                // favorites + the watch's own local favorites).
+                val excluded = req.excludeTrackIds.filter { it.isNotBlank() }.toSet() +
+                    database.listFavorites().map { it.videoId }
+
+                val key = recommendationCache.signature(seeds, artists)
+                val tracks = recommendationCache.get(key) ?: run {
+                    val built = recommendationEngine.build(
+                        RecommendationEngine.Seeds(seeds, artists, excluded)
+                    )
+                    recommendationCache.put(key, built)
+                    built
+                }
+
+                // Warm the top picks so tapping one is instant.
+                searchOrchestrator.prefetchVideoIds(tracks.take(3).map { it.videoId })
+                call.respond(RecommendationsResponse(tracks))
             }
 
             get("/playlist") {

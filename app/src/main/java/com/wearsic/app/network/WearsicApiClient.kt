@@ -32,6 +32,14 @@ interface WearsicApiClient {
     // Discovery & library expansion
     suspend fun getSuggestions(baseUrl: String, query: String): Result<List<String>>
     suspend fun getRelated(baseUrl: String, videoId: String): Result<List<TrackDto>>
+
+    /** "Made for you": multi-seed taste-ranked recommendations. */
+    suspend fun getRecommendations(
+        baseUrl: String,
+        seedTrackIds: List<String>,
+        topArtists: List<String>,
+        excludeTrackIds: List<String>,
+    ): Result<List<TrackDto>>
     suspend fun searchAlbums(baseUrl: String, query: String): Result<List<AlbumDto>>
     suspend fun getPlaylistByUrl(baseUrl: String, url: String): Result<PlaylistWithTracksDto>
 

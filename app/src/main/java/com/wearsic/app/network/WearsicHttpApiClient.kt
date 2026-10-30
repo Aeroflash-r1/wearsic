@@ -12,6 +12,8 @@ import com.wearsic.app.network.model.FavoritesResponseDto
 import com.wearsic.app.network.model.PlaylistDto
 import com.wearsic.app.network.model.PlaylistWithTracksDto
 import com.wearsic.app.network.model.ReadyResponseDto
+import com.wearsic.app.network.model.RecommendationsRequestDto
+import com.wearsic.app.network.model.RecommendationsResponseDto
 import com.wearsic.app.network.model.SearchResponseDto
 import com.wearsic.app.network.model.SearchResultsResponseDto
 import com.wearsic.app.network.model.ServerHealthDto
@@ -21,6 +23,7 @@ import com.wearsic.app.util.Validation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -308,6 +311,50 @@ class WearsicHttpApiClient(
             }
         } catch (e: Exception) {
             Result.failure(UnknownError(e.message ?: "Could not load favorites", e))
+        }
+    }
+
+    override suspend fun getRecommendations(
+        baseUrl: String,
+        seedTrackIds: List<String>,
+        topArtists: List<String>,
+        excludeTrackIds: List<String>,
+    ): Result<List<TrackDto>> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+
+        try {
+            val body = RecommendationsRequestDto(
+                seedTrackIds = seedTrackIds,
+                topArtists = topArtists,
+                excludeTrackIds = excludeTrackIds,
+            )
+            val request = Request.Builder()
+                .url("$sanitizedUrl/api/recommendations")
+                .post(json.encodeToString(RecommendationsRequestDto.serializer(), body).toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError("$sanitizedUrl/api/recommendations", response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+                val bodyString = response.body?.string() ?: ""
+                val dto = try {
+                    json.decodeFromString<RecommendationsResponseDto>(bodyString)
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    RecommendationsResponseDto()
+                }
+                Result.success(dto.results.withStreamUrls(sanitizedUrl))
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not load recommendations", e))
         }
     }
 

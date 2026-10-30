@@ -415,7 +415,7 @@ the watch:
 
 ~~~bash
 wearsic sideload                         # latest release → the connected watch
-wearsic sideload v1.9.38                  # a specific release
+wearsic sideload v1.9.39                  # a specific release
 wearsic sideload --apk app-release.apk   # a local build
 ~~~
 
@@ -739,7 +739,7 @@ You get a readable snapshot (status, version, extraction success, crashes):
   │                                        │
   │     ok   127.0.0.1:8080 · 4ms          │
   │    ────────────────────────────────    │
-  │    version     v1.9.38                  │
+  │    version     v1.9.39                  │
   │    transcoder  available               │
   │    extraction  75 ok · 1 failed (1%)   │
   │    crashes     0                       │

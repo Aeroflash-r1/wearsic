@@ -7,12 +7,22 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [WearsicDownloadEntity::class, WearsicRecentTrackEntity::class], version = 4, exportSchema = true)
+@Database(
+    entities = [
+        WearsicDownloadEntity::class,
+        WearsicRecentTrackEntity::class,
+        WearsicFavoriteTrackEntity::class,
+    ],
+    version = 5,
+    exportSchema = true,
+)
 abstract class WearsicDatabase : RoomDatabase() {
 
     abstract fun downloadDao(): DownloadDao
 
     abstract fun recentTrackDao(): RecentTrackDao
+
+    abstract fun favoriteDao(): FavoriteDao
 
     companion object {
         @Volatile
@@ -48,6 +58,25 @@ abstract class WearsicDatabase : RoomDatabase() {
             }
         }
 
+        // Local-first favorites (1.9.39): favorites live on the watch. The
+        // table is created empty; existing server favorites are merged in the
+        // first time the app connects (see WearsicFavoriteRepository).
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS favorite_tracks (" +
+                        "trackId TEXT NOT NULL PRIMARY KEY, " +
+                        "title TEXT NOT NULL, " +
+                        "artist TEXT NOT NULL, " +
+                        "album TEXT, " +
+                        "artworkUrl TEXT, " +
+                        "durationMs INTEGER NOT NULL, " +
+                        "mediaUri TEXT NOT NULL, " +
+                        "addedAt INTEGER NOT NULL)"
+                )
+            }
+        }
+
         fun getInstance(context: Context): WearsicDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -55,7 +84,12 @@ abstract class WearsicDatabase : RoomDatabase() {
                     WearsicDatabase::class.java,
                     "wearsic_database.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                    )
                     // Safety net: a future schema change that ships without a
                     // migration (or a DB created by a package-rename build)
                     // must not crash on open — Room rebuilds empty and the

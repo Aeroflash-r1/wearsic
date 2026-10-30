@@ -36,6 +36,7 @@ import com.wearsic.app.ui.screens.PlaylistDetailScreen
 import com.wearsic.app.ui.screens.PlaylistsScreen
 import com.wearsic.app.ui.screens.PlayerScreen
 import com.wearsic.app.ui.screens.QueueScreen
+import com.wearsic.app.ui.screens.RecommendationsScreen
 import com.wearsic.app.ui.screens.SearchScreen
 import com.wearsic.app.ui.screens.ServerDashboardScreen
 import com.wearsic.app.ui.screens.SettingsScreen
@@ -210,10 +211,27 @@ fun WearsicApp(
                     onNavigateToArtists = {
                         navController.navigate(Screen.Artists.route)
                     },
+                    onNavigateToRecommendations = {
+                        navController.navigate(Screen.MadeForYou.route)
+                    },
                     onNavigateToSettings = {
                         navController.navigate(Screen.Settings.route)
                     },
                     onNavigateToPlayer = {
+                        navController.navigate(Screen.Player.route)
+                    }
+                )
+            }
+
+            // Recommendations ("Made for you") — taste-ranked, server-side.
+            composable(Screen.MadeForYou.route) {
+                RecommendationsScreen(
+                    recommendationsState = libraryVM.recommendationsState.value,
+                    onRefresh = {
+                        libraryVM.refreshRecommendations()
+                    },
+                    onPlayTrack = { tracks, index ->
+                        playerViewModel.playTracksFromList(tracks, index)
                         navController.navigate(Screen.Player.route)
                     }
                 )

@@ -20,4 +20,5 @@ sealed class Screen(val route: String) {
             "playlist/${Uri.encode(id)}/${Uri.encode(name)}"
     }
     data object Artists : Screen("artists")
+    data object MadeForYou : Screen("made-for-you")
 }

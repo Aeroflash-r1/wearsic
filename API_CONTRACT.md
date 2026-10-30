@@ -176,6 +176,16 @@ Note: album `id` is a full playlist URL, not a bare id.
 - **POST** `/api/favorites` with TrackDto JSON body (see below).
 - **DELETE** `/api/favorites/{videoId}`.
 
+> **Role since v1.9.39:** favorites are **local-first on the watch**. The
+> watch's Room store is the source of truth for the Favorites screen and
+> hearts; these endpoints are now an **optional backup sink / seed**:
+> - the app writes locally first (instant, offline), then attempts a
+>   fire-and-forget push of the same change to these endpoints;
+> - on connect/refresh the app merges any server-side favorites the watch
+>   does not have yet (one-way server → watch; local favorites are never
+>   overwritten or deleted by a merge).
+> The server behavior is unchanged; the watch simply no longer depends on it.
+
 ### 9. Playlists
 
 - **GET** `/api/playlists` → array: `[ { "id", "name", "trackCount", "thumbnailUrl" } ]`

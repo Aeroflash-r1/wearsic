@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Star
 import com.wearsic.app.ui.theme.WearsicAccentAmber
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
@@ -93,6 +94,7 @@ fun LibraryScreen(
     onNavigateToAlbums: () -> Unit = {},
     onNavigateToFavorites: (() -> Unit)? = null,
     onNavigateToArtists: () -> Unit,
+    onNavigateToRecommendations: () -> Unit = {},
     onNavigateToSettings: () -> Unit,
     onNavigateToPlayer: () -> Unit,
     playbackState: PlaybackUiState = PlaybackUiState(),
@@ -189,6 +191,17 @@ fun LibraryScreen(
                     backgroundColor = LocalWearsicAccent.current,
                     contentColor = WearsicTextPrimaryDark,
                     testTag = "library_search_button"
+                )
+            }
+
+            // Made for you — recommendations from your local taste.
+            item {
+                WearsicSecondaryPillButton(
+                    label = "Made for you",
+                    icon = Icons.Rounded.Star,
+                    onClick = onNavigateToRecommendations,
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "library_recommendations_button"
                 )
             }
 

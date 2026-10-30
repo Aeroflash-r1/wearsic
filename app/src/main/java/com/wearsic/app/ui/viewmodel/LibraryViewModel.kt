@@ -44,6 +44,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         ?: com.wearsic.app.di.AppContainer(application)
     private val musicRepository = container.musicRepository
     private val recentRepository = container.recentRepository
+    private val favoriteRepository = container.favoriteRepository
 
     /** Live search-suggestions preference (set from Settings). */
     private val _searchSuggestionsEnabled = MutableStateFlow(true)
@@ -109,6 +110,26 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val _favoritesState = MutableStateFlow(FavoritesUiState())
     val favoritesState: StateFlow<FavoritesUiState> = _favoritesState.asStateFlow()
 
+    /** Live local favorite ids for hearts everywhere (Room-backed, offline-safe). */
+    val favoriteIds: StateFlow<Set<String>> = favoriteRepository.favoriteIdsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    init {
+        // The Favorites UI is fed straight from the local Room store — instant,
+        // offline-safe, no network round trip. Server import happens separately
+        // via refreshFavorites() and never gates what the screen shows.
+        viewModelScope.launch {
+            favoriteRepository.favoriteTracksFlow.collect { tracks ->
+                _favoritesState.value = FavoritesUiState(
+                    tracks = tracks,
+                    isLoading = false,
+                    errorMessage = null,
+                )
+                prewarmFavorites(tracks)
+            }
+        }
+    }
+
     /** Favorites already warmed in this process (avoids re-resolving on refresh). */
     private val prewarmedFavoriteIds = mutableSetOf<String>()
 
@@ -132,33 +153,27 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun refreshFavorites() {
-        if (_favoritesState.value.isLoading) return
-        _favoritesState.update { it.copy(isLoading = true, errorMessage = null) }
+        // Favorites are local and always current; "refresh" only attempts a
+        // best-effort merge of the server backup (never blocks, never wipes).
         viewModelScope.launch {
-            val result = musicRepository.getFavorites()
-            reportServerResult(result)
-            result.onSuccess { tracks ->
-                _favoritesState.update { it.copy(tracks = tracks, isLoading = false, errorMessage = null) }
-                prewarmFavorites(tracks)
-            }.onFailure { err ->
-                _favoritesState.update {
-                    it.copy(isLoading = false, errorMessage = err.displayMessage("Could not load favorites"))
-                }
+            favoriteRepository.importFromServer()
+        }
+    }
+
+    /** Local toggle (instant). Server backup push is fire-and-forget. */
+    fun toggleFavorite(track: Track) {
+        viewModelScope.launch {
+            if (track.id in favoriteIds.value) {
+                favoriteRepository.removeFavorite(track.id)
+            } else {
+                favoriteRepository.addFavorite(track)
             }
         }
     }
 
     fun removeFavorite(trackId: String) {
         viewModelScope.launch {
-            val result = musicRepository.removeFavorite(trackId)
-            result.onSuccess {
-                val updatedFavorites = _favoritesState.value.tracks.filterNot { it.id == trackId }
-                _favoritesState.update { it.copy(tracks = updatedFavorites, errorMessage = null) }
-            }.onFailure { err ->
-                _favoritesState.update {
-                    it.copy(errorMessage = err.displayMessage("Could not remove favorite"))
-                }
-            }
+            favoriteRepository.removeFavorite(trackId)
         }
     }
 
@@ -180,28 +195,23 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         if (_playlistsState.value.isLoading) return
         _playlistsState.update { it.copy(isLoading = true, errorMessage = null) }
         viewModelScope.launch {
-            val favoritesResult = musicRepository.getFavorites()
+            // Favorites are local — they are already current; only a
+            // best-effort server-backup merge is attempted.
+            favoriteRepository.importFromServer()
+            val favorites = _favoritesState.value.tracks
+
             val playlistsResult = musicRepository.getPlaylists()
-            reportServerResult(favoritesResult)
             reportServerResult(playlistsResult)
 
             var errorMessage: String? = null
-            val favorites = favoritesResult.getOrNull()
-            if (favorites != null) {
-                _favoritesState.update { it.copy(tracks = favorites, errorMessage = null) }
-                prewarmFavorites(favorites)
-            } else {
-                errorMessage = favoritesResult.exceptionOrNull()?.displayMessage("Could not load favorites")
-                    ?: "Could not load favorites"
-            }
             val playlists = playlistsResult.getOrNull()
             if (playlists == null) {
-                errorMessage = playlistsResult.exceptionOrNull()?.message ?: errorMessage ?: "Could not load playlists"
+                errorMessage = playlistsResult.exceptionOrNull()?.message ?: "Could not load playlists"
             }
 
             _playlistsState.update {
                 it.copy(
-                    favorites = favorites ?: _favoritesState.value.tracks,
+                    favorites = favorites,
                     playlists = playlists ?: it.playlists,
                     isLoading = false,
                     errorMessage = errorMessage
@@ -370,17 +380,74 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun refreshArtists() {
         viewModelScope.launch {
             _artistsState.value = ArtistsUiState(isLoading = true)
-            val downloaded = withContext(Dispatchers.IO) {
-                musicRepository.getFavorites().getOrElse { emptyList() }
-            }
+            // Fully local: the artists list is derived from favorites, recents
+            // and downloads — all Room-backed, so it works offline and never
+            // needs a server call.
             val favorites = _favoritesState.value.tracks
-            val combined = (downloaded + favorites).distinctBy { it.id }
+            val recents = recentTracks.value
+            val downloads = withContext(Dispatchers.IO) {
+                container.downloadRepository.completedTracksFlow.first()
+            }
+            val combined = (favorites + recents + downloads).distinctBy { it.id }
             val groups = combined
                 .filter { it.artist.isNotBlank() }
                 .groupBy { it.artist.trim().lowercase() }
                 .map { (_, songs) -> ArtistGroup(name = songs.first().artist.trim(), songs = songs.sortedBy { it.title.lowercase() }) }
                 .sortedBy { it.name.lowercase() }
             _artistsState.value = ArtistsUiState(artists = groups)
+        }
+    }
+
+    // ============================================================================
+    // Recommendations State ("Made for you" — Tier A+B)
+    // ============================================================================
+
+    data class RecommendationsUiState(
+        val tracks: List<Track> = emptyList(),
+        val isLoading: Boolean = false,
+        val errorMessage: String? = null
+    )
+
+    private val _recommendationsState = MutableStateFlow(RecommendationsUiState())
+    val recommendationsState: StateFlow<RecommendationsUiState> = _recommendationsState.asStateFlow()
+
+    /**
+     * Builds the seed input from LOCAL state — favorites first (the taste
+     * profile), recents as a fallback when nothing is favorited yet — then
+     * asks the server for merged, taste-ranked recommendations. One round
+     * trip; results are cached server-side for 30 minutes.
+     */
+    fun refreshRecommendations() {
+        if (_recommendationsState.value.isLoading) return
+        viewModelScope.launch {
+            _recommendationsState.update { it.copy(isLoading = true, errorMessage = null) }
+            val favs = _favoritesState.value.tracks
+            val seeds = when {
+                favs.isNotEmpty() -> favs.take(6).map { it.id }
+                else -> recentTracks.value.take(6).map { it.id }
+            }
+            if (seeds.isEmpty()) {
+                _recommendationsState.value = RecommendationsUiState(
+                    errorMessage = "Favorite or play a few songs first"
+                )
+                return@launch
+            }
+            // Taste profile: the top artists among favorites become the boost
+            // set the server scores candidates against.
+            val artists = favs.groupBy { it.artist.trim().lowercase() }
+                .entries
+                .sortedByDescending { it.value.size }
+                .take(5)
+                .map { it.value.first().artist.trim() }
+            val exclude = favs.map { it.id }.toList()
+            val result = musicRepository.getRecommendations(seeds, artists, exclude)
+            result.onSuccess { tracks ->
+                _recommendationsState.value = RecommendationsUiState(tracks = tracks)
+            }.onFailure { err ->
+                _recommendationsState.value = RecommendationsUiState(
+                    errorMessage = err.displayMessage("Could not load recommendations")
+                )
+            }
         }
     }
 

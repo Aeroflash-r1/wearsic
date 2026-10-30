@@ -2,6 +2,7 @@ package com.wearsic.app.di
 
 import android.content.Context
 import com.wearsic.app.data.WearsicDownloadRepository
+import com.wearsic.app.data.WearsicFavoriteRepository
 import com.wearsic.app.data.WearsicMusicRepository
 import com.wearsic.app.data.WearsicPreferencesRepository
 import com.wearsic.app.data.WearsicRecentRepository
@@ -23,4 +24,7 @@ class AppContainer(private val context: Context) {
     val musicRepository by lazy { WearsicMusicRepository(context, preferencesRepository, apiClient) }
     val downloadRepository by lazy { WearsicDownloadRepository(context) }
     val recentRepository by lazy { WearsicRecentRepository(context) }
+    // Local-first favorites: Room-backed on the watch, with a best-effort
+    // server backup push. Shared process-wide like the other repositories.
+    val favoriteRepository by lazy { WearsicFavoriteRepository(context, musicRepository) }
 }

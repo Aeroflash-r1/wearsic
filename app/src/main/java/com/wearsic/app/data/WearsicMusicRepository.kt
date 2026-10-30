@@ -199,6 +199,17 @@ class WearsicMusicRepository(
         return httpApiClient.getPlaylists(currentUrl).map { dtoList -> dtoList.map { it.toDomainPlaylist() } }
     }
 
+    /** "Made for you": multi-seed taste-ranked recommendations (server v1.9.39+). */
+    suspend fun getRecommendations(
+        seedTrackIds: List<String>,
+        topArtists: List<String>,
+        excludeTrackIds: List<String>,
+    ): Result<List<Track>> {
+        val currentUrl = getServerUrl()
+        return httpApiClient.getRecommendations(currentUrl, seedTrackIds, topArtists, excludeTrackIds)
+            .map { dtoList -> dtoList.map { it.toDomainTrack() } }
+    }
+
     suspend fun getPlaylistTracks(playlistId: String): Result<List<Track>> {
         val currentUrl = getServerUrl()
         return httpApiClient.getPlaylistTracks(currentUrl, playlistId)

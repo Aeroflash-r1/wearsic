@@ -3,7 +3,7 @@
 This file records the app-quality pass (UI, correctness and feature work) done
 on top of v1.9.15, plus a roadmap of larger improvements that are intentionally
 left for a separate, focused effort. App + server CLI changes are current as
-of v1.9.36.
+of v1.9.39.
 
 ## Done in this pass
 

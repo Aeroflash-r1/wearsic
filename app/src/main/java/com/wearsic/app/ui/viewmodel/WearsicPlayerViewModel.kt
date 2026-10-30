@@ -504,19 +504,13 @@ class WearsicPlayerViewModel(
         val targetFavorite = !track.isFavorite
         playbackViewModel.setCurrentTrackFavorite(targetFavorite)
 
+        // Local-first: the library store writes to Room immediately and the
+        // server backup push is fire-and-forget, so the UI never waits for
+        // the network. On push failure we don't revert the UI — favorites
+        // are watched-local by design.
         viewModelScope.launch {
             try {
-                val result = if (targetFavorite) {
-                    (getApplication<WearsicApp>()).container.musicRepository.addFavorite(track)
-                } else {
-                    (getApplication<WearsicApp>()).container.musicRepository.removeFavorite(track.id)
-                }
-
-                result.onSuccess {
-                    libraryViewModel.refreshFavorites()
-                }.onFailure {
-                    playbackViewModel.setCurrentTrackFavorite(!targetFavorite)
-                }
+                libraryViewModel.toggleFavorite(track)
             } finally {
                 favoriteTogglesInFlight.remove(track.id)
             }
@@ -533,13 +527,7 @@ class WearsicPlayerViewModel(
         if (!favoriteTogglesInFlight.add(track.id)) return // toggle already running
         viewModelScope.launch {
             try {
-                val repo = (getApplication<WearsicApp>()).container.musicRepository
-                val result = if (track.id in favoriteIds) {
-                    repo.removeFavorite(track.id)
-                } else {
-                    repo.addFavorite(track)
-                }
-                result.onSuccess { libraryViewModel.refreshFavorites() }
+                libraryViewModel.toggleFavorite(track)
             } finally {
                 favoriteTogglesInFlight.remove(track.id)
             }

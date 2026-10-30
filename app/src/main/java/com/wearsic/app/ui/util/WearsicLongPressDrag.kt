@@ -36,13 +36,13 @@ fun Modifier.wearsicLongPressDrag(
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit,
 ): Modifier = pointerInput(Unit) {
-    // On a small round watch a full 400ms hold feels sluggish; 300ms is
-    // still unambiguous against a scroll (which needs movement) but keeps
-    // the lift feeling immediate. Watch touch is coarse: allow a generous
-    // stillness window so finger micro-drift during the hold doesn't
-    // cancel the lift.
-    val longPressMillis = 300L
-    val slop = viewConfiguration.touchSlop * 1.6f
+    // Long-press lift timing: must be clearly longer than a normal tap
+    // (~150-250ms) so plain touches and scrolls never lift, but short enough
+    // to feel responsive. 450ms reads right on a watch. Slop stays close to
+    // stock so quick scroll movement is recognized as a scroll before the
+    // timer can fire — a tiny allowance still covers finger micro-drift.
+    val longPressMillis = 450L
+    val slop = viewConfiguration.touchSlop * 1.2f
 
     awaitPointerEventScope {
         while (true) {

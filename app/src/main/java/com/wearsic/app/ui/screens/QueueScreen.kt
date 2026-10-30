@@ -1,5 +1,6 @@
 package com.wearsic.app.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,14 +23,13 @@ import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -84,12 +84,14 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTheme
 
+import com.wearsic.app.ui.util.WearsicMotion
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicLongPressDrag
 import com.wearsic.app.ui.util.wearsicRotaryScroll
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun QueueScreen(
     playbackState: PlaybackUiState,
@@ -123,6 +125,7 @@ fun QueueScreen(
     var dragDy by remember { mutableStateOf(0f) }
     val scope = rememberCoroutineScope()
     var lastAutoScrollMs by remember { mutableStateOf(0L) }
+    var edgeHoldSinceMs by remember { mutableStateOf(0L) }
     val density = LocalDensity.current
 
     fun commitDrag() {
@@ -266,13 +269,16 @@ fun QueueScreen(
                     )
                 }
             } else {
-                // The queue is rendered as ONE stable-keyed list: each row
-                // keeps its identity by ABSOLUTE queue index, so advancing to
-                // the next track never remounts the whole list (rows keep
-                // their state and don't re-animate on every advance). The
-                // current track is a highlighted card; everything after it is
-                // an Up Next row. Long-press + drag reorders.
-                itemsIndexed(queue, key = { index, _ -> "queue_index_$index" }) { index, track ->
+                // The queue is one stable-keyed list. Each row is keyed by its
+                // track id PLUS an occurrence number (so duplicate tracks in
+                // the queue can't collide on a key). Keys stay with the item
+                // as it moves, so `animateItem` can slide reorders and fade
+                // removals instead of teleporting them. Advancing to the next
+                // track never remounts rows (ids don't change).
+                itemsIndexed(queue, key = { index, track ->
+                    val occurrence = queue.subList(0, index).count { it.id == track.id }
+                    "${track.id}#$occurrence"
+                }) { index, track ->
                     if (index == currentIndex) {
                         QueueCurrentCard(
                             track = track,
@@ -281,18 +287,18 @@ fun QueueScreen(
                     } else {
                         val isDragged = dragIndex == index
                         val shift = shiftFor(index)
+                        // Rows part with a spring — no instant snapping.
+                        val animatedShift by animateFloatAsState(
+                            targetValue = if (isDragged) 0f else shift,
+                            animationSpec = WearsicMotion.Gentle,
+                            label = "queueShift",
+                        )
                         QueueTrackItem(
                             track = track,
                             // While a drag is in progress the release must not
                             // also fire the row click (play/remove).
                             onClick = { if (dragIndex == null) onPlayItem(index) },
                             onRemove = { if (dragIndex == null) onRemoveItem(index) },
-                            // One-tap reorder arrows: the guaranteed-fast path
-                            // on a small watch screen (drag stays as a bonus).
-                            onMoveUp = { onMoveItem(index, index - 1) },
-                            onMoveDown = { onMoveItem(index, index + 1) },
-                            moveUpEnabled = dragIndex == null && index > 1,
-                            moveDownEnabled = dragIndex == null && index < queue.lastIndex,
                             modifier = Modifier
                                 .then(
                                     if (isDragged) {
@@ -305,7 +311,7 @@ fun QueueScreen(
                                             }
                                     } else if (shift != 0f) {
                                         Modifier.graphicsLayer {
-                                            translationY = shift
+                                            translationY = animatedShift
                                         }
                                     } else {
                                         Modifier
@@ -321,15 +327,21 @@ fun QueueScreen(
                                     onDrag = { deltaY, positionY ->
                                         dragDy += deltaY
                                         val rowPx = with(density) { dragRowHeight.toPx() }
-                                        // Drop slot tracks what is actually under
-                                        // the finger right now — not accumulated
-                                        // travel — so while auto-scrolling the
-                                        // hovered row is the target. This makes
-                                        // long-distance moves on a tiny screen
-                                        // fast and predictable.
                                         val visible = listState.layoutInfo.visibleItemsInfo
+                                        // The pointer's Y is relative to THIS row,
+                                        // not the viewport — convert to screen
+                                        // space using the row's own offset, or
+                                        // the edge bands (and thus auto-scroll
+                                        // direction) are wrong on a round watch.
+                                        val selfOffset = visible.firstOrNull { it.index == index }?.offset ?: 0
+                                        val screenY = selfOffset + positionY
+                                        val vp = listState.layoutInfo.viewportSize.height
+                                        // Drop slot tracks whatever row is under
+                                        // the finger right now (screen-space), so
+                                        // while auto-scrolling the hovered row is
+                                        // the target.
                                         val under = visible.firstOrNull {
-                                            positionY >= it.offset && positionY <= it.offset + it.size
+                                            screenY >= it.offset && screenY <= it.offset + it.size
                                         }
                                         val target = if (under != null) {
                                             under.index.coerceIn(1, queue.lastIndex)
@@ -337,36 +349,41 @@ fun QueueScreen(
                                             (index + (dragDy / rowPx).toInt()).coerceIn(1, queue.lastIndex)
                                         }
                                         dragTarget = target
-                                        // Auto-scroll near the viewport edges so a
-                                        // long queue can be traversed without
-                                        // lifting the finger. Only when REAL
-                                        // drag movement has accumulated — the
-                                        // pressed-but-still state must never
-                                        // scroll the list on its own. Speed
-                                        // ramps with how deep the finger is in
-                                        // the edge zone (1-3 items per tick).
-                                        if (dragDy != 0f) {
-                                            val vp = listState.layoutInfo.viewportSize.height
-                                            val edge = with(density) { 40.dp.toPx() }
-                                            val nowMs = System.currentTimeMillis()
-                                            if (nowMs - lastAutoScrollMs > 55L) {
+
+                                        // Auto-scroll only while the finger is
+                                        // parked in a REAL edge band — and only
+                                        // after it has sat there a moment. A
+                                        // hold anywhere else NEVER scrolls, and a
+                                        // quick touch never scrolls. Direction is
+                                        // driven by the band the finger is in
+                                        // (up at the top, down at the bottom);
+                                        // steps are a mild 1 row per tick using
+                                        // scrollBy (incremental — no animation
+                                        // cancel-churn).
+                                        val edgePx = with(density) { 44.dp.toPx() }
+                                        val atTopEdge = screenY < edgePx && visible.minByOrNull { it.index }?.index != 0
+                                        val atBottomEdge = screenY > vp - edgePx && visible.maxByOrNull { it.index }?.index != queue.lastIndex
+                                        val seekDir = when {
+                                            atTopEdge -> -1
+                                            atBottomEdge -> 1
+                                            else -> 0
+                                        }
+                                        val nowMs = System.currentTimeMillis()
+                                        if (seekDir == 0) {
+                                            edgeHoldSinceMs = 0L
+                                        } else {
+                                            if (edgeHoldSinceMs == 0L) edgeHoldSinceMs = nowMs
+                                            if (nowMs - edgeHoldSinceMs >= 160L && nowMs - lastAutoScrollMs >= 140L) {
                                                 val firstVisible = visible.minByOrNull { it.index }?.index ?: 0
                                                 val lastVisible = visible.maxByOrNull { it.index }?.index ?: firstVisible
-                                                if (positionY < edge && firstVisible > 0) {
-                                                    val depth = ((edge - positionY) / edge).coerceIn(0f, 1f)
-                                                    val step = (1 + (depth * 2).toInt()).coerceIn(1, 3)
-                                                    scope.launch {
-                                                        listState.animateScrollToItem((firstVisible - step).coerceAtLeast(0))
+                                                scope.launch {
+                                                    if (seekDir < 0) {
+                                                        listState.scrollToItem((firstVisible - 1).coerceAtLeast(0))
+                                                    } else {
+                                                        listState.scrollToItem((lastVisible + 1).coerceAtMost(queue.lastIndex))
                                                     }
-                                                    lastAutoScrollMs = nowMs
-                                                } else if (positionY > vp - edge && lastVisible < queue.lastIndex) {
-                                                    val depth = ((positionY - (vp - edge)) / edge).coerceIn(0f, 1f)
-                                                    val step = (1 + (depth * 2).toInt()).coerceIn(1, 3)
-                                                    scope.launch {
-                                                        listState.animateScrollToItem((lastVisible + step).coerceAtMost(queue.lastIndex))
-                                                    }
-                                                    lastAutoScrollMs = nowMs
                                                 }
+                                                lastAutoScrollMs = nowMs
                                             }
                                         }
                                     },
@@ -520,10 +537,6 @@ private fun QueueTrackItem(
     track: Track,
     onClick: () -> Unit,
     onRemove: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-    moveUpEnabled: Boolean,
-    moveDownEnabled: Boolean,
     modifier: Modifier = Modifier
 ) {
     WearsicSongRow(
@@ -534,67 +547,17 @@ private fun QueueTrackItem(
         modifier = modifier,
         testTag = "queue_track_${track.id}",
         trailing = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                // One-tap reorder arrows (guaranteed, gesture-free). The
-                // remove action stays next to them.
-                QueueMoveArrow(
-                    icon = Icons.Rounded.KeyboardArrowUp,
-                    contentDescription = "Move up in queue",
-                    enabled = moveUpEnabled,
-                    onClick = onMoveUp,
-                    testTag = "queue_move_up_${track.id}",
-                )
-                QueueMoveArrow(
-                    icon = Icons.Rounded.KeyboardArrowDown,
-                    contentDescription = "Move down in queue",
-                    enabled = moveDownEnabled,
-                    onClick = onMoveDown,
-                    testTag = "queue_move_down_${track.id}",
-                )
-                WearsicSongRowActionButton(
-                    icon = Icons.Rounded.Close,
-                    contentDescription = "Remove from Queue",
-                    onClick = onRemove,
-                    testTag = "queue_remove_${track.id}",
-                    tint = WearsicTextMuted
-                )
-            }
+            // Only the remove action stays inline — the row keeps its full
+            // width for the song name; reorder is drag-only.
+            WearsicSongRowActionButton(
+                icon = Icons.Rounded.Close,
+                contentDescription = "Remove from Queue",
+                onClick = onRemove,
+                testTag = "queue_remove_${track.id}",
+                tint = WearsicTextMuted
+            )
         }
     )
-}
-
-@Composable
-private fun QueueMoveArrow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    contentDescription: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    testTag: String,
-) {
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .clip(CircleShape)
-            .background(if (enabled) WearsicGlassFill else WearsicGlassFill.copy(alpha = 0.35f))
-            .border(
-                1.dp,
-                if (enabled) WearsicGlassBorder else WearsicGlassBorder.copy(alpha = 0.35f),
-                CircleShape
-            )
-            .wearsicClickable(enabled = enabled, onClick = onClick)
-            .testTag(testTag),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = if (enabled) LocalWearsicAccent.current else WearsicTextMuted.copy(alpha = 0.5f),
-            modifier = Modifier.size(20.dp)
-        )
-    }
 }
 
 @Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)

@@ -180,6 +180,18 @@ class WearsicMockApiClient(private val context: Context) : WearsicApiClient {
         return Result.success(emptyList())
     }
 
+    override suspend fun getRecommendations(
+        baseUrl: String,
+        seedTrackIds: List<String>,
+        topArtists: List<String>,
+        excludeTrackIds: List<String>,
+    ): Result<List<TrackDto>> {
+        delay(300)
+        // Reuse the same deterministic mock catalog as search, excluding seeds.
+        val all = searchTracks(baseUrl, "").getOrNull()?.tracks ?: emptyList()
+        return Result.success(all.filterNot { it.id in seedTrackIds }.take(5))
+    }
+
     override suspend fun searchAlbums(baseUrl: String, query: String): Result<List<AlbumDto>> {
         delay(300)
         return Result.success(emptyList())

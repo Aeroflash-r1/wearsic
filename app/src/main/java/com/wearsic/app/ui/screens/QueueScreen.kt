@@ -1,9 +1,10 @@
 package com.wearsic.app.ui.screens
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -50,6 +52,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -91,12 +94,11 @@ import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.util.WearsicMotion
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
-import com.wearsic.app.ui.util.wearsicLongPressDrag
 import com.wearsic.app.ui.util.wearsicRotaryScroll
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun QueueScreen(
     playbackState: PlaybackUiState,
@@ -252,8 +254,10 @@ fun QueueScreen(
         return maxOf(band - centre, centre - (vp - band), 0f)
     }
 
-    // Auto-scroll speed, armed by depth BEYOND where the drag began. Called on
-    // lift and on every movement; a speed of 0 keeps the loop idle.
+    // Auto-scroll speed, driven by how deep the finger is inside an edge
+    // band. Immediate (no dwell) and direction-agnostic: pushing into the
+    // top band scrolls up, pushing into the bottom band scrolls down, and
+    // leaving the band stops. A speed of 0 keeps the loop idle.
     fun updateAutoScroll() {
         val vp = listState.layoutInfo.viewportSize.height.toFloat()
         if (vp <= 0f) {
@@ -273,20 +277,17 @@ fun QueueScreen(
             autoScrollPxPerFrame = 0f
             return
         }
-        val startDepth = if (autoScrollStartDepthPx.isNaN()) 0f else autoScrollStartDepthPx
-        val armDepth = startDepth + with(density) { AUTO_SCROLL_ENTRY.toPx() }
+        val entry = with(density) { AUTO_SCROLL_ENTRY.toPx() }
         val depth = if (direction < 0f) depthUp else depthDown
-        // Not deep enough YET: grabbing a row that already sits in the band
-        // must not scroll until the finger deliberately pushes further in.
-        if (depth <= armDepth) {
+        if (depth <= entry) {
             autoScrollPxPerFrame = 0f
             return
         }
         // Ramp from the entry threshold to the band's far edge, then hold at a
         // brisk-but-controllable cap (4 px/frame ≈ 1.7 rows/s at watch
         // density) instead of the old 8 px/frame runaway.
-        val span = (band - armDepth).coerceAtLeast(1f)
-        val t = ((depth - armDepth) / span).coerceIn(0f, 1f)
+        val span = (band - entry).coerceAtLeast(1f)
+        val t = ((depth - entry) / span).coerceIn(0f, 1f)
         autoScrollPxPerFrame = direction * (AUTO_SCROLL_MIN_SPEED + (AUTO_SCROLL_MAX_SPEED - AUTO_SCROLL_MIN_SPEED) * t)
     }
 
@@ -319,25 +320,14 @@ fun QueueScreen(
         }
     }
 
-    // Auto-scroll loop: runs only while a row is lifted. A nonzero speed is
-    // armed but not acted on until it has persisted for the dwell window — a
-    // row dragged THROUGH an edge on its way somewhere else must not kick the
-    // list into motion. Leaving the band (speed 0) disarms the timer again.
+    // Auto-scroll loop: runs only while a row is lifted. Each frame it
+    // applies the current speed (0 = idle) and re-evaluates the drop slot
+    // under the moving list.
     LaunchedEffect(dragIndex) {
         if (dragIndex == null) return@LaunchedEffect
-        var armedAtNanos = 0L
         while (isActive) {
-            val frameNanos = withFrameNanos { it }
             val speed = autoScrollPxPerFrame
-            if (speed == 0f) {
-                armedAtNanos = 0L
-                continue
-            }
-            if (armedAtNanos == 0L) {
-                armedAtNanos = frameNanos
-                continue
-            }
-            if (frameNanos - armedAtNanos < AUTO_SCROLL_DWELL_NANOS) continue
+            if (speed == 0f) continue
             val consumed = listState.dispatchRawDelta(speed)
             if (consumed != 0f) {
                 dragScrollPx += consumed
@@ -353,17 +343,96 @@ fun QueueScreen(
         modifier = modifier
             .fillMaxSize()
             .background(WearsicAppBackground)
-    ) {
-        ScalingLazyColumn(
-            state = listState,
+    ) { padding ->
+        // Drag-to-reorder is handled HERE, at the screen root, not on the
+        // row: a lazy list recycles rows as it scrolls, and a gesture bound
+        // to a recycled row loses the pointer mid-drag (the "drops after
+        // ~3 songs" bug). Root-level capture survives any amount of
+        // auto-scroll.
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .wearsicEntrance()
-                .wearsicRotaryScroll(listState),
-            contentPadding = wearsicListContentPadding(it),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .pointerInput(queue.size, rowKeys, currentIndex) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val startPos = down.position
+                        val slop = viewConfiguration.touchSlop * 1.5f
+
+                        // Hold phase: any decisive movement before the hold
+                        // elapses hands the gesture back (scroll / click).
+                        val aborted = withTimeoutOrNull(400L) {
+                            while (true) {
+                                val e = awaitPointerEvent(PointerEventPass.Initial)
+                                val c = e.changes.firstOrNull { it.id == down.id }
+                                    ?: return@withTimeoutOrNull true
+                                if (!c.pressed || c.isConsumed) return@withTimeoutOrNull true
+                                if ((c.position - startPos).getDistance() > slop) {
+                                    return@withTimeoutOrNull true
+                                }
+                            }
+                            @Suppress("UNREACHABLE_CODE")
+                            true
+                        }
+                        if (aborted != null) return@awaitEachGesture
+
+                        // Hold achieved: find the queue row under the finger.
+                        val row = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                            startPos.y >= it.offset && startPos.y <= it.offset + it.size
+                        }
+                        val key = row?.key as? String
+                        val idx = key?.let { queueIndexByKey[it] }
+                        if (idx == null || idx == currentIndex) {
+                            // Header / toggles / now-playing card: not draggable.
+                            return@awaitEachGesture
+                        }
+
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        dragStartCentrePx = row!!.offset + row.size / 2f
+                        dragStepPx = (row.size + rowSpacingPx).toFloat()
+                        dragIndex = idx
+                        dragFingerDy = 0f
+                        dragScrollPx = 0f
+                        autoScrollStartDepthPx = edgeDepthPx()
+                        autoScrollPxPerFrame = 0f
+                        recomputeDragTarget()
+                        updateAutoScroll()
+                        down.consume()
+
+                        var prevY = startPos.y
+                        while (true) {
+                            val e = awaitPointerEvent(PointerEventPass.Initial)
+                            val c = e.changes.firstOrNull { it.id == down.id }
+                            if (c == null) {
+                                resetDrag()
+                                break
+                            }
+                            if (!c.pressed) {
+                                c.consume()
+                                commitDrag()
+                                break
+                            }
+                            c.consume()
+                            val dy = c.position.y - prevY
+                            prevY = c.position.y
+                            if (dy != 0f) {
+                                dragFingerDy += dy
+                                recomputeDragTarget()
+                                updateAutoScroll()
+                            }
+                        }
+                    }
+                }
         ) {
+            ScalingLazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .wearsicEntrance()
+                    .wearsicRotaryScroll(listState),
+                contentPadding = wearsicListContentPadding(padding),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
             item {
                 WearsicScreenHeader(
                     title = "Queue",
@@ -492,45 +561,9 @@ fun QueueScreen(
                             // also fire the row click (play/remove).
                             onClick = { if (dragIndex == null) onPlayItem(index) },
                             onRemove = { if (dragIndex == null) onRemoveItem(index) },
-                            translationY = if (isDragged) dragOffsetPx else animatedShift,
+                            translationY = if (isDragged) 0f else animatedShift,
                             lifted = isDragged,
-                            modifier = Modifier
-                                .zIndex(if (isDragged) 2f else 0f)
-                                .wearsicLongPressDrag(
-                                    key = index,
-                                    onDragStart = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        // Anchor on the row's real laid-out centre,
-                                        // and take its real (scaled) height as the
-                                        // pitch the parting rows shift by.
-                                        val own = listState.layoutInfo.visibleItemsInfo
-                                            .firstOrNull { it.key == rowKeys[index] }
-                                        dragStartCentrePx = own
-                                            ?.let { it.offset + it.size / 2f }
-                                            ?: (listState.layoutInfo.viewportSize.height / 2f)
-                                        dragStepPx = own
-                                            ?.let { (it.size + rowSpacingPx).toFloat() }
-                                            ?: 0f
-                                        dragIndex = index
-                                        dragFingerDy = 0f
-                                        dragScrollPx = 0f
-                                        // Baseline for arming auto-scroll: a row
-                                        // lifted already inside the edge band
-                                        // must be pushed FURTHER in before the
-                                        // list starts moving on its own.
-                                        autoScrollStartDepthPx = edgeDepthPx()
-                                        autoScrollPxPerFrame = 0f
-                                        recomputeDragTarget()
-                                        updateAutoScroll()
-                                    },
-                                    onDrag = { deltaY ->
-                                        dragFingerDy += deltaY
-                                        recomputeDragTarget()
-                                        updateAutoScroll()
-                                    },
-                                    onDragEnd = { commitDrag() },
-                                    onDragCancel = { resetDrag() },
-                                )
+                            modifier = Modifier.zIndex(if (isDragged) 2f else 0f)
                         )
                     }
                 }
@@ -583,6 +616,67 @@ fun QueueScreen(
 
             item {
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+            }
+
+            // Floating lifted-row preview: rendered OUTSIDE the lazy list so
+            // it survives recycling while the list auto-scrolls. Follows the
+            // finger exactly (lift centre + accumulated finger delta).
+            val draggedIndex = dragIndex
+            if (draggedIndex != null) {
+                val liftedTrack = queue.getOrNull(draggedIndex)
+                if (liftedTrack != null) {
+                    val overlayH = with(LocalDensity.current) { 64.dp.toPx() }
+                    val overlayYDp = with(LocalDensity.current) {
+                        (dragStartCentrePx + dragFingerDy - overlayH / 2f).toDp()
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .offset(y = overlayYDp)
+                            .padding(horizontal = WearsicDimens.ScreenPaddingH)
+                            .height(64.dp)
+                            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
+                            .background(WearsicSurfaceRaised.copy(alpha = 0.96f))
+                            .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.6f), RoundedCornerShape(WearsicDimens.CardRadius))
+                            .zIndex(3f),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(LocalContext.current)
+                                    .data(liftedTrack.artworkUrl)
+                                    .size(56)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = null,
+                                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Crop,
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = liftedTrack.title,
+                                    color = WearsicTextPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = liftedTrack.artist,
+                                    color = WearsicTextMuted,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -721,12 +815,10 @@ private fun QueueTrackItem(
 /** Fraction of the viewport that counts as the top/bottom edge band. */
 private const val AUTO_SCROLL_BAND_FRACTION = 0.16f
 /** How far past the lift point the finger must push in before scrolling arms. */
-private val AUTO_SCROLL_ENTRY = 18.dp
+private val AUTO_SCROLL_ENTRY = 10.dp
 /** Speeds in px per frame, ramped across the band. 4px/frame ≈ 1.7 rows/s. */
 private const val AUTO_SCROLL_MIN_SPEED = 1.2f
 private const val AUTO_SCROLL_MAX_SPEED = 4f
-/** Hold time inside the armed band before the list actually moves (~180ms). */
-private const val AUTO_SCROLL_DWELL_NANOS = 180_000_000L
 
 @Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
 @Composable

@@ -368,13 +368,22 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 }
                 if (query.isNotBlank()) {
                     musicRepository.searchAlbums(query).onSuccess { albums ->
-                        // Mirror the server's rule: prefer an album whose
-                        // uploader matches the artist (same-named albums by
-                        // others are wrong), then the top name match.
-                        val artistNorm = track.artist.trim().lowercase()
-                        album = albums.firstOrNull { a ->
-                            artistNorm.isNotEmpty() && a.uploader.trim().lowercase().contains(artistNorm)
-                        } ?: albums.firstOrNull()
+                        // Mirror the server's rule: never open a same-named
+                        // album by a different artist. Only an uploader that
+                        // equals the artist (normalized) or contains every
+                        // artist token qualifies; otherwise nothing opens.
+                        fun norm(s: String) =
+                            s.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+                        val artistNorm = norm(track.artist)
+                        val artistTokens = artistNorm.split(' ').filter { it.isNotEmpty() }
+                        album = if (artistTokens.isEmpty()) {
+                            null
+                        } else {
+                            albums.firstOrNull { a ->
+                                val uploader = norm(a.uploader)
+                                uploader == artistNorm || artistTokens.all { it in uploader }
+                            }
+                        }
                     }
                 }
             }

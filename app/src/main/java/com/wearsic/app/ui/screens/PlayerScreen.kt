@@ -38,6 +38,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
@@ -47,6 +49,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.HourglassEmpty
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Palette
@@ -78,6 +81,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -241,11 +245,10 @@ fun PlayerScreen(
             label = "playerOpen"
         )
 
-        // Touch-bezel / crown control: rotating the bezel slides between the
-        // Now Playing page and the Actions page (volume, queue, favorite,
-        // colour, download). Small rotations accumulate; a firm turn past
-        // the threshold switches page — the cue a full bezel step needs on
-        // a Galaxy Watch 7 / 44mm faces.
+        // Touch-bezel / crown control. On Now Playing the bezel SCRUBS the
+        // track (the progress ring and time visibly move); on Actions it
+        // slides back to Now Playing. Small rotations accumulate; a firm
+        // turn past the threshold performs one step.
         var rotaryCumulative by remember { mutableStateOf(0f) }
         val rotaryAccumulator = { event: androidx.compose.ui.input.rotary.RotaryScrollEvent ->
             val d = event.verticalScrollPixels
@@ -256,15 +259,20 @@ fun PlayerScreen(
                     rotaryCumulative = 0f
                 }
                 rotaryCumulative += d
-                if (kotlin.math.abs(rotaryCumulative) >= 90f) {
-                    val target = if (rotaryCumulative > 0f) 1 else 0
-                    if (target != pagerState.currentPage) {
-                        scope.launch { pagerState.animateScrollToPage(target) }
-                    }
-                    rotaryCumulative = 0f
-                    true
-                } else {
+                if (kotlin.math.abs(rotaryCumulative) < 90f) {
                     false
+                } else {
+                    rotaryCumulative = 0f
+                    val direction = if (d > 0f) 1 else -1
+                    if (pagerState.currentPage == 0 && hasTrack && playbackState.durationMs > 0L) {
+                        // Scrub: ±10s per firm step, clamped to the track.
+                        val target = (playbackState.currentPositionMs + direction * 10_000L)
+                            .coerceIn(0L, playbackState.durationMs)
+                        onSeekTo(target)
+                    } else if (pagerState.currentPage == 1) {
+                        scope.launch { pagerState.animateScrollToPage(0) }
+                    }
+                    true
                 }
             }
         }
@@ -371,16 +379,17 @@ fun PlayerScreen(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Page 0 — Now Playing: artwork disc, metadata, transport, and the
-// scroll-up lyrics view. The whole page scrolls vertically: the player
-// occupies exactly one viewport, and dragging up reveals the lyric sheet
-// beneath it (like pulling up a liner sheet).
+// Page 0 — Now Playing: artwork disc, metadata, transport — and a pull-up
+// lyrics view that LOCKS into a fullscreen sheet (opaque artwork-tinted
+// backdrop, back button, rotary scroll, precise active-line centering).
 // ─────────────────────────────────────────────────────────────────────────
 
+private const val LYRICS_UP_DRAG_PX = 90f
+private const val LYRICS_EXIT_DRAG_PX = 60f
 private val LYRICS_LINE_HEIGHT = 48.dp
 private val LYRICS_LINE_GAP = 2.dp
-private val LYRICS_TOP_PAD = 80.dp
-private val LYRICS_BOTTOM_PAD = 200.dp
+private val LYRICS_TOP_PAD = 110.dp
+private val LYRICS_BOTTOM_PAD = 170.dp
 
 @Composable
 private fun NowPlayingPage(
@@ -407,36 +416,19 @@ private fun NowPlayingPage(
     onRetryLyrics: () -> Unit = {},
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        // Short viewports (a clipped scrim, or a smaller round face) get a
-        // tighter scale instead of a clipped control.
         val compact = maxHeight < 236.dp
         val discSize: Dp = (maxWidth * 0.36f).coerceIn(if (compact) 56.dp else 64.dp, if (compact) 72.dp else 92.dp)
         val playSize: Dp = if (compact) 48.dp else (maxWidth * 0.26f).coerceIn(50.dp, 60.dp)
 
-        val scrollState = rememberScrollState()
-        val viewportHeight = maxHeight
-        val viewportPx = with(LocalDensity.current) { viewportHeight.toPx() }
-        // Reveal threshold: 30% of a viewport scrolled up counts as "the
-        // lyrics are visible" — enough to start fetching and syncing. Also
-        // engaged when the sheet is fully scrolled: a SHORT lyric set (a
-        // few lines) may never reach 30% of the viewport, and it must still
-        // fetch and highlight.
-        val engaged = scrollState.value > viewportPx * 0.30f ||
-            (scrollState.maxValue > 0 && scrollState.value >= scrollState.maxValue - 1f)
-        val synced = lyricsState.mode == LyricsMode.Synced && lyricsState.lines.isNotEmpty()
-        val density = LocalDensity.current
+        // ── Lyrics lock state ─────────────────────────────────────────────
+        // Once pulled up, the sheet is FULLSCREEN (locked). Exit via the
+        // Now Playing button or a pull-down at the top of the lyrics.
+        var lyricsMode by remember(track.id) { mutableStateOf(false) }
+        var lyricsScrollState = rememberScrollState()
 
-        // Fetch once per track when the sheet is first revealed (the
-        // ViewModel dedupes; the server caches).
-        LaunchedEffect(engaged, track.id) {
-            if (engaged && hasTrack) onRequestLyrics()
-        }
-
-        // Highlight sync. The playback state emits position every ~2s; this
-        // interpolates between emissions using the wall clock, so the active
-        // line tracks the real Media3 position tightly even between ticks.
-        // Runs only while the sheet is visible; it is pure arithmetic + a
-        // 150ms delay — no network, no playback changes.
+        // Highlight sync — runs only while the sheet is visible. Interpolates
+        // between the playback state's ~2s position emissions using the wall
+        // clock, re-anchoring on every sample/seek and on pause→resume.
         val currentPosition by rememberUpdatedState(positionMs)
         val currentIsPlaying by rememberUpdatedState(isPlaying)
         var activeIndex by remember(track.id) { mutableIntStateOf(-1) }
@@ -444,9 +436,10 @@ private fun NowPlayingPage(
         var anchorPos by remember(track.id) { mutableLongStateOf(0L) }
         var anchorAtMs by remember(track.id) { mutableLongStateOf(0L) }
         var prevPlaying by remember(track.id) { mutableStateOf(false) }
+        val synced = lyricsState.mode == LyricsMode.Synced && lyricsState.lines.isNotEmpty()
 
-        LaunchedEffect(engaged, track.id, synced) {
-            if (!engaged || !synced) {
+        LaunchedEffect(lyricsMode, track.id, synced) {
+            if (!lyricsMode || !synced) {
                 activeIndex = -1
                 return@LaunchedEffect
             }
@@ -458,9 +451,6 @@ private fun NowPlayingPage(
                     anchorPos = emitted
                     anchorAtMs = now
                 }
-                // Resume: the anchor is stale after a pause (no new emissions
-                // happened while stopped). Re-anchor on the false→true edge so
-                // the highlight does not jump ahead for a tick or two.
                 if (currentIsPlaying && !prevPlaying) {
                     anchorPos = emitted
                     anchorAtMs = now
@@ -476,12 +466,198 @@ private fun NowPlayingPage(
             }
         }
 
-        // Smoothly centre the active line while the sheet is engaged.
-        val linePitchPx = with(density) { (LYRICS_LINE_HEIGHT + LYRICS_LINE_GAP).toPx() }
-        val lineHeightPx = with(density) { LYRICS_LINE_HEIGHT.toPx() }
-        val topPadPx = with(density) { LYRICS_TOP_PAD.toPx() }
-        LaunchedEffect(activeIndex, track.id, engaged, synced) {
-            if (engaged && synced && activeIndex >= 0 && scrollState.maxValue > 0) {
+        if (lyricsMode && hasTrack) {
+            // Fetch once per track when the sheet is first opened.
+            LaunchedEffect(track.id) { onRequestLyrics() }
+
+            LyricsFullscreen(
+                track = track,
+                lyricsState = lyricsState,
+                activeIndex = activeIndex,
+                scrollState = lyricsScrollState,
+                colors = colors,
+                onExit = { lyricsMode = false },
+                onRetry = onRetryLyrics,
+            )
+            return@BoxWithConstraints
+        }
+
+        // ── Player block (full viewport; no outer scroll) ────────────────
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = WearsicDimens.ScreenPaddingH)
+                .pointerInput(hasTrack, track.id) {
+                    // Pull UP to lock into lyrics. Only unconsumed vertical
+                    // movement counts (the disc's ring-scrub consumes its own
+                    // drags), and the deadline is generous so a quick flick on
+                    // the disc never opens the sheet.
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var total = 0f
+                        while (true) {
+                            val e = awaitPointerEvent()
+                            val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!c.pressed) break
+                            if (!c.isConsumed) {
+                                total += c.positionChange().y
+                                if (total < -LYRICS_UP_DRAG_PX) {
+                                    c.consume()
+                                    lyricsMode = true
+                                    break
+                                }
+                            }
+                        }
+                    }
+                },
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.weight(0.7f))
+
+            key(track.id) {
+            ArtworkDisc(
+                artworkUrl = track.artworkUrl,
+                hasTrack = hasTrack,
+                progress = progress,
+                colors = colors,
+                size = discSize,
+                rotateArtwork = rotateArtwork,
+                onClick = onOpenAlbum?.let { { it(track) } },
+                // Drag the disc along its ring to scrub: angular position
+                // maps to the track duration (top = 0, clockwise). Falls
+                // back to the transport buttons when duration is unknown.
+                modifier = Modifier
+                    .wearsicEntrance(fromScale = 0.90f, riseDp = 10f)
+                    .pointerInput(hasTrack, track.id, durationMs) {
+                        if (!hasTrack || durationMs <= 0L) return@pointerInput
+                        detectDragGestures(
+                            onDragStart = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val sizePx = size.width.toFloat()
+                                val cx = sizePx / 2f
+                                val cy = size.height.toFloat() / 2f
+                                val dx = change.position.x - cx
+                                val dy = change.position.y - cy
+                                val rad = kotlin.math.atan2(dy, dx)
+                                // -90° (up) = 0: clockwise fraction.
+                                val frac = ((rad * 180f / kotlin.math.PI.toFloat()) + 90f + 360f) % 360f / 360f
+                                onSeekTo((durationMs * frac).toLong().coerceIn(0L, durationMs))
+                            }
+                        )
+                    }
+            )
+            }
+
+            Spacer(modifier = Modifier.height(if (compact) 4.dp else 8.dp))
+
+            // Single line, always. A long title used to wrap to two lines,
+            // which pushed the artist line down and clipped at the curved
+            // edge; now the full name slides sideways instead.
+            WearsicMarqueeText(
+                text = if (hasTrack) track.title else "Nothing playing",
+                color = Color.White,
+                fontSize = if (compact) 14.sp else 15.sp,
+                lineHeight = if (compact) 16.sp else 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-0.2).sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wearsicEntrance(delayMillis = 50, fromScale = 0.98f, riseDp = 6f)
+            )
+
+            // One line: artist · elapsed/total. The time segment is dropped
+            // when the server reported no duration — "Artist · 1:04 / --:--"
+            // read as noise — and a blank artist never leaves a dangling "·".
+            val subtitle = when {
+                !hasTrack -> "Pick a song from Library"
+                else -> listOf(
+                    track.artist.trim(),
+                    if (durationMs > 0L) "${formatTime(positionMs)} / ${formatTime(durationMs)}" else ""
+                ).filter { it.isNotBlank() }.joinToString(" · ")
+            }
+
+            Text(
+                text = subtitle,
+                color = Color.White.copy(alpha = 0.70f),
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .padding(top = 3.dp)
+                    .wearsicEntrance(delayMillis = 90, fromScale = 0.98f, riseDp = 6f)
+            )
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            TransportRow(
+                isPlaying = isPlaying,
+                isBuffering = isBuffering,
+                progress = progress,
+                playSize = playSize,
+                onTogglePlayPause = onTogglePlayPause,
+                onSkipPrevious = onSkipPrevious,
+                onSkipNext = onSkipNext,
+                colors = colors,
+                enabled = hasTrack
+            )
+
+            Spacer(modifier = Modifier.height(22.dp))
+
+            // Pull-up affordance.
+            Text(
+                text = "↑ Lyrics",
+                color = Color.White.copy(alpha = 0.32f),
+                fontSize = 10.sp,
+                letterSpacing = 1.2.sp,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+
+            Spacer(modifier = Modifier.height(2.dp))
+        }
+    }
+}
+
+/**
+ * Fullscreen, LOCKED lyrics sheet. Opaque artwork-tinted backdrop (the
+ * artwork's dark hue, not translucent black), a Now Playing/back button,
+ * rotary scrolling, and precise auto-centering of the active line.
+ */
+@Composable
+private fun LyricsFullscreen(
+    track: Track,
+    lyricsState: LyricsViewModel.LyricsUiState,
+    activeIndex: Int,
+    scrollState: androidx.compose.foundation.ScrollState,
+    colors: ArtworkColors,
+    onExit: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val backdrop = if (colors.fromArtwork) {
+        lerp(colors.backdrop, colors.accentStrong, 0.18f)
+    } else {
+        colors.backdrop
+    }
+    val activeColor = if (colors.fromArtwork) {
+        lerp(colors.accent, Color.White, 0.12f)
+    } else {
+        Color.White
+    }
+
+    val density = LocalDensity.current
+    val linePitchPx = with(density) { (LYRICS_LINE_HEIGHT + LYRICS_LINE_GAP).toPx() }
+    val lineHeightPx = with(density) { LYRICS_LINE_HEIGHT.toPx() }
+    val topPadPx = with(density) { LYRICS_TOP_PAD.toPx() }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val viewportPx = with(density) { maxHeight.toPx() }
+
+        // Centre the active line, but only while the sheet is open and synced.
+        LaunchedEffect(activeIndex, track.id, lyricsState.mode) {
+            val synced = lyricsState.mode == LyricsMode.Synced && lyricsState.lines.isNotEmpty()
+            if (synced && activeIndex >= 0 && scrollState.maxValue > 0) {
                 val target = (topPadPx + activeIndex * linePitchPx + lineHeightPx / 2f - viewportPx / 2f)
                     .coerceIn(0f, scrollState.maxValue.toFloat())
                 if (kotlin.math.abs(target - scrollState.value) > lineHeightPx * 0.5f) {
@@ -490,236 +666,145 @@ private fun NowPlayingPage(
             }
         }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState),
-        ) {
-            // ── Player block: exactly one viewport tall ───────────────────
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(viewportHeight)
-                    .padding(horizontal = WearsicDimens.ScreenPaddingH),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Spacer(modifier = Modifier.weight(0.7f))
-
-                key(track.id) {
-                ArtworkDisc(
-                    artworkUrl = track.artworkUrl,
-                    hasTrack = hasTrack,
-                    progress = progress,
-                    colors = colors,
-                    size = discSize,
-                    rotateArtwork = rotateArtwork,
-                    onClick = onOpenAlbum?.let { { it(track) } },
-                    // Drag the disc along its ring to scrub: angular position
-                    // maps to the track duration (top = 0, clockwise). Falls
-                    // back to the transport buttons when duration is unknown.
-                    modifier = Modifier
-                        .wearsicEntrance(fromScale = 0.90f, riseDp = 10f)
-                        .pointerInput(hasTrack, track.id, durationMs) {
-                            if (!hasTrack || durationMs <= 0L) return@pointerInput
-                            detectDragGestures(
-                                onDragStart = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    val sizePx = size.width.toFloat()
-                                    val cx = sizePx / 2f
-                                    val cy = size.height.toFloat() / 2f
-                                    val dx = change.position.x - cx
-                                    val dy = change.position.y - cy
-                                    val rad = kotlin.math.atan2(dy, dx)
-                                    // -90° (up) = 0: clockwise fraction.
-                                    val frac = ((rad * 180f / kotlin.math.PI.toFloat()) + 90f + 360f) % 360f / 360f
-                                    onSeekTo((durationMs * frac).toLong().coerceIn(0L, durationMs))
-                                }
-                            )
-                        }
-                )
-                }
-
-                Spacer(modifier = Modifier.height(if (compact) 4.dp else 8.dp))
-
-                // Single line, always. A long title used to wrap to two lines,
-                // which pushed the artist line down and clipped at the curved
-                // edge; now the full name slides sideways instead.
-                WearsicMarqueeText(
-                    text = if (hasTrack) track.title else "Nothing playing",
-                    color = Color.White,
-                    fontSize = if (compact) 14.sp else 15.sp,
-                    lineHeight = if (compact) 16.sp else 18.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = (-0.2).sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wearsicEntrance(delayMillis = 50, fromScale = 0.98f, riseDp = 6f)
-                )
-
-                // One line: artist · elapsed/total. The time segment is dropped
-                // when the server reported no duration — "Artist · 1:04 / --:--"
-                // read as noise — and a blank artist never leaves a dangling "·".
-                val subtitle = when {
-                    !hasTrack -> "Pick a song from Library"
-                    else -> listOf(
-                        track.artist.trim(),
-                        if (durationMs > 0L) "${formatTime(positionMs)} / ${formatTime(durationMs)}" else ""
-                    ).filter { it.isNotBlank() }.joinToString(" · ")
-                }
-
-                Text(
-                    text = subtitle,
-                    color = Color.White.copy(alpha = 0.70f),
-                    fontSize = 11.sp,
-                    lineHeight = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .padding(top = 3.dp)
-                        .wearsicEntrance(delayMillis = 90, fromScale = 0.98f, riseDp = 6f)
-                )
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                TransportRow(
-                    isPlaying = isPlaying,
-                    isBuffering = isBuffering,
-                    progress = progress,
-                    playSize = playSize,
-                    onTogglePlayPause = onTogglePlayPause,
-                    onSkipPrevious = onSkipPrevious,
-                    onSkipNext = onSkipNext,
-                    colors = colors,
-                    enabled = hasTrack
-                )
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Pull-up affordance; fades once the sheet is engaged.
-                androidx.compose.animation.AnimatedVisibility(visible = !engaged) {
-                    Text(
-                        text = "↑ Lyrics",
-                        color = Color.White.copy(alpha = 0.32f),
-                        fontSize = 10.sp,
-                        letterSpacing = 1.2.sp,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(2.dp))
-            }
-
-            // ── Lyrics sheet (revealed by scrolling up) ───────────────────
-            LyricsSheet(
-                lyricsState = lyricsState,
-                activeIndex = activeIndex,
-                hasTrack = hasTrack,
-                colors = colors,
-                onRetry = onRetryLyrics,
-                modifier = Modifier.padding(horizontal = WearsicDimens.ScreenPaddingH),
-            )
-
-            Spacer(modifier = Modifier.height(LYRICS_BOTTOM_PAD))
-        }
-    }
-}
-
-@Composable
-private fun LyricsSheet(
-    lyricsState: LyricsViewModel.LyricsUiState,
-    activeIndex: Int,
-    hasTrack: Boolean,
-    colors: ArtworkColors,
-    onRetry: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    // The active line takes the artwork's accent (when real colours were
-    // extracted) so the sheet reads as part of the album art, not as white
-    // text on black. A hint of white keeps it readable on any palette.
-    val activeColor = if (colors.fromArtwork) {
-        lerp(colors.accent, Color.White, 0.12f)
-    } else {
-        Color.White
-    }
-    val headerColor = if (colors.fromArtwork) colors.accent else Color.White.copy(alpha = 0.9f)
-
-    Column(modifier = modifier.fillMaxWidth()) {
-        // Translucent glass panel: white 8% fill + 18% border, with a soft
-        // accent glow bleeding from the top edge — the same material
-        // language as the rest of the player.
+        // Opaque artwork-tinted backdrop.
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
+                .fillMaxSize()
+                .background(backdrop),
+        )
+
+        // Soft accent glow from the top edge.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        listOf(
-                            colors.accent.copy(alpha = if (colors.fromArtwork) 0.10f else 0.05f),
-                            Color.Transparent,
-                        )
+                        listOf(colors.accent.copy(alpha = 0.16f), Color.Transparent),
                     )
-                )
-                .background(WearsicGlassFill)
-                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(24.dp))
-                .padding(horizontal = 12.dp, vertical = 18.dp),
-        ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "Lyrics",
-                    color = headerColor,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.5.sp,
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
+                ),
+        )
 
-                when {
-                    !hasTrack -> {
-                        LyricsPlaceholder("No song playing", isError = false, onRetry = null)
+        // Exit affordance (Now Playing), top-right, inside the safe area.
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 10.dp, end = 12.dp)
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.10f))
+                .border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape)
+                .wearsicClickable(onClick = onExit),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.KeyboardArrowDown,
+                contentDescription = "Back to Now Playing",
+                tint = Color.White.copy(alpha = 0.85f),
+                modifier = Modifier.size(22.dp),
+            )
+        }
+
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+            Text(
+                text = "Lyrics",
+                color = if (colors.fromArtwork) colors.accent else Color.White.copy(alpha = 0.9f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 0.5.sp,
+                modifier = Modifier.padding(top = 16.dp, bottom = 6.dp),
+            )
+            lyricsState.source?.let {
+                Text(
+                    text = "via $it",
+                    color = Color.White.copy(alpha = 0.35f),
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+            }
+
+            // The lyrics body: its own scroll (rotary + auto-centering),
+            // pull-down at the top exits back to the player.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .onRotaryScrollEvent {
+                        val d = it.verticalScrollPixels
+                        if (d == 0f) false else {
+                            scrollState.dispatchRawDelta(d)
+                            true
+                        }
                     }
-                    lyricsState.isLoading -> {
-                        LyricsLoading()
-                    }
-                    lyricsState.errorMessage != null -> {
-                        LyricsPlaceholder(
-                            lyricsState.errorMessage ?: "Could not load lyrics",
-                            isError = true,
-                            onRetry = onRetry,
-                        )
-                    }
-                    lyricsState.mode == LyricsMode.Unavailable -> {
-                        LyricsPlaceholder(
-                            "No lyrics found for this song",
-                            isError = false,
-                            onRetry = onRetry,
-                        )
-                    }
-                    lyricsState.mode == LyricsMode.Plain -> {
-                        lyricsState.lines.forEach { line ->
-                            Text(
-                                text = line.text,
-                                color = Color.White.copy(alpha = 0.62f),
-                                fontSize = 14.sp,
-                                lineHeight = 22.sp,
-                                modifier = Modifier.padding(bottom = 10.dp),
+                    .pointerInput(track.id) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            var total = 0f
+                            while (true) {
+                                val e = awaitPointerEvent()
+                                val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!c.pressed) break
+                                if (!c.isConsumed) {
+                                    total += c.positionChange().y
+                                    // Only near the top: a pull-down there
+                                    // returns to the player.
+                                    if (total > LYRICS_EXIT_DRAG_PX && scrollState.value <= 24f) {
+                                        c.consume()
+                                        onExit()
+                                        break
+                                    }
+                                }
+                            }
+                        }
+                    },
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState),
+                ) {
+                    Spacer(modifier = Modifier.height(LYRICS_TOP_PAD))
+
+                    when {
+                        lyricsState.isLoading -> {
+                            LyricsLoading()
+                        }
+                        lyricsState.errorMessage != null -> {
+                            LyricsPlaceholder(
+                                lyricsState.errorMessage ?: "Could not load lyrics",
+                                isError = true,
+                                onRetry = onRetry,
                             )
                         }
-                        LyricsSourceTag(lyricsState.source)
-                    }
-                    else -> {
-                        // Synced rows: highlight the active line in the
-                        // artwork accent, dim the rest.
-                        lyricsState.lines.forEachIndexed { index, line ->
-                            SyncedLyricLine(
-                                text = line.text,
-                                active = index == activeIndex,
-                                activeColor = activeColor,
+                        lyricsState.mode == LyricsMode.Unavailable -> {
+                            LyricsPlaceholder(
+                                "No lyrics found for this song",
+                                isError = false,
+                                onRetry = onRetry,
                             )
                         }
-                        LyricsSourceTag(lyricsState.source)
+                        lyricsState.mode == LyricsMode.Plain -> {
+                            lyricsState.lines.forEach { line ->
+                                Text(
+                                    text = line.text,
+                                    color = Color.White.copy(alpha = 0.66f),
+                                    fontSize = 14.sp,
+                                    lineHeight = 22.sp,
+                                    modifier = Modifier.padding(bottom = 10.dp),
+                                )
+                            }
+                        }
+                        else -> {
+                            lyricsState.lines.forEachIndexed { index, line ->
+                                SyncedLyricLine(
+                                    text = line.text,
+                                    active = index == activeIndex,
+                                    activeColor = activeColor,
+                                )
+                            }
+                        }
                     }
+
+                    Spacer(modifier = Modifier.height(LYRICS_BOTTOM_PAD))
                 }
             }
         }
@@ -807,24 +892,6 @@ private fun LyricsPlaceholder(message: String, isError: Boolean, onRetry: (() ->
         }
     }
 }
-
-@Composable
-private fun LyricsSourceTag(source: String?) {
-    if (source != null) {
-        Text(
-            text = "via $source",
-            color = Color.White.copy(alpha = 0.3f),
-            fontSize = 10.sp,
-            modifier = Modifier.padding(top = 6.dp, bottom = 12.dp),
-        )
-    }
-}
-/**
- * The album art as a circular focal point, wrapped by the playback progress
- * ring and a soft radial accent tint. One draw pass for ring + tint; the
- * animated progress is read in the DRAW phase only, so ticking never
- * recomposes the player.
- */
 @Composable
 private fun ArtworkDisc(
     artworkUrl: String?,

@@ -115,11 +115,6 @@ fun SearchScreen(
 ) {
     val listState = rememberScalingLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
-    // Shimmer-ONLY loading (no previous results on screen): freeze the list so
-    // the three placeholders cannot be scrolled off into empty space. A
-    // re-search that still shows results keeps the compact strip above them
-    // and stays scrollable — there is real content to move through.
-    val shimmerOnly = searchState.isSearching && searchState.results.isEmpty()
     // Single source of truth: the ViewModel state. The field writes straight
     // back through onSearchTextChanged, so no local remember-mirror is needed.
     val typedQuery = searchState.query
@@ -151,12 +146,11 @@ fun SearchScreen(
     ) {
         ScalingLazyColumn(
             state = listState,
-            userScrollEnabled = !shimmerOnly,
             modifier = Modifier
                 .fillMaxSize()
                 .wearsicEntrance()
                 .testTag("search_lazy_column")
-                .wearsicRotaryScroll(listState, enabled = !shimmerOnly),
+                .wearsicRotaryScroll(listState),
             contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally

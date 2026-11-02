@@ -94,9 +94,28 @@ tasks.jar {
     }
 }
 
+// Bytecode target is Java 17 on purpose, and the TOOLCHAIN is intentionally
+// NOT pinned anymore.
+//
+// `jvmToolchain(17)` made a JDK 17 mandatory on every build machine — a phone
+// running only openjdk-25, or a CI image with 21, could not build this module
+// at all. Bytecode compatibility is what the deployment needs (Java 17 classes
+// run on 17, 21 and 25 alike), so that is what is pinned; which JDK does the
+// compiling is left to the environment.
+//
+// -Xjdk-release=17 keeps the other half of the promise: compiling on JDK 25
+// must not silently link against a JDK 25 API that an install still on 17 does
+// not have.
 kotlin {
-    // Java 17 — matches the Termux deployment (openjdk-17).
-    jvmToolchain(17)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        freeCompilerArgs.add("-Xjdk-release=17")
+    }
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 tasks.test {

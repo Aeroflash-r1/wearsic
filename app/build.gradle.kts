@@ -42,7 +42,14 @@ signingConfigs {
       )
       signingConfig = signingConfigs.getByName("release")
     }
-    debug { signingConfig = signingConfigs.getByName("debug") }
+    // `.test` suffix so a local debug build can be installed beside the release
+    // app on the watch for A/B testing. This belongs to `debug` itself; setting
+    // it from inside the `minified` block (where it previously lived) mutated a
+    // different build type's configuration as a side effect.
+    debug {
+      signingConfig = signingConfigs.getByName("debug")
+      applicationIdSuffix = ".test"
+    }
 
     // On-device diagnostic build: R8-minified like release (so it is smooth on
     // the watch — plain debug bytecode is unusably slow) but signed with the

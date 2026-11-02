@@ -229,6 +229,11 @@ fun main() {
     }
 
     val audioProxy = AudioProxy(gateway, streamClient, transcoder)
+
+    // Lyrics: LRCLIB through the tuned proxy client (its 20s whole-call
+    // timeout is plenty for a single small GET, and it pools connections).
+    val lyricsService = LyricsService(LrclibProvider(proxyClient))
+
     val apiKey = System.getenv("WEARSIC_API_KEY")?.trim()?.takeIf { it.isNotEmpty() }
 
     // Self-healing: canary watchdog + engine auto-update pipeline.
@@ -333,6 +338,7 @@ fun main() {
             canary = canary,
             engineUpdater = engineUpdater,
             crashReporter = crashReporter,
+            lyricsService = lyricsService,
         )
         // Startup banner once the app is actually live (connectors bound),
         // so the log opens with one readable box instead of scattered lines.
@@ -384,6 +390,7 @@ fun Application.module(
     canary: ExtractionCanary? = null,
     engineUpdater: EngineUpdater? = null,
     crashReporter: CrashReporter? = null,
+    lyricsService: LyricsService = LyricsService(LrclibProvider(HttpClient(CIO))),
 ) {
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true; encodeDefaults = true })
@@ -771,6 +778,24 @@ fun Application.module(
                 val title = call.request.queryParameters["t"].orEmpty().trim()
                 val artist = call.request.queryParameters["a"].orEmpty().trim()
                 call.respond(AlbumResolveResponse(searchOrchestrator.resolveAlbum(videoId, title, artist)))
+            }
+
+            // Synced/plain lyrics for the player's scroll-up lyrics view. The
+            // watch sends what it already has (no server-side metadata fetch);
+            // the service handles provider lookup + LRC shaping + caching.
+            get("/lyrics") {
+                if (!call.checkRateLimited(metaLimiter, apiKey, "Too many lyrics requests; slow down and retry shortly")) {
+                    return@get
+                }
+                val videoId = call.request.queryParameters["v"].orEmpty()
+                val title = call.request.queryParameters["t"].orEmpty().trim()
+                val artist = call.request.queryParameters["a"].orEmpty().trim()
+                val durationMs = call.request.queryParameters["d"]?.toLongOrNull() ?: 0L
+                if (!YoutubeGateway.VIDEO_ID_RE.matches(videoId) || (title.isEmpty() && artist.isEmpty())) {
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse("Missing or invalid track info"))
+                    return@get
+                }
+                call.respond(lyricsService.lyrics(LyricsQuery(videoId, title, artist, durationMs)))
             }
 
             post("/recommendations") {

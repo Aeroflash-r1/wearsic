@@ -138,6 +138,33 @@ not "not ready".
   every other endpoint.
 - `400` for a malformed video id.
 
+### 2-d. Lyrics (synced + plain)
+
+- **GET** `/api/lyrics?v={videoId}&t={title}&a={artist}&d={durationMs}`
+- **Response** `200 OK`:
+  ```json
+  {
+    "mode": "synced" | "plain" | "unavailable",
+    "source": "lrclib",
+    "lines": [ { "timeMs": 12340, "text": "First line" } ],
+    "plainText": "… (plain mode only)"
+  }
+  ```
+  - `synced` — `lines` carry `timeMs`; the client highlights the line at the
+    playback position.
+  - `plain` — timed lyrics unavailable; `lines` are untimed display
+    paragraphs and `plainText` holds the full text.
+  - `unavailable` — nothing found (missing, instrumental, or provider
+    failure); `lines` is empty. Not an error.
+- Provider: LRCLIB (community-maintained, free API; LRC + plain from one
+  GET). The provider is behind an adapter — swapping or adding providers is
+  a one-file change.
+- LRC parsing is server-side; malformed LRC degrades to the plain text.
+- Cached by `artist|title|duration (15s bucket)`: 24h for a hit, 1h for a
+  miss. Rate-limited with the metadata bucket (120/min, burst 40). Protected
+  by the same `/api` auth as every other endpoint.
+- `400` for a malformed video id or missing title/artist.
+
 ### 2-b. Prewarm (resolve ahead of playback)
 
 - **GET** `/api/prewarm/{videoId}`

@@ -183,6 +183,10 @@ Also authenticated when `WEARSIC_API_KEY` is set:
 - `GET /api/albums/resolve?v=&t=&a=` — the album for a video
   (`{"album": {...}|null}`; pinned by a song-row match + album resolve with
   artist verification — used by the watch's player disc)
+- `GET /api/lyrics?v=&t=&a=&d=` — synced (LRC) or plain lyrics
+  (`{"mode": "synced"|"plain"|"unavailable", ...}`; LRCLIB behind a
+  provider adapter, server-side LRC parsing, bounded cache — used by the
+  watch's scroll-up lyrics sheet)
 - `GET /api/config/youtube-cookie` — returns `{"hasCookie": true|false}`
 - `POST /api/config/youtube-cookie` — body `{"cookie": "SID=...; HSID=..."}`; saves the cookie in SQLite and applies it to every YouTube request immediately. Send `{"cookie":""}` to clear it.
 

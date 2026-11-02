@@ -41,9 +41,15 @@ class ApiIntegrationTest {
         override suspend fun playlistByUrl(url: String): PlaylistTracksResponse? = null
     }
 
+    private class FakeLyricsProvider : LyricsProvider {
+        override suspend fun fetch(query: LyricsQuery): LyricsFetchResult =
+            LyricsFetchResult.NotAvailable
+    }
+
     private fun withServer(
         apiKey: String? = null,
         healthMeter: ExtractionHealthMeter? = null,
+        lyricsService: LyricsService = LyricsService(FakeLyricsProvider()),
         block: suspend ApplicationTestBuilder.() -> Unit,
     ) = testApplication {
         val dbFile = Files.createTempFile("wearsic-test", ".db").toFile().apply { deleteOnExit() }
@@ -64,7 +70,7 @@ class ApiIntegrationTest {
 
         application {
             // module() installs ContentNegotiation itself — do not duplicate it here.
-            module(gateway, database, audioProxy, apiKey, orchestrator, transcoder, healthMeter)
+            module(gateway, database, audioProxy, apiKey, orchestrator, transcoder, healthMeter, lyricsService = lyricsService)
         }
         block()
     }
@@ -130,6 +136,48 @@ class ApiIntegrationTest {
         }
         assertEquals(HttpStatusCode.OK, ok.status)
         assertTrue(ok.bodyAsText().contains("\"album\":null"), ok.bodyAsText())
+    }
+
+    @Test
+    fun `lyrics endpoint is authenticated, validates inputs, and answers`() = withServer(apiKey = "secret") {
+        // Missing auth -> 401.
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            client.get("/api/lyrics?v=abc123abc12&t=Song&a=Artist").status,
+        )
+        // Invalid video id -> 400.
+        val bad = client.get("/api/lyrics?v=tooshort&t=Song&a=Artist") {
+            header("X-Wearsic-Key", "secret")
+        }
+        assertEquals(HttpStatusCode.BadRequest, bad.status)
+        // Valid request against the stub (unavailable) service -> 200 + shape.
+        val ok = client.get("/api/lyrics?v=abc123abc12&t=Song&a=Artist&d=240000") {
+            header("X-Wearsic-Key", "secret")
+        }
+        assertEquals(HttpStatusCode.OK, ok.status)
+        val body = ok.bodyAsText()
+        assertTrue(body.contains("\"mode\":\"unavailable\""), body)
+        assertTrue(body.contains("\"lines\":[]"), body)
+    }
+
+    @Test
+    fun `lyrics service shapes a synced response through the route`() = withServer(
+        apiKey = "secret",
+        lyricsService = LyricsService(
+            object : LyricsProvider {
+                override suspend fun fetch(query: LyricsQuery): LyricsFetchResult =
+                    LyricsFetchResult.Synced("[00:01.00]hello\n[00:02.00]world\n", "test")
+            },
+        ),
+    ) {
+        val ok = client.get("/api/lyrics?v=abc123abc12&t=Song&a=Artist&d=240000") {
+            header("X-Wearsic-Key", "secret")
+        }
+        assertEquals(HttpStatusCode.OK, ok.status)
+        val body = ok.bodyAsText()
+        assertTrue(body.contains("\"mode\":\"synced\""), body)
+        assertTrue(body.contains("\"timeMs\":1000"), body)
+        assertTrue(body.contains("\"text\":\"hello\""), body)
     }
 
     @Test

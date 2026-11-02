@@ -191,7 +191,7 @@ class YoutubeGateway(
          * "Made for you", so a stalled client must not hold the shelf open.
          */
         private const val LEAN_RELATED_TIMEOUT_MS: Long = 6_000L
-        private val VIDEO_ID_RE = Regex("[A-Za-z0-9_-]{11}")
+        internal val VIDEO_ID_RE = Regex("[A-Za-z0-9_-]{11}")
 
         /** Duration badge text ("3:59", "1:02:03") on a lockup thumbnail. */
         private val LENGTH_TEXT_RE = Regex("""^(\d+:)?\d{1,3}:\d{2}$""")

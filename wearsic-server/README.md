@@ -180,6 +180,9 @@ Also authenticated when `WEARSIC_API_KEY` is set:
 
 - `GET /api/search/albums?q=` — album/playlist search (maximum 10 results;
   album `id` is a full playlist URL, feed it to `/api/playlist?url=`)
+- `GET /api/albums/resolve?v=&t=&a=` — the album for a video
+  (`{"album": {...}|null}`; pinned by a song-row match + album resolve with
+  artist verification — used by the watch's player disc)
 - `GET /api/config/youtube-cookie` — returns `{"hasCookie": true|false}`
 - `POST /api/config/youtube-cookie` — body `{"cookie": "SID=...; HSID=..."}`; saves the cookie in SQLite and applies it to every YouTube request immediately. Send `{"cookie":""}` to clear it.
 

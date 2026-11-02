@@ -67,6 +67,14 @@ class MetadataSearchOrchestrator(
         const val LEGACY_IT_PREFIX = "it:"
 
         /**
+         * TTL for a positively resolved album (album membership is stable —
+         * 24h is conservative) vs a miss (1h, so a track whose catalog row
+         * gains an album later can still resolve).
+         */
+        private const val ALBUM_RESOLVE_TTL_MS = 24L * 60 * 60 * 1000
+        private const val ALBUM_RESOLVE_MISS_TTL_MS = 60L * 60 * 1000
+
+        /**
          * Wall-clock budget for one metadata search. A hung fetch must never
          * park a SingleFlight key forever — later identical queries would hang
          * with it until restart. Timeouts fall through to the same empty path
@@ -513,5 +521,133 @@ class MetadataSearchOrchestrator(
     fun shutdown() {
         prefetchJob?.cancel()
         backgroundScope.coroutineContext[Job]?.cancel()
+    }
+
+    // ---------------- Album resolution (player disc tap) ----------------
+
+    private data class CachedAlbum(val album: AlbumDto?, val expiresAt: Long)
+
+    private val albumResolveCache = BoundedCache<String, CachedAlbum>(64)
+
+    /**
+     * Resolves the album that [videoId] belongs to, best-effort.
+     *
+     * Called when the watch taps the player disc ("open the album for this
+     * song"). Two steps, each cheap and already-cached:
+     *
+     *  1. A YouTube Music SONG search for "title artist" pins the exact row
+     *     (same title + same uploader) and reads its album name.
+     *  2. The album search resolves that name to a playable album playlist
+     *     URL, preferring a result whose uploader matches the track's
+     *     artist (so same-named albums by other artists are skipped).
+     *
+     * Anything ambiguous returns null: opening the WRONG album is worse than
+     * opening none. Intent is explicit — the caller must not conflate "no
+     * album" with "try harder on the client".
+     */
+    suspend fun resolveAlbum(videoId: String, title: String, artist: String): AlbumDto? {
+        if (!YoutubeGateway.VIDEO_ID_RE.matches(videoId)) return null
+        val now = System.currentTimeMillis()
+        albumResolveCache.get(videoId)?.let { if (it.expiresAt > now) return it.album }
+
+        val result = runCatching {
+            val row = bestAlbumRow(
+                metadata.searchSongs(
+                    listOf(title.trim(), artist.trim()).filter { it.isNotEmpty() }.joinToString(" "),
+                    10,
+                ),
+                title,
+                artist,
+            ) ?: return@runCatching null
+            val albumName = row.album?.takeIf { it.isNotBlank() } ?: return@runCatching null
+            bestAlbumMatch(albumName, youtube.searchAlbums(albumName), artist)
+        }.getOrNull()
+
+        albumResolveCache.put(
+            videoId,
+            CachedAlbum(
+                result,
+                now + if (result != null) ALBUM_RESOLVE_TTL_MS else ALBUM_RESOLVE_MISS_TTL_MS,
+            ),
+        )
+        return result
+    }
+
+    /**
+     * The row from a song search that is the SAME track as [title]/[artist].
+     * Null when nothing matches confidently — a wrong row would ship the
+     * wrong album name.
+     */
+    internal fun bestAlbumRow(
+        rows: List<YtmTrack>,
+        title: String,
+        artist: String,
+    ): YtmTrack? {
+        val qTitle = normalizeTrackText(title)
+        val qArtist = normalizeTrackText(artist)
+        if (qTitle.isBlank()) return null
+        var best: YtmTrack? = null
+        var bestScore = 0
+        for (row in rows) {
+            val rTitle = normalizeTrackText(row.title)
+            val rArtist = normalizeTrackText(row.artist)
+            var score = 0
+            when {
+                rTitle == qTitle -> score += 4
+                tokenOverlap(rTitle, qTitle) -> score += 2
+                else -> continue
+            }
+            if (qArtist.isNotBlank()) {
+                when {
+                    rArtist == qArtist -> score += 2
+                    tokenOverlap(rArtist, qArtist) -> score += 1
+                }
+            }
+            // A row without an album name cannot resolve anything — do not
+            // let it win over a weaker-but-present candidate.
+            if (row.album?.isNotBlank() == true) score += 2 else score -= 4
+            if (score > bestScore) {
+                bestScore = score
+                best = row
+            }
+        }
+        return best?.takeIf { bestScore >= 4 }
+    }
+
+    /**
+     * The album from [albums] that best matches [albumName] and the track's
+     * [artist].
+     *
+     * When the artist is known, an uploader/artist overlap is REQUIRED — a
+     * same-named album by a different artist is never returned (opening the
+     * wrong album is worse than opening none). Without an artist hint (or
+     * when the artist is genuinely unknown), the top-ranked name match wins.
+     */
+    internal fun bestAlbumMatch(
+        albumName: String,
+        albums: List<AlbumDto>,
+        artist: String,
+    ): AlbumDto? {
+        if (albums.isEmpty()) return null
+        val ranked = rankAlbums(albumName, albums)
+        val qArtist = normalizeTrackText(artist)
+        if (qArtist.isNotBlank()) {
+            return ranked.firstOrNull {
+                val uploader = normalizeTrackText(it.uploader)
+                uploader == qArtist || tokenOverlap(uploader, qArtist)
+            }
+        }
+        return ranked.firstOrNull()
+    }
+
+    private fun normalizeTrackText(s: String?): String =
+        (s ?: "").lowercase().replace(Regex("[^a-z0-9]+"), " ").trim().replace(Regex("\\s+"), " ")
+
+    private fun tokenOverlap(a: String, b: String): Boolean {
+        if (a.isBlank() || b.isBlank()) return false
+        val aTokens = a.split(' ').filter { it.isNotEmpty() }
+        val bTokens = b.split(' ').filter { it.isNotEmpty() }
+        val hits = bTokens.count { it in aTokens }
+        return hits >= ((bTokens.size + 1) / 2)
     }
 }

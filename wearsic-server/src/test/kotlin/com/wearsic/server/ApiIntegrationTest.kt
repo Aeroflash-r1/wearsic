@@ -116,6 +116,23 @@ class ApiIntegrationTest {
     }
 
     @Test
+    fun `album resolve is authenticated and validates the video id`() = withServer(apiKey = "secret") {
+        // Without the key: 401 (the whole /api tree is protected).
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/api/albums/resolve?v=abc123abc12").status)
+        // Malformed id: 400, not a network call.
+        val bad = client.get("/api/albums/resolve?v=tooshort") {
+            header("X-Wearsic-Key", "secret")
+        }
+        assertEquals(HttpStatusCode.BadRequest, bad.status)
+        // Valid id against the stub orchestrator: 200 with a null album.
+        val ok = client.get("/api/albums/resolve?v=abc123abc12&t=Song&a=Artist") {
+            header("X-Wearsic-Key", "secret")
+        }
+        assertEquals(HttpStatusCode.OK, ok.status)
+        assertTrue(ok.bodyAsText().contains("\"album\":null"), ok.bodyAsText())
+    }
+
+    @Test
     fun `health is public and reports version`() = withServer(apiKey = "secret") {
         val resp = client.get("/health")
         assertEquals(HttpStatusCode.OK, resp.status)

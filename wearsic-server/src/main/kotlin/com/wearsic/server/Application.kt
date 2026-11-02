@@ -756,6 +756,23 @@ fun Application.module(
                 call.respond(gateway.searchAlbums(q))
             }
 
+            // The watch's player disc: "open the album for this song". The
+            // client sends what it already knows (videoId + title + artist) —
+            // no extraction here, just a pinned song search + album resolve.
+            get("/albums/resolve") {
+                if (!call.checkRateLimited(metaLimiter, apiKey, "Too many album-resolve requests; slow down and retry shortly")) {
+                    return@get
+                }
+                val videoId = call.request.queryParameters["v"].orEmpty()
+                if (!YoutubeGateway.VIDEO_ID_RE.matches(videoId)) {
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid video id"))
+                    return@get
+                }
+                val title = call.request.queryParameters["t"].orEmpty().trim()
+                val artist = call.request.queryParameters["a"].orEmpty().trim()
+                call.respond(AlbumResolveResponse(searchOrchestrator.resolveAlbum(videoId, title, artist)))
+            }
+
             post("/recommendations") {
                 if (!call.checkRateLimited(metaLimiter, apiKey, "Too many recommendation requests; slow down and retry shortly")) {
                     return@post

@@ -190,6 +190,7 @@ class YTMusicService(
         uploader = track.artist ?: "Unknown",
         durationMs = track.durationMs ?: 0L,
         thumbnailUrl = track.thumbnailUrl,
+        albumName = track.album?.takeIf { it.isNotBlank() },
     )
 
     private val jdkHttp: java.net.http.HttpClient by lazy {

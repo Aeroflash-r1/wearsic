@@ -104,7 +104,8 @@ not "not ready".
       "title": "Weather with You",
       "uploader": "Crowded House",
       "durationMs": 240000,
-      "thumbnailUrl": "https://i.ytimg.com/vi/.../default.jpg"
+      "thumbnailUrl": "https://i.ytimg.com/vi/.../default.jpg",
+      "albumName": "Woodface"
     }
   ]
 }
@@ -114,10 +115,28 @@ not "not ready".
   (≥ 0). The watch requests 10 for the first page and 25 for "Show more".
   There is no longer a 10-result ceiling — that number describes the client's
   first page, not a server limit.
+- `albumName` is present only when the source knows it (YouTube Music search
+  rows). Related/radio/playlist rows usually omit it; the client treats a
+  missing value as "album unknown", never as "Single".
 - The client derives the stream URL itself:
   `{server}/api/stream/{videoId}`.
 - Thumbnails are typically `w60-h60`; the client rewrites ytimg/googleusercontent
   URLs to `w544-h544` for crisp artwork.
+
+### 2-c. Album resolve (player disc → "open the album")
+
+- **GET** `/api/albums/resolve?v={videoId}&t={title}&a={artist}`
+- **Response** `200 OK`: `{ "album": { id, name, uploader, thumbnailUrl } | null }`
+  — the playable album (full playlist URL id) for the video, or `null` when
+  the server cannot pin one (single, unknown, or ambiguous).
+- How it works: a YouTube Music song search for `title artist` pins the exact
+  row, its album name is read, and the album search resolves that name to a
+  playlist URL — preferring a result whose uploader matches the artist, so a
+  same-named album by another artist is never returned.
+- Cached per video: 24h for a hit, 1h for a miss. Rate-limited with the
+  metadata bucket (120/min, burst 40). Protected by the same `/api` auth as
+  every other endpoint.
+- `400` for a malformed video id.
 
 ### 2-b. Prewarm (resolve ahead of playback)
 

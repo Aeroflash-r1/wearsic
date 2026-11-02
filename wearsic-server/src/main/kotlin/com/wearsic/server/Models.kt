@@ -15,10 +15,21 @@ data class TrackDto(
     val uploader: String,
     val durationMs: Long = 0L,
     val thumbnailUrl: String? = null,
+    /**
+     * Album name when the source knows it (YouTube Music search rows carry it;
+     * related/radio/playlist rows usually do not). This is what lets the
+     * watch's player disc resolve "open the album for this song" without
+     * guessing from the title alone.
+     */
+    val albumName: String? = null,
 )
 
 @Serializable
 data class SearchResponse(val results: List<TrackDto>)
+
+/** `/api/albums/resolve`: the album for a video, or null when unknown. */
+@Serializable
+data class AlbumResolveResponse(val album: AlbumDto? = null)
 
 @Serializable
 data class SuggestionsResponse(val suggestions: List<String>)

@@ -529,7 +529,17 @@ aot_train() {
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/wearsic-aot.XXXXXX")" || return 1
 
   local conf="$tmp/train.aotconf" cache="$tmp/wearsic.aot"
-  local cp="$PKG_DIR/lib/*"
+  # The AOT cache records the EXACT classpath order it was trained with, and
+  # the JVM rejects a cache whose recorded order differs from the boot order.
+  # The generated start script ($APP) lists the app jar first, then lib jars
+  # in directory order — which is NOT the alphabetical order of a `lib/*`
+  # glob. Train with the same classpath the launcher will boot with.
+  local cp
+  cp="$(awk -F= '/^CLASSPATH=/ { print $2; exit }' "$APP" 2>/dev/null \
+    | sed "s|\$APP_HOME|$PKG_DIR|g")"
+  # Fallback: start script unreadable/missing — alphabetical glob (mismatch
+  # risk only if the start script order ever differs; it should not).
+  [ -n "$cp" ] || cp="$PKG_DIR/lib/*"
   local rc
 
   # The flags go on the COMMAND LINE, not in JAVA_OPTS: this calls `java`

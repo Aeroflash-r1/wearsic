@@ -41,6 +41,16 @@ interface WearsicApiClient {
         excludeTrackIds: List<String>,
     ): Result<List<TrackDto>>
     suspend fun searchAlbums(baseUrl: String, query: String): Result<List<AlbumDto>>
+    /**
+     * `/api/albums/resolve` — the album for a video (null when the server
+     * cannot pin one). Used by the player disc's "open the album" tap.
+     */
+    suspend fun resolveTrackAlbum(
+        baseUrl: String,
+        videoId: String,
+        title: String,
+        artist: String,
+    ): Result<AlbumDto?>
     suspend fun getPlaylistByUrl(baseUrl: String, url: String): Result<PlaylistWithTracksDto>
 
     // Server-side playlists

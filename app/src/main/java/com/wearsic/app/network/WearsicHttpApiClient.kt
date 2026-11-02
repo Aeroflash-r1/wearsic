@@ -8,6 +8,7 @@ import com.wearsic.app.model.TimeoutError
 import com.wearsic.app.model.UnknownError
 import com.wearsic.app.model.WearsicError
 import com.wearsic.app.network.model.AlbumDto
+import com.wearsic.app.network.model.AlbumResolveDto
 import com.wearsic.app.network.model.FavoritesResponseDto
 import com.wearsic.app.network.model.PlaylistDto
 import com.wearsic.app.network.model.PlaylistWithTracksDto
@@ -638,6 +639,53 @@ class WearsicHttpApiClient(
                 }
             } catch (e: Exception) {
                 Result.failure(UnknownError(e.message ?: "Could not load albums", e))
+            }
+        }
+
+    override suspend fun resolveTrackAlbum(
+        baseUrl: String,
+        videoId: String,
+        title: String,
+        artist: String,
+    ): Result<AlbumDto?> =
+        withContext(Dispatchers.IO) {
+            val urlValidation = validateBaseUrl(baseUrl)
+            if (urlValidation.isFailure) {
+                val error = urlValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+            }
+            val sanitizedUrl = urlValidation.getOrThrow()
+            if (videoId.isBlank()) {
+                return@withContext Result.failure(com.wearsic.app.model.InvalidTrackIdError(videoId))
+            }
+            try {
+                val params = buildList {
+                    add("v=" + URLEncoder.encode(videoId, "UTF-8"))
+                    if (title.isNotBlank()) add("t=" + URLEncoder.encode(title, "UTF-8"))
+                    if (artist.isNotBlank()) add("a=" + URLEncoder.encode(artist, "UTF-8"))
+                }.joinToString("&")
+                val request = Request.Builder()
+                    .url("$sanitizedUrl/api/albums/resolve?$params")
+                    .get()
+                    .build()
+
+                runInterruptible { client.newCall(request).execute() }.use { response ->
+                    if (!response.isSuccessful) {
+                        return@use Result.failure(
+                            HttpError("$sanitizedUrl/api/albums/resolve", response.code, "Server error: HTTP ${response.code}")
+                        )
+                    }
+                    val bodyString = response.body?.string() ?: "{}"
+                    val dto = try {
+                        json.decodeFromString<AlbumResolveDto>(bodyString)
+                    } catch (e: Exception) {
+                        logDecodeFailure(e)
+                        AlbumResolveDto()
+                    }
+                    Result.success(dto.album)
+                }
+            } catch (e: Exception) {
+                Result.failure(UnknownError(e.message ?: "Could not resolve album", e))
             }
         }
 

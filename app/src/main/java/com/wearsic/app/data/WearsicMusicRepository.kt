@@ -237,6 +237,17 @@ class WearsicMusicRepository(
     }
 
     /**
+     * The album for a track, resolved server-side (precise two-step lookup:
+     * pin the song row, then its album). Null when the server cannot pin one
+     * — the caller may fall back to [searchAlbums].
+     */
+    suspend fun resolveTrackAlbum(track: Track): Result<Album?> {
+        val currentUrl = getServerUrl()
+        return httpApiClient.resolveTrackAlbum(currentUrl, track.id, track.title, track.artist)
+            .map { it?.toDomainAlbum() }
+    }
+
+    /**
      * Resolves a playlist by server id OR by full URL (albums use URLs).
      */
     suspend fun getPlaylistTracksFlexible(playlistRef: String): Result<List<Track>> {

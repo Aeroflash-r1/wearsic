@@ -75,6 +75,7 @@ data class TrackDto(
     val title: String,
     @SerialName("uploader") val artist: String,
     val album: String? = null,
+    @SerialName("albumName") val albumName: String? = null,
     @SerialName("thumbnailUrl") val artworkUrl: String? = null,
     val durationMs: Long = 0L,
     // Servers never send a streamUrl — the client synthesizes it from the
@@ -86,7 +87,7 @@ data class TrackDto(
             id = id,
             title = title,
             artist = artist,
-            album = album ?: "Single",
+            album = albumName ?: album ?: "Single",
             artworkUrl = artworkUrl?.toHighResArtwork(),
             durationMs = durationMs,
             mediaUri = streamUrl,
@@ -139,6 +140,12 @@ data class AlbumDto(
         )
     }
 }
+
+/** `{"album": {...}|null}` — the player disc's album-resolve response. */
+@Serializable
+data class AlbumResolveDto(
+    val album: AlbumDto? = null
+)
 
 @Serializable
 data class PlaylistDto(

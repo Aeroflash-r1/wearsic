@@ -38,6 +38,14 @@ of v1.9.39.
   phase (zero extra recompositions), freezing when paused. New Settings →
   Appearance → "Rotating Artwork" toggle (default on) lets users turn the
   motion off.
+- **Player disc → open album.** Tapping the rotating artwork on the Now
+  Playing screen opens the current song's album in the Albums flow. The
+  server pins the album precisely (song-row match, then album resolve with
+  artist verification); when it cannot, the app falls back to searching the
+  album catalog by the track's album name (or title + artist) and opens the
+  top match. Nothing found = no navigation, never a wrong album. The disc's
+  ring-drag scrub is unaffected — a scrub consumes the gesture, a tap opens
+  the album.
 - **Player — hue-matched "aurora" glow.** A soft radial tint from the artwork
   accent sits behind the disc so the scrim reads as depth instead of a flat
   black void.

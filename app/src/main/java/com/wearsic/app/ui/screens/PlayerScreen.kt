@@ -159,6 +159,11 @@ fun PlayerScreen(
     onSeekTo: (Long) -> Unit = {},
     /** Hook to save the current artwork accent as the app colour. */
     onSaveArtworkAccent: ((Color) -> Unit)? = null,
+    /**
+     * Tap on the disc = "open the album for this song". Null disables the
+     * tap (a plain artwork disc) without touching the ring-drag scrub.
+     */
+    onOpenAlbum: ((Track) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val track = playbackState.currentTrack
@@ -280,7 +285,8 @@ fun PlayerScreen(
                             haptic = haptic,
                             colors = artworkColors,
                             active = pagerState.currentPage == 0,
-                            rotateArtwork = rotateArtwork
+                            rotateArtwork = rotateArtwork,
+                            onOpenAlbum = onOpenAlbum
                         )
                         else -> ActionsPage(
                             hasTrack = hasTrack,
@@ -361,7 +367,8 @@ private fun NowPlayingPage(
     haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
     colors: ArtworkColors,
     active: Boolean,
-    rotateArtwork: Boolean = true
+    rotateArtwork: Boolean = true,
+    onOpenAlbum: ((Track) -> Unit)? = null
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         // Short viewports (a clipped scrim, or a smaller round face) get a
@@ -388,6 +395,7 @@ private fun NowPlayingPage(
                 colors = colors,
                 size = discSize,
                 rotateArtwork = rotateArtwork,
+                onClick = onOpenAlbum?.let { { it(track) } },
                 // Drag the disc along its ring to scrub: angular position
                 // maps to the track duration (top = 0, clockwise). Falls
                 // back to the transport buttons when duration is unknown.
@@ -489,7 +497,8 @@ private fun ArtworkDisc(
     colors: ArtworkColors,
     size: Dp,
     modifier: Modifier = Modifier,
-    rotateArtwork: Boolean = true
+    rotateArtwork: Boolean = true,
+    onClick: (() -> Unit)? = null
 ) {
     val ringStroke = 3f
     val context = LocalContext.current
@@ -502,7 +511,18 @@ private fun ArtworkDisc(
     }
 
     Box(
-        modifier = modifier.size(size + ringStroke.dp * 2),
+        modifier = modifier
+            .size(size + ringStroke.dp * 2)
+            .then(
+                // Tap = "open the album". The ring-drag scrub (attached by
+                // the caller) consumes real drags, so a scrub never triggers
+                // this; a plain tap does.
+                if (onClick != null && hasTrack) {
+                    Modifier.wearsicClickable(onClick = onClick)
+                } else {
+                    Modifier
+                }
+            ),
         contentAlignment = Alignment.Center
     ) {
         // Radial accent halo behind the disc — depth without a blur shader.

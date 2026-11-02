@@ -345,6 +345,43 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     private var albumsJob: Job? = null
 
+    /**
+     * Resolves the album for [track] (the player disc's "open the album"
+     * tap) and reports it via [onResult].
+     *
+     * The server's precise two-step lookup is tried first; when it cannot
+     * pin an album (or the server is unreachable), fall back to searching
+     * the album catalog with the best query available — the track's real
+     * album name when present, else title + artist — and take the top
+     * match. Null means "no album could be found"; we never fabricate one.
+     */
+    fun openAlbumForTrack(track: Track, onResult: (Album?) -> Unit) {
+        viewModelScope.launch {
+            var album: Album? = null
+            musicRepository.resolveTrackAlbum(track).onSuccess { album = it }
+            if (album == null) {
+                val query = when {
+                    track.album.isNotBlank() && track.album != "Single" -> track.album
+                    track.title.isNotBlank() && track.artist.isNotBlank() -> "${track.title} ${track.artist}"
+                    track.title.isNotBlank() -> track.title
+                    else -> ""
+                }
+                if (query.isNotBlank()) {
+                    musicRepository.searchAlbums(query).onSuccess { albums ->
+                        // Mirror the server's rule: prefer an album whose
+                        // uploader matches the artist (same-named albums by
+                        // others are wrong), then the top name match.
+                        val artistNorm = track.artist.trim().lowercase()
+                        album = albums.firstOrNull { a ->
+                            artistNorm.isNotEmpty() && a.uploader.trim().lowercase().contains(artistNorm)
+                        } ?: albums.firstOrNull()
+                    }
+                }
+            }
+            onResult(album)
+        }
+    }
+
     fun searchAlbums(query: String) {
         if (query.isBlank()) {
             _albumsState.update { it.copy(query = "", albums = emptyList(), isLoading = false) }

@@ -323,6 +323,18 @@ fun WearsicApp(
                     rotateArtwork = rotatingArtworkEnabled,
                     onSaveArtworkAccent = { color ->
                         settingsVM.setUserAccentColor(color.toArgb())
+                    },
+                    // Tap the disc = open the song's album in the Albums flow
+                    // (PlaylistDetail resolves the album URL). Nothing found =
+                    // no navigation — never guess loudly.
+                    onOpenAlbum = { track ->
+                        libraryVM.openAlbumForTrack(track) { album ->
+                            if (album != null) {
+                                navController.navigate(
+                                    Screen.PlaylistDetail.createRoute(album.id, album.name)
+                                )
+                            }
+                        }
                     }
                 )
             }

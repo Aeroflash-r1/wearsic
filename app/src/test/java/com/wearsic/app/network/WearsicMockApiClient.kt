@@ -197,6 +197,16 @@ class WearsicMockApiClient(private val context: Context) : WearsicApiClient {
         return Result.success(emptyList())
     }
 
+    override suspend fun resolveTrackAlbum(
+        baseUrl: String,
+        videoId: String,
+        title: String,
+        artist: String,
+    ): Result<AlbumDto?> {
+        delay(300)
+        return Result.success(null)
+    }
+
     override suspend fun getPlaylistByUrl(baseUrl: String, url: String): Result<PlaylistWithTracksDto> {
         delay(300)
         return searchTracks(baseUrl, url).map { r -> PlaylistWithTracksDto(id = url, name = url, tracks = r.tracks) }

@@ -26,8 +26,18 @@ import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * Idle timeout for writes to a transcode client. A client that stops
+ * reading must not park a global transcode slot forever; two such clients
+ * would freeze ALL server-side conversion.
+ */
+private const val WRITE_IDLE_TIMEOUT_MS = 60_000L
 
 /**
  * On-the-fly Opus/Vorbis -> AAC-LC converter for songs YouTube doesn't offer
@@ -137,6 +147,118 @@ class Transcoder(
     /** In-flight transcodes by cache key (dedupes ExoPlayer's parallel ranges). */
     private val ongoingTranscodes = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
+    /** Hosts background cache warms; never joined by a request. */
+    private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Background warm: transcode the WHOLE song into the cache file ahead of
+     * the first tap.
+     *
+     * WHY: an Opus/WebM-only song used to start ffmpeg at byte 0 and stream the
+     * encoder's output live — and every SEEK re-ran it from zero while
+     * discarding `startByte` bytes of output. Seeking to 2:00 of a 4-minute
+     * song therefore re-downloaded and re-encoded two minutes before the first
+     * byte reached the watch. Warming at prewarm time means the tap, and every
+     * seek after it, is served from a file by Ktor's range handling.
+     *
+     * Deduped through [ongoingTranscodes], so a tap that lands mid-warm simply
+     * waits for the file (see [handle]) instead of starting a second ffmpeg.
+     */
+    fun prefetch(cacheKey: String, sourceUrl: String) {
+        if (cacheDir == null || !availabilityState) return
+        val file = cacheFileFor(cacheKey) ?: return
+        if (file.isFile && file.length() > 0) return
+        val mine = CompletableDeferred<Boolean>()
+        if (ongoingTranscodes.putIfAbsent(cacheKey, mine) != null) return
+        prefetchScope.launch {
+            var ok = false
+            try {
+                ok = sharedSlots.withPermit { transcodeToFile(sourceUrl, file) }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (e: Exception) {
+                logger.info("Transcode warm failed for {}: {}", cacheKey, e.message)
+            } finally {
+                mine.complete(ok)
+                ongoingTranscodes.remove(cacheKey, mine)
+            }
+        }
+    }
+
+    /**
+     * Whole-song transcode straight into [cacheFile] (temp file + atomic
+     * rename). Runs on its own IO coroutine; a failure leaves nothing behind
+     * that could be mistaken for a complete song.
+     */
+    private suspend fun transcodeToFile(sourceUrl: String, cacheFile: File): Boolean =
+        withContext(Dispatchers.IO) {
+            // Same closed-range validation the streaming path does: an open
+            // range would 403 on a throttled network and the feed would end
+            // at byte 0.
+            val (probeStatus, probeTotal) = client.probeUpstreamLength(sourceUrl, 0)
+            if (probeStatus != HttpStatusCode.PartialContent.value || probeTotal == null) {
+                return@withContext false
+            }
+            val part = File(cacheFile.parentFile, "${cacheFile.name}.part")
+            cacheFile.parentFile?.mkdirs()
+            val process = try {
+                ProcessBuilder(
+                    ffmpegBinary, "-hide_banner", "-loglevel", "error",
+                    "-i", "pipe:0", "-vn", "-c:a", "aac", "-b:a", "128k", "-f", "adts", "pipe:1",
+                ).start()
+            } catch (e: Exception) {
+                logger.info("ffmpeg could not start for a cache warm: {}", e.message)
+                return@withContext false
+            }
+            try {
+                val stdin: OutputStream = process.outputStream
+                val stdout: InputStream = process.inputStream
+                val complete = java.util.concurrent.atomic.AtomicBoolean(false)
+                val pump = launch(Dispatchers.IO) {
+                    try {
+                        val outcome = client.fetchClosedChunks(sourceUrl, 0, probeTotal - 1) { buf, n ->
+                            stdin.write(buf, 0, n)
+                        }
+                        if (outcome is ChunkedUpstream.Done) complete.set(true)
+                    } catch (_: Exception) {
+                        // ffmpeg sees EOF and flushes what it has; the partial
+                        // file is rejected below.
+                    } finally {
+                        runCatching { stdin.close() }
+                    }
+                }
+                val drain = launch(Dispatchers.IO) {
+                    runCatching { process.errorStream.copyTo(OutputStream.nullOutputStream()) }
+                }
+                var written = 0L
+                part.outputStream().buffered().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = stdout.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        written += n
+                    }
+                }
+                pump.join()
+                drain.join()
+                if (!complete.get() || written <= 0L) {
+                    runCatching { part.delete() }
+                    return@withContext false
+                }
+                Files.move(part.toPath(), cacheFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                evictCache()
+                logger.info("Transcode cache warm complete: {} ({} bytes)", cacheFile.name, written)
+                true
+            } finally {
+                runCatching { process.destroy() }
+                if (process.isAlive) {
+                    runCatching { process.destroyForcibly() }
+                    runCatching { process.waitFor(5, TimeUnit.SECONDS) }
+                }
+            }
+        }
+
     private fun cacheFileFor(cacheKey: String): File? {
         val dir = cacheDir ?: return null
         val safe = cacheKey.replace(Regex("[^A-Za-z0-9_-]"), "_").take(64)
@@ -232,7 +354,9 @@ class Transcoder(
             // (bounded), then serve the file instead of starting a second
             // ffmpeg for the same bytes.
             ongoingTranscodes[cacheKey]?.let { inFlight ->
+                val waited = System.currentTimeMillis()
                 val done = withTimeoutOrNull(5 * 60 * 1000L) { inFlight.await() } ?: false
+                LatencyMetrics.record("transcode.wait", System.currentTimeMillis() - waited)
                 if (done && serveCached(call, cacheFile)) return TranscodeResult.Streamed
             }
             if (serveCached(call, cacheFile)) return TranscodeResult.Streamed
@@ -359,6 +483,22 @@ class Transcoder(
     
                             // Read ffmpeg stdout, discard `startByte` bytes, stream the rest.
                             val buf = ByteArray(64 * 1024)
+
+                            // Writes to the watch carry an idle watchdog (see
+                            // WRITE_IDLE_TIMEOUT_MS): a client that stops
+                            // reading must not hold the global transcode slot
+                            // forever. On expiry the writer throws, the
+                            // connection tears down, and the slot + ffmpeg
+                            // process are released.
+                            suspend fun writeBounded(data: ByteArray, off: Int = 0, len: Int = data.size) {
+                                val done = withTimeoutOrNull(WRITE_IDLE_TIMEOUT_MS) {
+                                    writeFully(data, off, len)
+                                }
+                                if (done == null) {
+                                    throw java.io.IOException("Client stalled while receiving transcoded audio")
+                                }
+                            }
+
                             var skipped = 0L
                             while (skipped < startByte) {
                                 val n = withContext(Dispatchers.IO) { stdout.read(buf) }
@@ -371,14 +511,14 @@ class Transcoder(
                                         (n - (skipped - startByte)).toInt(),
                                         n
                                     )
-                                    writeFully(tail)
+                                    writeBounded(tail)
                                 }
                             }
                             while (true) {
                                 val n = withContext(Dispatchers.IO) { stdout.read(buf) }
                                 if (n < 0) break
                                 runCatching { cacheWriter?.write(buf, 0, n) }
-                                writeFully(buf, 0, n)
+                                writeBounded(buf, 0, n)
                             }
                             pump.join()
                             stderrDrain.join()

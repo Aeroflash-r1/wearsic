@@ -2,6 +2,7 @@ package com.wearsic.server
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.utils.io.readAvailable
@@ -36,6 +37,13 @@ import kotlin.test.assertTrue
  * partial-content headers) and only *reports* timings — a slow CI box must
  * never turn into a red build. The numbers are printed so the constant can be
  * re-tuned against evidence rather than folklore.
+ *
+ * That promise was previously broken twice: the measuring client had no
+ * explicit timeout, so on a slow (ARM) host a 6 MB run died with
+ * `HttpRequestTimeoutException` and failed the whole suite; and a
+ * `64KB < 8KB * 3` timing assertion turned wall-clock noise into a red build.
+ * Timings are now report-only, and the call budget is generous enough that
+ * only a genuine hang (not a slow machine) can fail this test.
  */
 class AudioProxyThroughputTest {
 
@@ -142,7 +150,15 @@ class AudioProxyThroughputTest {
             withProxyServer(origin, chunkBytes, stateDir) { base ->
                 val started = System.nanoTime()
                 val received = runBlocking {
-                    val c = HttpClient(CIO)
+                    // Explicit, generous call budget: this is a measurement,
+                    // not a latency assertion. Without it a slow host aborts
+                    // the run with a request timeout and takes the suite red.
+                    val c = HttpClient(CIO) {
+                        install(HttpTimeout) {
+                            requestTimeoutMillis = 120_000
+                            socketTimeoutMillis = 60_000
+                        }
+                    }
                     try {
                         // Drain the channel the same way any real consumer
                         // would, rather than slurping it with a helper whose
@@ -198,15 +214,11 @@ class AudioProxyThroughputTest {
             out.writeText(report)
         }
 
-        val small = results.getValue(8 * 1024)
-        val chosen = results.getValue(STREAM_CHUNK_BYTES)
-
-        // Correctness of the choice, not raw speed: 64KB must never be
-        // meaningfully WORSE than the 8KB default it replaced. A shared CI
-        // box can be noisy, so this is deliberately a loose bound.
-        assertTrue(
-            chosen.millis < small.millis * 3,
-            "64KB chunks (${chosen.millis} ms) far slower than 8KB (${small.millis} ms)",
-        )
+        // Timings are REPORTED, never asserted. A shared/ARM CI box is noisy
+        // enough that any wall-clock comparison here becomes a flaky red
+        // build (64KB vs 8KB once differed 3x on a loaded runner for reasons
+        // that had nothing to do with the chunk size). The byte-exactness
+        // assertions in [measureViaProxy] are what this test guarantees; the
+        // chunk-size decision is re-tuned by reading the report above.
     }
 }

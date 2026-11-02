@@ -113,8 +113,10 @@ class AudioProxy(
 
     suspend fun handle(call: ApplicationCall, videoId: String) {
         val resolveStartedAt = System.currentTimeMillis()
+        // Explicit foreground intent: this is the ONLY caller allowed into the
+        // slow extractor path (see YoutubeMetadataClient.streamTarget).
         val target = try {
-            extractor.streamTarget(videoId)
+            extractor.streamTarget(videoId, allowExtraction = true)
         } catch (e: Exception) {
             // Extraction blew up (most commonly YouTube's bot-wall LOGIN_REQUIRED
             // when no cookie is set). The v1 server answered 503 with an
@@ -146,6 +148,7 @@ class AudioProxy(
             return
         }
         val resolveMs = System.currentTimeMillis() - resolveStartedAt
+        LatencyMetrics.record("resolve.total", resolveMs)
         if (target == null) {
             call.respond(HttpStatusCode.NotFound, ErrorResponse("No playable audio stream found for $videoId"))
             return
@@ -367,7 +370,12 @@ class AudioProxy(
             val expectedRemaining = lastByte - start + 1
             val countWrite: (Int) -> Unit = { n ->
                 written += n
-                if (firstByteMs < 0) firstByteMs = System.currentTimeMillis() - startedAt
+                if (firstByteMs < 0) {
+                    firstByteMs = System.currentTimeMillis() - startedAt
+                    // The number that matches "how long until it starts
+                    // playing" — resolve wait + upstream open + first byte.
+                    LatencyMetrics.record("stream.firstByte", firstByteMs)
+                }
             }
 
             call.respondBytesWriter(
@@ -386,8 +394,16 @@ class AudioProxy(
                     // a live response (a replay would corrupt the byte window
                     // the watch already accepted and stall/blur the stream).
                     val openStarted = System.currentTimeMillis()
-                    val (openDone, openWritten) = tryOpenStream(target.url, start, budgetBytes = expectedRemaining, onBytes = countWrite)
+                    val (openDone, openWritten) = if (OpenRangeCapability.isRefused(target.url)) {
+                        // Learned: this CDN host refuses open-ended ranges, so
+                        // the request would only burn a round trip before the
+                        // closed-chunk fallback did the real work.
+                        false to 0L
+                    } else {
+                        tryOpenStream(target.url, start, budgetBytes = expectedRemaining, onBytes = countWrite)
+                    }
                     openMs = System.currentTimeMillis() - openStarted
+                    if (!openDone && openWritten == 0L) LatencyMetrics.record("stream.openRefused", openMs)
                     // `openDone` alone is NOT enough: the CDN can END the open
                     // stream at its per-URL transfer budget (~1 MB, measured)
                     // with a graceful EOF — ending the response there would tell
@@ -476,6 +492,9 @@ class AudioProxy(
                 if (upstream.status != HttpStatusCode.PartialContent &&
                     (start > 0 || upstream.status != HttpStatusCode.OK)
                 ) {
+                    // Remember the refusal for this host: the NEXT request can
+                    // skip this doomed round trip entirely.
+                    OpenRangeCapability.markRefused(url)
                     return@execute
                 }
                 val channel = upstream.bodyAsChannel()

@@ -7,7 +7,26 @@
         </encoder>
     </appender>
 
+    <!--
+      Requests are logged ON THE CALL THREAD. On a phone (and worse, on proot
+      storage) a synchronous console + file write there is time the watch
+      waits for, on the one path that must be fast. The async appender moves
+      the write off the request path entirely.
+
+      neverBlock + discardingThreshold=0: when the queue is full, events are
+      DROPPED rather than blocking the producer — a slow log device must never
+      be able to stall playback. Order is preserved, and the one line that
+      matters for diagnosis (the per-stream timing summary) is well under the
+      1024-event queue unless something is already badly wrong.
+    -->
+    <appender name="ASYNC" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="STDOUT"/>
+    </appender>
+
     <root level="INFO">
-        <appender-ref ref="STDOUT" />
+        <appender-ref ref="ASYNC"/>
     </root>
 </configuration>

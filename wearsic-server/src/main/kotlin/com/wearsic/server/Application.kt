@@ -144,6 +144,10 @@ fun main() {
     // v1.4.4: wipe matches persisted by older, version-blind matcher builds
     // so every song re-matches with the fixed logic once.
     database.clearStaleMatchesOnce("matcher_version_wipe", "1.4.4")
+    // Boot housekeeping for the durable stream cache: drop targets whose CDN
+    // URLs expired while the process was down, so the first resolve after a
+    // restart never streams a known-dead URL.
+    runCatching { database.pruneStreamState() }
     // One tuned client for EVERYTHING that talks to the internet
     // (CDN audio proxy, ffmpeg source, engine updater, and the
     // NewPipe downloader): identical tuning (12s/20s timeouts, 20
@@ -207,6 +211,9 @@ fun main() {
     val gateway = YoutubeGateway(
         downloader = NewPipeDownloader(proxyClient),
         healthMeter = healthMeter,
+        // Durable target cache: a restart (engine update, reboot, lmkd kill)
+        // must not cold-start every song in the library.
+        persistence = database,
     )
 
     // Detect ffmpeg so songs without native AAC can be converted server-side.
@@ -256,6 +263,11 @@ fun main() {
                 database.getMatchedVideoId(surrogateId)
         },
         warmUpstream = audioProxy::warmUpstream,
+        // Only songs that actually need conversion are warmed: an AAC song is
+        // passed through untouched and must cost no CPU at all.
+        warmTranscode = { videoId, url, mimeType ->
+            if (transcoder.needsTranscode(mimeType)) transcoder.prefetch(videoId, url)
+        },
     )
 
     if (apiKey == null) {
@@ -290,7 +302,31 @@ fun main() {
         }
     }
 
-    embeddedServer(ServerCIO, port = port, host = "0.0.0.0") {
+    // Ktor's CIO defaults are FRACTIONS OF THE CORE COUNT, which on a phone
+    // leaves ~4-5 threads to do the socket I/O for every connection while the
+    // engine is proxying a stream, warming CDN targets and feeding ffmpeg. The
+    // result is first-byte jitter exactly when the watch is waiting. These are
+    // explicit, generous, and cost only stack memory.
+    val cores = Runtime.getRuntime().availableProcessors()
+    // Assigned right after the engine is built. The AOT training hook below
+    // runs INSIDE the engine's start lambda, where neither the engine nor this
+    // local is in scope yet — a local val cannot reference itself in its own
+    // initializer, hence the indirection.
+    var stopEngine: () -> Unit = {}
+    val engine = embeddedServer(
+        ServerCIO,
+        port = port,
+        host = "0.0.0.0",
+        configure = {
+            connectionGroupSize = cores.coerceIn(2, 8)
+            workerGroupSize = (cores * 2).coerceIn(4, 24)
+            callGroupSize = (cores * 2).coerceIn(4, 24)
+            // The watch makes a burst of requests per song (ranges, prewarms),
+            // then nothing until the next one; 45s (the default) tore the
+            // keep-alive down between songs and paid a handshake again.
+            connectionIdleTimeoutSeconds = 90
+        },
+    ) {
         module(
             gateway, database, audioProxy, apiKey, searchOrchestrator,
             healthMeter = healthMeter,
@@ -302,6 +338,21 @@ fun main() {
         // so the log opens with one readable box instead of scattered lines.
         environment.monitor.subscribe(ApplicationStarted) {
             bootLog.info(startupBanner(port, dbPath, apiKey != null, transcoder.available))
+            // AOT TRAINING RUN (JDK 25+): boot exactly like production, run
+            // nothing, then exit normally so `-XX:AOTMode=record` can flush
+            // its configuration at VM exit. Recording only captures code that
+            // was LOADED, so the value here is the whole cold-start path:
+            // config, SQLite, Ktor/CIO, Jackson-style serialization and the
+            // extractor classes. Exiting on a separate thread matters: this
+            // handler runs inside Ktor's start, and calling stop() from it
+            // would deadlock the server it is trying to shut down.
+            if (System.getenv("WEARSIC_AOT_TRAIN") == "1") {
+                Thread({
+                    runCatching { Thread.sleep(1_500) }
+                    bootLog.info("AOT training run: startup complete — exiting for the recorder")
+                    stopEngine()
+                }, "wearsic-aot-train").apply { isDaemon = true }.start()
+            }
         }
     }.apply {
         // Graceful shutdown: drain in-flight streams, then release every
@@ -316,7 +367,10 @@ fun main() {
             runCatching { streamClient.close() }
             runCatching { database.close() }
         }, "wearsic-shutdown"))
-    }.start(wait = true)
+    }
+
+    stopEngine = { runCatching { engine.stop(2_000, 5_000) } }
+    engine.start(wait = true)
 }
 
 fun Application.module(
@@ -426,6 +480,24 @@ fun Application.module(
                     crashCount = crashReporter?.crashCount() ?: 0,
                     lastCrashAtMillis = crashReporter?.lastCrash()?.atMillis ?: 0,
                     upstreamRefusals = UpstreamStats.rangeRefusals.get(),
+                    latency = LatencyMetrics.snapshot(),
+                )
+            )
+        }
+
+        // /diag — the same percentiles as /health plus the counters that
+        // explain them, public and secret-free like /health. This is what turns
+        // "it feels slow" into a decision: extract p90 vs lean p90 separates
+        // "YouTube is slow" from "our own extraction queue is slow", and the
+        // open-range refusal count says whether the CDN is throttling this
+        // network. Lives at the routing root on purpose (like /health), so a
+        // monitoring probe can read it without the API key.
+        get("/diag") {
+            call.respond(
+                DiagResponse(
+                    latency = LatencyMetrics.snapshot(),
+                    upstreamRangeRefusals = UpstreamStats.rangeRefusals.get(),
+                    upstreamOpenRangeRefusals = UpstreamStats.openRangeRefusals.get(),
                 )
             )
         }
@@ -556,9 +628,14 @@ fun Application.module(
             // becoming a free YouTube proxy; with auth enabled the shared
             // secret is the primary control and this is defense in depth.
             // Limits are documented in README.md ("Rate limiting").
+            // Limits are sized for PLAYBACK, not for browsing. The old 30/min
+            // with a burst of 12 could be exhausted by one song's ranges plus a
+            // seek or two and a retry after an aborted range — i.e. the user
+            // throttled their own stream. This still stops an open server from
+            // being a free YouTube proxy.
             val streamLimiter = RateLimiter(
-                permitsPerMinute = 30.0,
-                burstCapacity = 12,
+                permitsPerMinute = 120.0,
+                burstCapacity = 60,
             )
             // Warm-ups have their OWN bucket: they are cheap for the watch
             // (a tiny JSON body) but still trigger an extraction, and they
@@ -566,16 +643,16 @@ fun Application.module(
             // shared bucket was exactly what throttled real playback when the
             // old `bytes=0-0` probe existed.
             val prewarmLimiter = RateLimiter(
-                permitsPerMinute = 90.0,
-                burstCapacity = 30,
+                permitsPerMinute = 240.0,
+                burstCapacity = 60,
             )
             // Extraction-triggering metadata endpoints (search, related, albums,
             // playlist) also hit YouTube and fire CDN prefetches; on an open
             // server they must not be unlimited work. Separate bucket so a
             // search burst never starves playback or warm-ups.
             val metaLimiter = RateLimiter(
-                permitsPerMinute = 60.0,
-                burstCapacity = 20,
+                permitsPerMinute = 120.0,
+                burstCapacity = 40,
             )
             // "Made for you" (Tier A+B): multi-seed related fetch, taste-profile
             // scoring, 30-minute TTL cache. Cheap for the server because only
@@ -638,7 +715,7 @@ fun Application.module(
                 val tracks = searchOrchestrator.search(q, limit, offset)
                 // Rapid-retap insurance: a user who taps result 1 then
                 // immediately jumps to result 2/3 should hit a HOT stream
-                // cache, not a cold extraction. Warms top-3 in the background
+                // cache, not a cold extraction. Warms top-2 in the background
                 // (lean path, no mutex — cheap).
                 searchOrchestrator.prefetchVideoIds(tracks.take(3).map { it.videoId })
                 call.respond(SearchResponse(tracks))

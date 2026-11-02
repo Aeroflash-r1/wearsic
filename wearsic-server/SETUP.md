@@ -34,6 +34,20 @@ or persist it via the CLI: `wearsic port 9000` (saved to `.env`, applied on
 the next `wearsic restart`). The Cloudflare/Funnel front doors, `url`, `pair`
 and `status` all read the configured port.
 
+### Faster cold starts on Java 25 (AOT cache)
+
+```bash
+wearsic aot train     # record a training run, then create the archive
+wearsic aot status    # is it built, is it current, is it in use?
+wearsic restart       # the next start loads it
+```
+
+The cache is an **optimisation only**. It is built and loaded only on Java 25+,
+it is tied to the exact engine jar set (an update invalidates it — rebuild),
+and a cache that makes a start fail is quarantined to `wearsic.aot.bad` and
+never loaded again. Without it the server behaves exactly as before; the only
+difference is the time between `wearsic start` and the first answered request.
+
 ## Database compatibility
 
 The DDL in `Database.kt` mirrors the schema of the deployed `wearsic.db`
@@ -51,7 +65,7 @@ persist the YouTube cookie) is additive.
 - **Stream resolution**: iOS-spoofed client first, default client as
   fallback — and a client that yields nothing playable also falls through
   (the two clients parse stream tables differently). `setFetchIosClient`
-  is process-global, so extractions are serialized behind a mutex.
+  is process-global, so it is treated as a per-process epoch: set once, never reset per call, and flipped only when a resolve comes back empty (30 s cooldown). No global mutex is involved, so extractions run concurrently — and background remedies (search/album/radio warms) are lean-only and never enter the extractor at all.
 - **Audio profile**: AAC-LC ~128 kbps preferred (hardware-decoded on the
   watch's SoC); rare Opus/WebM-only songs are transcoded to AAC by ffmpeg
   on the server (503 with the exact `pkg install ffmpeg` guidance if it is
@@ -84,7 +98,9 @@ persist the YouTube cookie) is additive.
 - **Auth**: `WEARSIC_API_KEY` compared with `MessageDigest.isEqual`
   (constant-time); startup warns loudly when the server is open.
 - **Rate limiting**: `/api/stream` is token-bucket limited per client
-  (30/min sustained, small bursts) so an open server isn't a free proxy.
+  (120/min sustained, burst 60 — sized for real playback, not for browsing),
+  with separate buckets for warm-ups and metadata, so an open server isn't a
+  free proxy.
 - **Everything else** (routes, response shapes, `TrackDto` fields, the
   `videoId == "*"` deletes-whole-playlist behavior) matches
   `API_CONTRACT.md`, so the Android client needs zero changes.

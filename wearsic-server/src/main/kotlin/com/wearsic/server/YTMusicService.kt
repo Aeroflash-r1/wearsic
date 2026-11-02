@@ -100,7 +100,19 @@ class YTMusicService(
         }
     }
 
-    private val json = Json { ignoreUnknownKeys = true }
+    /**
+     * `encodeDefaults` is NOT cosmetic here — without it kotlinx drops every
+     * property that equals its default, so the request lost `clientName`
+     * ("WEB_REMIX"), `hl`, `gl` and the Songs `params`. YouTube answers that
+     * exact body with **HTTP 400 "Precondition check failed"**, which the
+     * search path swallows as "no results" — every single search then fell
+     * through to the general NewPipe scrape (live-measured ~4.7s), which is
+     * why the watch sat behind the shimmer before the catalogue appeared.
+     */
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
 
     // TTL cache for repeat queries: the watch debounces live suggestions and
     // users re-tap queries, so a 5-minute bounded cache avoids hammering

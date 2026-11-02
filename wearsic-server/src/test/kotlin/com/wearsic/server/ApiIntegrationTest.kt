@@ -103,6 +103,19 @@ class ApiIntegrationTest {
     // ---------------- Health ----------------
 
     @Test
+    fun `diag is public and reports latency percentiles`() = withServer(apiKey = "secret") {
+        // /diag is the performance surface: it must answer without the API key
+        // (like /health) and must carry the latency map the client and
+        // `wearsic doctor` read.
+        val resp = client.get("/diag")
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
+        assertTrue(body.containsKey("latency"), resp.bodyAsText())
+        assertTrue(body.containsKey("upstreamOpenRangeRefusals"), resp.bodyAsText())
+        assertTrue(!resp.bodyAsText().contains("secret"), "diag must never leak the key")
+    }
+
+    @Test
     fun `health is public and reports version`() = withServer(apiKey = "secret") {
         val resp = client.get("/health")
         assertEquals(HttpStatusCode.OK, resp.status)
@@ -224,12 +237,15 @@ class ApiIntegrationTest {
     @Test
     fun `stream endpoint rate-limits after the burst is exhausted`() = withServer {
         var limited = false
-        // Burst capacity is 12; a few extra requests beyond that must trip it.
-        repeat(20) { i ->
+        // Burst capacity is 60 (raised from 12: a song with a few seeks plus a
+        // retry after an aborted range could exhaust the old bucket during
+        // ordinary playback and throttle the user's own stream). 80 rapid
+        // requests must still trip it.
+        repeat(80) { i ->
             val resp = client.get("/api/stream/video-$i")
             if (resp.status == HttpStatusCode.ServiceUnavailable) limited = true
         }
-        assertTrue(limited, "expected at least one 503 rate-limit response after 20 rapid stream requests")
+        assertTrue(limited, "expected at least one 503 rate-limit response after 80 rapid stream requests")
     }
 
     // ---------------- Favorites / playlists over HTTP ----------------

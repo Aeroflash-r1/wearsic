@@ -4,8 +4,8 @@ Standalone Ktor + NewPipe Extractor backend for the Wearsic Wear OS app. This pr
 
 ## Requirements
 
-- Java 17
-- Termux packages: `pkg install openjdk-17 unzip curl`
+- Java 17 or newer. **17, 21 and 25 all run the engine** (the release is Java 17 bytecode); **25 is recommended** — it is the only one where `-XX:+UseCompactObjectHeaders` exists (halves the object header, so a smaller resident set on the 512 MB heap the launcher asks for), and the launcher enables it automatically when it finds 25.
+- Termux packages: `pkg install openjdk-25 unzip curl` (falls back cleanly to `openjdk-21` / `openjdk-17`)
 - `ffmpeg` (the launcher installs it in the background on first start; needed only to transcode rare Opus/WebM-only songs — the running server re-probes for a missing binary, so a late install heals without a restart)
 
 No tunnel is required: the watch connects over WiFi, a Tailscale
@@ -32,7 +32,7 @@ PORT=8080 WEARSIC_DB_PATH="$PWD/wearsic.db" ./run-termux.sh
 One download contains the ENTIRE server (engine + launcher + CLI):
 
 ```bash
-pkg install -y openjdk-17
+pkg install -y openjdk-25     # 21 or 17 also work
 chmod +x wearsic-server-v*.sh
 ./wearsic-server-v*.sh install     # extracts to ~/wearsic-server, generates an API key
 wearsic start                      # one command from here on
@@ -48,7 +48,7 @@ port is `8080`; change it with `wearsic port 9000` (1024–65535, saved to
 
 ### From the ready-made Termux ZIP (`wearsic-server-termux-v<version>.zip`)
 
-1. Install Termux packages: `pkg install openjdk-17 unzip`
+1. Install Termux packages: `pkg install openjdk-25 unzip` (or `openjdk-21` / `openjdk-17`)
 2. Allow storage access once: `termux-setup-storage` (then restart Termux if asked)
 3. Copy the ZIP from Downloads and extract it:
    ```bash
@@ -86,9 +86,14 @@ Public:
 
 Authenticated when `WEARSIC_API_KEY` is set:
 
-- `GET /api/search?q=` — maximum 10 results (YouTube Music songs with real videoIds)
+- `GET /api/search?q=&limit=&offset=` — YouTube Music songs with real
+  videoIds; `limit` is clamped to 1–25 (default 15) and `offset` pages the
+  results. The watch asks for 10 first, 25 for "Show more".
 - `GET /api/suggestions?q=` — maximum 5 suggestions
 - `GET /api/related/{videoId}` — maximum 10 results
+- `POST /api/recommendations` — "Made for you": body
+  `{seedTrackIds, topArtists, excludeTrackIds}`, up to 25 results, 30-minute
+  cache per seed/artist signature (see `API_CONTRACT.md` §7-b)
 - `GET /api/stream/{videoId}` — proxied audio with Range forwarding; prefers M4A/AAC near 128 kbps
 - `GET|POST|DELETE /api/favorites[/{videoId}]`
 - `GET|POST /api/playlists`
@@ -214,15 +219,70 @@ The watch client pairs this with a 6 s `Cache-Control: no-cache` burst after
 favorites/playlist mutations — longer than the 5 s user-state window — so a
 post-edit read can never be served the pre-mutation list.
 
+## Performance instrumentation
+
+`/health` carries a `latency` object and `/diag` adds the counters that
+explain it: `search.total`, `resolve.lean`, `resolve.extract`,
+`resolve.extract.wait`, `resolve.total`, `stream.firstByte`, `transcode.wait`,
+each with count/p50/p90/p99/max over the last 256 samples. Read them together:
+
+| Symptom | Meaning |
+|---|---|
+| `resolve.lean` p90 high | InnerTube is slow, or the network to YouTube is |
+| `resolve.extract` high, `resolve.extract.wait` low | YouTube extraction is slow (expected ~10 s) |
+| `resolve.extract.wait` high | our own queue — a leak in the lean path, or too many taps |
+| `stream.firstByte` high, `openRangeRefusals` climbing | the CDN is throttling this network (cookie / wait) |
+| `transcode.wait` high | an ffmpeg run is in flight; the cache warm has not finished |
+
+## AOT cache (Java 25) — faster cold starts
+
+The cold start is the part you feel: config, SQLite, Ktor/CIO and the
+extractor classes all get loaded and verified before the first request can be
+answered. On Java 25 the JVM can load a pre-built archive of exactly that work
+(Project Leyden, JEP 483/514) instead of re-parsing and re-linking it.
+
+```bash
+wearsic aot train      # build/rebuild the cache (~1 access, uses temp DB + port 0)
+wearsic aot status     # archive, age, whether the running engine uses it
+wearsic aot clear      # drop it (engine restarts without it)
+wearsic restart        # apply
+```
+
+How it behaves:
+
+- **Training never touches the live install.** It runs the real engine
+  classpath with `WEARSIC_AOT_TRAIN=1`, a throwaway database/state dir and
+  `PORT=0`, so it can run while the server is up and can never collide with it.
+- **Two steps, not one.** `-XX:AOTCacheOutput` would record and create in a
+  single run, but holds two heaps at once — an OOM on a 512 MB phone heap. The
+  launcher uses `-XX:AOTMode=record` → `-XX:AOTMode=create` at 384 MB each.
+- **A stamp guards every start.** The cache is only loaded when its
+  fingerprint (engine jar set + JVM + JVM flags) still matches, so an engine
+  update silently disables it instead of feeding the new engine a stale
+  archive. Rebuild with `wearsic aot train` after an update.
+- **A cache that kills a start is retired.** If the engine dies within two
+  minutes of starting with the cache loaded and never became healthy, the
+  launcher moves it to `wearsic.aot.bad`, drops the stamp and restarts without
+  it — permanently. It is never deleted, so it can be inspected.
+- **Nothing depends on it.** Without Java 25, without a cache, or after a
+  quarantine, the server runs exactly as before. `wearsic doctor` shows
+  `aot cache` as `off`/`warn`, never as a failure.
+
+Files live next to the launcher: `wearsic.aot`, `wearsic.aot.stamp`, and
+`wearsic.aot.bad` after a quarantine.
+
 ## Errors and rate limiting
 
 Every error is JSON: `{"error": "<message>"}` with a meaningful status — `400` invalid request/malformed body, `401` missing or wrong API key, `404` unknown route/video, `502` upstream CDN failure, `503` rate-limited or missing ffmpeg for transcode-needing songs, `500` unexpected (message is generic; details go to the log).
 
-`GET /api/stream/{id}` is rate-limited per client (API key, else IP): sustained 30 requests/minute with short bursts above that allowed. This protects an open server from becoming a free YouTube proxy; normal playback (a few streams per minute) is unaffected.
+`GET /api/stream/{id}` is rate-limited per client (API key, else IP): sustained 120 requests/minute, burst 60. This protects an open server from becoming a free YouTube proxy. The bucket was 30/min with a burst of 12, which one song's ranges plus a seek and a retry could exhaust — the user could throttle their own playback. Warm-ups have a separate bucket (240/min), and the metadata endpoints another (120/min), so browsing never eats the playback budget.
 
 Stream extraction is resilient:
 
-- The **iOS Innertube client is tried first** (it is the one that actually works against YouTube's bot wall), falling back to the default client. Because the client choice is a process-global NewPipeExtractor setting, all extractions are serialized behind a mutex — correctness over concurrency, at no practical cost for a personal server.
+- A **lean InnerTube player request** answers a tap in ~0.3–0.5 s; NewPipe extraction (~10 s) is only the fallback. Background work (search rows, album/playlist rows, radio) is **lean-only**: it can never enter the extractor, so a tap never queues behind a prefetch.
+- The extractor's client choice (**iOS first**) is a process-global NewPipeExtractor setting. It is treated as a per-process **epoch**: set once, never reset per call, and flipped only when a resolution comes back empty (30 s cooldown). That is what makes concurrent extractions safe — the old set/reset-per-call sequence required a global mutex, which serialized every extraction behind every other one.
+- Extractor HTTP is bounded (4 concurrent calls, see `NewPipeConcurrency`), so `/api/recommendations` seeding six related-fetches cannot storm YouTube.
+- Resolved targets and wall-throttle marks are **persisted in SQLite**, so a restart (engine update, reboot, lmkd kill) does not cold-start every song.
 - NewPipe failures map to clean JSON errors instead of empty 500 responses: `404` when a video is unavailable, `503` for bot/ReCaptcha challenges (with a hint to configure the YouTube cookie), and `502` for other extraction failures.
 
 ## The terminal (shimmer + stages + dashboard)

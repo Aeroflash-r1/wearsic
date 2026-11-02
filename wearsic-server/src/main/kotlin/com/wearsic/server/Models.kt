@@ -82,6 +82,17 @@ data class UpdateStatusDto(
 )
 
 /**
+ * /diag — public, secret-free performance surface. The percentiles are the
+ * same ones embedded in /health; the counters are what make them actionable.
+ */
+@Serializable
+data class DiagResponse(
+    val latency: Map<String, LatencyStatsDto> = emptyMap(),
+    val upstreamRangeRefusals: Int = 0,
+    val upstreamOpenRangeRefusals: Int = 0,
+)
+
+/**
  * Readiness ("can Wearsic currently serve music right now?") — the deeper
  * counterpart to /health ("is the process alive?"). Deliberately cheap:
  * no network, no extraction, no secrets.
@@ -121,6 +132,10 @@ data class HealthResponse(
     // High counts with failing streams = throttled network (cookie/wait),
     // not a broken engine (update).
     val upstreamRefusals: Int = 0,
+    // Hot-path latency percentiles over the last ~256 samples per metric
+    // (see LatencyMetrics). Counts only, no user data, no secrets: this is what
+    // turns "it feels slow" into "extract p90 = 9.8s, lean p90 = 0.4s".
+    val latency: Map<String, LatencyStatsDto>? = null,
 )
 
 /**

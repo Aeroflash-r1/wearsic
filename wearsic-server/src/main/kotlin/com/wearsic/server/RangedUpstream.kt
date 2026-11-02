@@ -9,6 +9,10 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * Closed-range chunk size for upstream CDN fetches.
@@ -31,6 +35,49 @@ internal const val UPSTREAM_CHUNK_BYTES: Long = 1024L * 1024L
  */
 internal object UpstreamStats {
     val rangeRefusals = java.util.concurrent.atomic.AtomicInteger()
+
+    /** Open-ended (`bytes=N-`) refusals — see [OpenRangeCapability]. */
+    val openRangeRefusals = java.util.concurrent.atomic.AtomicInteger()
+}
+
+/**
+ * Learns, per CDN host, that OPEN-ENDED ranges (`bytes=N-`) are refused.
+ *
+ * On a throttled network googlevideo answers `bytes=N-` with 403 while
+ * `bytes=N-M` returns 206. The proxy prefers the open form (one request for the
+ * whole remainder is the cheapest possible stream) and falls back to stitched
+ * closed chunks — but "prefers" meant EVERY stream and EVERY seek paid a
+ * doomed round trip first: a full RTT of first-byte latency, on the exact path
+ * the listener is waiting on. This remembers the refusal per host, so only the
+ * first stream from that host pays it and the rest go straight to chunks.
+ */
+internal object OpenRangeCapability {
+    private const val TTL_MILLIS = 30L * 60 * 1000
+    private const val MAX_HOSTS = 64
+
+    private val refusedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    internal fun hostOf(url: String): String =
+        runCatching { java.net.URI(url).host?.lowercase() ?: url }.getOrDefault(url)
+
+    fun isRefused(url: String): Boolean {
+        val host = hostOf(url)
+        val until = refusedUntil[host] ?: return false
+        if (until <= System.currentTimeMillis()) {
+            refusedUntil.remove(host)
+            return false
+        }
+        return true
+    }
+
+    fun markRefused(url: String) {
+        if (refusedUntil.size >= MAX_HOSTS) refusedUntil.clear()
+        refusedUntil[hostOf(url)] = System.currentTimeMillis() + TTL_MILLIS
+        UpstreamStats.openRangeRefusals.incrementAndGet()
+    }
+
+    /** Test seam. */
+    fun clear() = refusedUntil.clear()
 }
 
 private val chunkLogger = org.slf4j.LoggerFactory.getLogger("RangedUpstream")
@@ -143,6 +190,61 @@ internal suspend fun HttpClient.probeUpstreamLength(url: String, atByte: Long): 
 }
 
 /**
+ * Pipelined wrapper around [fetchClosedChunksSequential].
+ *
+ * WHY: chunks are 1 MB and each one is a separate request, so between "chunk N
+ * ends" and "chunk N+1's first byte arrives" the emitter produces NOTHING for
+ * one full round trip (50-150ms over a relayed funnel). If the watch's buffer
+ * is anywhere near empty at that moment — routine mid-song on a throttled
+ * network — the listener hears a stutter at every seam. Reading the CDN AHEAD
+ * of the client by up to one chunk removes the gap: while chunk N is being
+ * written to the watch, chunk N+1 is already in flight.
+ *
+ * The retry/rotation semantics are untouched — this only decouples fetching
+ * from emitting, so the carefully-tested resume-at-the-exact-byte behaviour of
+ * [fetchClosedChunksSequential] still governs.
+ */
+internal suspend fun HttpClient.fetchClosedChunks(
+    url: String,
+    startByte: Long,
+    endByteInclusive: Long?,
+    blockBytes: Int = 64 * 1024,
+    refreshUrl: (suspend () -> String?)? = null,
+    maxRefreshes: Int = 2,
+    emit: suspend (ByteArray, Int) -> Unit,
+): ChunkedUpstream {
+    require(blockBytes > 0) { "blockBytes must be positive" }
+    // Depth of ONE upstream chunk: enough to hide the seam, bounded so a
+    // phone's heap never holds more than ~1 MB of audio here.
+    val queue = Channel<ByteArray>(
+        capacity = (UPSTREAM_CHUNK_BYTES / blockBytes).toInt().coerceIn(2, 32)
+    )
+    var outcome: ChunkedUpstream = ChunkedUpstream.Done
+    coroutineScope {
+        val producer = launch(Dispatchers.IO) {
+            try {
+                outcome = fetchClosedChunksSequential(
+                    url, startByte, endByteInclusive, blockBytes, refreshUrl, maxRefreshes,
+                ) { buf, n -> queue.send(buf.copyOf(n)) }
+                queue.close()
+            } catch (t: Throwable) {
+                // Propagates Refused (nothing was emitted: it is a FIRST-chunk
+                // refusal by definition) and truncation alike.
+                queue.close(t)
+            }
+        }
+        try {
+            for (bytes in queue) emit(bytes, bytes.size)
+        } catch (t: Throwable) {
+            producer.cancel()
+            throw t
+        }
+        producer.join()
+    }
+    return outcome
+}
+
+/**
  * Streams [startByte]..[endByteInclusive] (null = to EOF) through [emit]
  * using only CLOSED upstream ranges. Returns [ChunkedUpstream.Done] after
  * a clean EOF, [ChunkedUpstream.Refused] when the FIRST chunk is refused.
@@ -150,7 +252,7 @@ internal suspend fun HttpClient.probeUpstreamLength(url: String, atByte: Long): 
  * byte (at most [maxRefreshes] times) instead of truncating the song.
  * Throws when [emit] throws (caller gone) so callers map it to aborted.
  */
-internal suspend fun HttpClient.fetchClosedChunks(
+private suspend fun HttpClient.fetchClosedChunksSequential(
     url: String,
     startByte: Long,
     endByteInclusive: Long?,

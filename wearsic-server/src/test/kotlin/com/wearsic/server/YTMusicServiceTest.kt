@@ -120,6 +120,28 @@ class YTMusicServiceTest {
         svc.close()
     }
 
+    /**
+     * REGRESSION: the request body must carry `clientName` and the Songs
+     * `params`. kotlinx.serialization omits properties equal to their default
+     * unless `encodeDefaults` is on, and YouTube answers that stripped body
+     * with HTTP 400 "Precondition check failed" — swallowed as "no results",
+     * so every search silently paid the ~4.7s NewPipe fallback.
+     */
+    @Test
+    fun `searchSongs sends clientName and Songs params`() = runBlocking {
+        val bodies = mutableListOf<String>()
+        val svc = YTMusicService(postJson = { _, sent ->
+            bodies += sent
+            "{}"
+        })
+        svc.searchSongs("bohemian rhapsody", 10)
+        val body = bodies.single()
+        assertTrue(body.contains("\"clientName\":\"WEB_REMIX\""), "missing clientName: $body")
+        assertTrue(body.contains(YTMusicService.SONGS_PARAMS), "missing Songs params: $body")
+        assertTrue(body.contains("\"hl\":\"en\"") && body.contains("\"gl\":\"US\""), "missing locale: $body")
+        svc.close()
+    }
+
     companion object {
         private fun songRow(id: String, title: String): String =
             """{"musicResponsiveListItemRenderer": {"flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "$title", "navigationEndpoint": {"watchEndpoint": {"videoId": "$id"}}}]}}}, {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Artist"}, {"text": " • "}, {"text": "3:33"}]}}}]}}"""

@@ -110,7 +110,10 @@ not "not ready".
 }
 ```
 
-- Max ~10 results (server-side limit).
+- Optional paging: `limit` (clamped 1–25, default **15**) and `offset`
+  (≥ 0). The watch requests 10 for the first page and 25 for "Show more".
+  There is no longer a 10-result ceiling — that number describes the client's
+  first page, not a server limit.
 - The client derives the stream URL itself:
   `{server}/api/stream/{videoId}`.
 - Thumbnails are typically `w60-h60`; the client rewrites ytimg/googleusercontent
@@ -169,6 +172,30 @@ Note: album `id` is a full playlist URL, not a bare id.
 - **Response**: `{ "id": "...", "name": "...", "tracks": [TrackDto...] }`
 - Max ~50 tracks (albums frequently run 15-30 songs; the server serves a
   single YouTube playlist page, so the whole album fits in one response).
+
+### 7-b. Recommendations ("Made for you")
+
+- **POST** `/api/recommendations`
+- Request body (`TrackDto`s are not sent — only ids and taste hints):
+
+```json
+{
+  "seedTrackIds": ["3DsD83sJ", "..."],
+  "topArtists": ["crowded house"],
+  "excludeTrackIds": ["..."]
+}
+```
+
+- **Response** `200 OK`: `{ "results": [TrackDto...] }` (up to 25).
+- At most 6 seeds are used. Each seed's related list is merged, deduped, and
+  filtered against `excludeTrackIds` **plus** the server's stored favorites;
+  candidates are then scored — a track whose uploader matches one of
+  `topArtists` is boosted. Pure metadata: no audio is fetched.
+- Results are cached in memory for 30 minutes per sorted seed/artist
+  signature (max 32 entries), so a shelf refresh does not re-hit YouTube.
+- `400` when `seedTrackIds` contains no usable id. Rate-limited with the
+  metadata bucket (120/min, burst 40).
+- The top 2 results have their streams warmed in the background, like search.
 
 ### 8. Favorites
 
@@ -437,9 +464,37 @@ Statuses: `400` invalid request or malformed body, `401` bad/missing API key,
 
 ## Rate Limiting
 
-`GET /api/stream/{id}` is limited per client (API key, else source IP) to a
-sustained 30 requests/minute with a burst of 12. Exceeding it yields `503`
-with `{"error":"Too many stream requests; slow down and retry shortly"}`.
-`GET /api/prewarm/{id}` has its own bucket (90/min, burst 30) so warm-ups can
-never consume the playback budget.
-Search/suggestions/favorites/playlists are NOT rate-limited.
+Buckets are per client (API key, else source IP; behind the local Cloudflare
+proxy the real client address is read from `CF-Connecting-IP`, trusted only
+from a loopback peer).
+
+| Endpoint group | Sustained | Burst |
+|---|---|---|
+| `GET /api/stream/{id}` | 120/min | 60 |
+| `GET /api/prewarm/{id}` | 240/min | 60 |
+| Search / related / albums / playlist / recommendations | 120/min | 40 |
+| Favorites, playlists, config | — (not limited) | — |
+
+Exceeding a bucket yields `503` with
+`{"error":"Too many stream requests; slow down and retry shortly"}`.
+
+> **Why the stream bucket is large.** It was 30/min with a burst of 12, which
+> is *less* than one song's worth of work in a bad case: ExoPlayer issues
+> several ranges per track, a seek adds more, and an aborted range is retried
+> immediately. The user could therefore throttle their OWN playback. 120/min
+> still stops an open server from being a free YouTube proxy, while leaving
+> ordinary playback untouched.
+
+## Performance surface
+
+- **GET** `/health` includes a `latency` object: p50/p90/p99/max over the last
+  256 samples of each hot-path metric (`search.total`, `resolve.lean`,
+  `resolve.extract`, `resolve.extract.wait`, `resolve.total`,
+  `stream.firstByte`, `transcode.wait`). Public and secret-free, like the rest
+  of `/health`.
+- **GET** `/diag` returns the same percentiles plus
+  `upstreamRangeRefusals` / `upstreamOpenRangeRefusals`, so "it feels slow"
+  can be attributed: high `resolve.extract` with low `resolve.extract.wait` is
+  YouTube being slow; high `resolve.extract.wait` is the server's own queue;
+  a climbing open-range refusal count means the CDN is throttling this
+  network.

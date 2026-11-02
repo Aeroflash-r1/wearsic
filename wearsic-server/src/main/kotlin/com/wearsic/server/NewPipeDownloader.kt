@@ -23,6 +23,30 @@ import org.slf4j.LoggerFactory
  * (shared with the rest of the server) for real keep-alive across requests
  * to the same YouTube hosts.
  */
+/**
+ * Process-wide cap on concurrent NewPipeExtractor HTTP calls.
+ *
+ * Every extractor path funnels through [NewPipeDownloader.execute] — search,
+ * related, albums, playlist, the canary probe and stream resolution. Only
+ * stream resolution was ever bounded (by its own slot semaphore); the rest
+ * could run unbounded in parallel — and /api/recommendations launches one
+ * `related()` per seed, up to six at once. On a phone that means six
+ * simultaneous YouTube fetches and six parked threads, which is also the
+ * fastest way to get the server IP bot-walled.
+ *
+ * 4 is sized for the CPU (extraction is parse-bound, not network-bound) and
+ * leaves room for a foreground resolve to proceed while a search runs.
+ */
+internal object NewPipeConcurrency {
+    internal const val MAX_CONCURRENT = 4
+
+    private val slots = java.util.concurrent.Semaphore(MAX_CONCURRENT)
+
+    fun acquire() = slots.acquire()
+
+    fun release() = slots.release()
+}
+
 class NewPipeDownloader(private val client: HttpClient) : Downloader() {
 
     private val logger = LoggerFactory.getLogger(NewPipeDownloader::class.java)
@@ -54,35 +78,43 @@ class NewPipeDownloader(private val client: HttpClient) : Downloader() {
     }
 
     override fun execute(request: NPRequest): NPResponse = runBlocking {
-        val httpResponse = client.request(request.url()) {
-            method = HttpMethod.parse(request.httpMethod())
+        // Bounded here, at the single choke point every extraction goes
+        // through, rather than in each caller (see NewPipeConcurrency).
+        NewPipeConcurrency.acquire()
+        try {
+            val httpResponse = client.request(request.url()) {
+                method = HttpMethod.parse(request.httpMethod())
 
-            request.headers().forEach { (name, values) ->
-                values.forEach { value -> header(name, value) }
+                request.headers().forEach { (name, values) ->
+                    values.forEach { value -> header(name, value) }
+                }
+
+                // Bot-challenge workaround: attach the authenticated session
+                // cookie if one is set (WEARSIC_YOUTUBE_COOKIE or runtime-set
+                // via API), unless the caller already supplied their own
+                // Cookie header.
+                if (request.headers()[HttpHeaders.Cookie].isNullOrEmpty()) {
+                    YoutubeSession.cookie?.let { header(HttpHeaders.Cookie, it) }
+                }
+                if (request.headers()[HttpHeaders.UserAgent].isNullOrEmpty()) {
+                    header(HttpHeaders.UserAgent, USER_AGENT)
+                }
+
+                request.dataToSend()?.let { setBody(it) }
             }
 
-            // Bot-challenge workaround: attach the authenticated session cookie
-            // if one is set (WEARSIC_YOUTUBE_COOKIE or runtime-set via API),
-            // unless the caller already supplied their own Cookie header.
-            if (request.headers()[HttpHeaders.Cookie].isNullOrEmpty()) {
-                YoutubeSession.cookie?.let { header(HttpHeaders.Cookie, it) }
-            }
-            if (request.headers()[HttpHeaders.UserAgent].isNullOrEmpty()) {
-                header(HttpHeaders.UserAgent, USER_AGENT)
-            }
+            val body = httpResponse.bodyAsText()
+            val responseHeaders = httpResponse.headers.entries().associate { (k, v) -> k to v }
 
-            request.dataToSend()?.let { setBody(it) }
+            return@runBlocking NPResponse(
+                httpResponse.status.value,
+                httpResponse.status.description,
+                responseHeaders,
+                body,
+                httpResponse.call.request.url.toString(),
+            )
+        } finally {
+            NewPipeConcurrency.release()
         }
-
-        val body = httpResponse.bodyAsText()
-        val responseHeaders = httpResponse.headers.entries().associate { (k, v) -> k to v }
-
-        NPResponse(
-            httpResponse.status.value,
-            httpResponse.status.description,
-            responseHeaders,
-            body,
-            httpResponse.call.request.url.toString(),
-        )
     }
 }

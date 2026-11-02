@@ -69,7 +69,7 @@ Wearsic adopts a clean, modular Model-View-ViewModel (MVVM) architecture with st
 - **Server Port setting**: a dedicated "Server Port" pill in Settings edits the port baked into the current server URL (1024–65535) without retyping the whole address — perfect for `wearsic port 9000`-style setups.
 - **Server profiles**: save the current server (URL + API key) as a named profile and switch between them (e.g. Home-LAN ↔ Cloudflare front door) in one tap; delete with confirmation.
 - **Offline surface**: when the server is unreachable the home screen flips to "Offline — showing saved music" and lists your completed downloads for instant playback — the app stays useful with no network.
-- **Queue reorder**: every Up Next row has a ⋯ menu — move to top / move to bottom / remove — while the current track keeps playing.
+- **Queue reorder**: long-press an Up Next row and drag it up or down while the current track keeps playing. The drop slot is the row whose laid-out centre is nearest the lifted row's centre, so it stays accurate where `ScalingLazyColumn` shrinks rows at the curved edges. Reaching into a long queue auto-scrolls, but only after the finger deliberately pushes into an edge band and holds there (~180 ms); the row keeps its full width for the song name.
 - **Play all / Shuffle all**: one tap on Favorites (play all, shuffle) and Downloads (play all, offline library).
 - **Retry pills**: Search and Albums error states offer an inline Retry button for the same query.
 - **Dynamic Accent & Rotating Artwork**: opt-in toggles in Settings — accent that follows the album art, and the player disc's slow rotation (default on).
@@ -136,7 +136,14 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 }
 ```
 
-### 3. Media Stream
+### 3. Recommendations ("Made for you")
+- **Route**: `POST /api/recommendations`
+- **Request**: `{seedTrackIds, topArtists, excludeTrackIds}`
+- **Response**: `{ "results": [TrackDto...] }` (up to 25). Multi-seed YouTube
+  "related" pool, scored toward the user's top artists, cached 30 minutes.
+  See [API_CONTRACT.md](./API_CONTRACT.md) §7-b for the full contract.
+
+### 4. Media Stream
 - **Route**: `GET /api/stream/{videoId}`
 - **Response Stream**: Returns `audio/mp4` (YouTube AAC — the common case), `audio/webm` (Opus), or `audio/aac` (server-transcoded Opus/WebM-only songs) with support for HTTP range requests.
 

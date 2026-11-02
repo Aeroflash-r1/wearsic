@@ -41,6 +41,21 @@ interface YoutubeMetadataClient {
     suspend fun streamTarget(videoId: String): StreamTarget?
 
     /**
+     * Resolve with control over the SLOW path.
+     *
+     * [allowExtraction] = false is the lean-only contract used by every
+     * background warm-up (search results, album/playlist rows, radio): it may
+     * return a cached or freshly-lean-resolved target, or null, but it must
+     * never enter the NewPipe extractor. Background work that can enter the
+     * extractor is background work a user tap then queues behind — the
+     * single biggest tap-to-play latency bug this server had.
+     *
+     * Default delegates to [streamTarget] so fakes stay trivial.
+     */
+    suspend fun streamTarget(videoId: String, allowExtraction: Boolean): StreamTarget? =
+        streamTarget(videoId)
+
+    /**
      * GENERAL YouTube search (no music filter). Used to rescue exact-name
      * misses: uploads like unreleased audio/rips exist in YouTube's general
      * index but not in the music catalog, so the music-filtered search never

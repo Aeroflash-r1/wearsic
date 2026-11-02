@@ -15,7 +15,7 @@ import java.util.UUID
  * playlists keeps working without any migration — CREATE TABLE IF NOT EXISTS
  * is a no-op on those tables.
  */
-class Database(dbPath: String) {
+class Database(dbPath: String) : StreamTargetPersistence {
 
     /** Persisted surrogate matches older than this are re-matched (self-healing). */
     private val MATCH_STALE_MS: Long = 30L * 24 * 60 * 60 * 1000 // 30 days
@@ -30,6 +30,17 @@ class Database(dbPath: String) {
      * no new error paths, storage simply stops growing.
      */
     private val MAX_FAVORITES = 5000
+
+    /** Bound on persisted stream targets (a few hundred songs' worth). */
+    private val MAX_STREAM_TARGETS = 4000
+
+    /**
+     * Stream pruning runs on write, but not on *every* write: it is three
+     * DELETEs, and a resolve completes on the tap path. Once a minute keeps
+     * the tables tidy without putting that work in front of playback.
+     */
+    private val STREAM_PRUNE_INTERVAL_MS = 60L * 1000
+    private var nextStreamPruneAt = 0L
     private val MAX_PLAYLISTS = 200
     private val MAX_TRACKS_PER_PLAYLIST = 2000
 
@@ -102,9 +113,63 @@ class Database(dbPath: String) {
                     )
                     """.trimIndent()
                 )
+                // Durable stream-target cache (see StreamTargetPersistence).
+                // A resolved CDN URL + its byte length is exactly what a tap
+                // needs, and it used to live only in a 64-entry in-memory map
+                // — so every restart cold-started every song.
+                st.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS stream_targets (
+                        video_id       TEXT PRIMARY KEY,
+                        url            TEXT NOT NULL,
+                        mime_type      TEXT NOT NULL,
+                        itag           INTEGER NOT NULL,
+                        content_length INTEGER NOT NULL,
+                        needs_warm     INTEGER NOT NULL,
+                        expires_at     INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                // Wall-throttle marks: "this video's lean URLs hit the CDN's
+                // per-URL transfer budget on this network". Losing them on a
+                // restart sent the next resolve straight back into the URL
+                // family that had just refused.
+                st.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS stream_marks (
+                        video_id   TEXT PRIMARY KEY,
+                        wall_until INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                st.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_stream_targets_expiry " +
+                        "ON stream_targets(expires_at)"
+                )
             }
         }
     }
+
+    /**
+     * Prepared-statement cache for the read paths the watch hits on every
+     * screen open. sqlite-jdbc compiles the SQL on each prepareStatement()
+     * call; on a phone (and worse, on a proot filesystem) that is real work
+     * per request. Everything runs under [lock], which is what makes sharing a
+     * statement instance safe.
+     */
+    private val statements = HashMap<String, java.sql.PreparedStatement>()
+
+    private fun stmt(sql: String): java.sql.PreparedStatement =
+        statements.getOrPut(sql) { conn.prepareStatement(sql) }
+
+    /**
+     * In-memory copy of the favourites list. `listFavorites()` is called on
+     * every favourites screen open AND by /api/recommendations on every hit
+     * (to build the exclude set), so re-reading and re-mapping up to 5000 rows
+     * each time was pure waste. Invalidated by every write.
+     */
+    @Volatile
+    private var favoritesSnapshot: List<TrackDto>? = null
 
     /**
      * Cheap liveness probe for /ready: a single indexed SELECT against the
@@ -125,6 +190,8 @@ class Database(dbPath: String) {
     /** Idempotent close for graceful shutdown (drains WAL via checkpoint). */
     fun close() = try {
         synchronized(lock) {
+            statements.values.forEach { runCatching { it.close() } }
+            statements.clear()
             conn.createStatement().use { it.execute("PRAGMA wal_checkpoint(TRUNCATE)") }
             conn.close()
         }
@@ -229,13 +296,16 @@ class Database(dbPath: String) {
 
     // ---------------- Favorites ----------------
 
-    fun listFavorites(): List<TrackDto> = synchronized(lock) {
-        conn.prepareStatement("SELECT * FROM favorites ORDER BY rowid DESC").use { ps ->
-            ps.executeQuery().use { rs ->
+    fun listFavorites(): List<TrackDto> {
+        synchronized(lock) {
+            favoritesSnapshot?.let { return it }
+            val list = stmt("SELECT * FROM favorites ORDER BY rowid DESC").executeQuery().use { rs ->
                 buildList {
                     while (rs.next()) add(rs.toTrackDto())
                 }
             }
+            favoritesSnapshot = list
+            return list
         }
     }
 
@@ -262,13 +332,15 @@ class Database(dbPath: String) {
             "DELETE FROM favorites WHERE video_id NOT IN " +
                 "(SELECT video_id FROM favorites ORDER BY rowid DESC LIMIT $MAX_FAVORITES)"
         ).use { it.executeUpdate() }
+        favoritesSnapshot = null
     }
 
-    fun removeFavorite(videoId: String) = synchronized(lock) {
+    fun removeFavorite(videoId: String): Unit = synchronized(lock) {
         conn.prepareStatement("DELETE FROM favorites WHERE video_id = ?").use { ps ->
             ps.setString(1, videoId)
             ps.executeUpdate()
         }
+        favoritesSnapshot = null
     }
 
     // ---------------- Playlists ----------------
@@ -396,6 +468,109 @@ class Database(dbPath: String) {
                 ps.executeUpdate()
             }
         }
+    }
+
+    // ---------------- Stream target / throttle-mark persistence ----------------
+
+    override fun getStreamTarget(videoId: String): CachedStreamTarget? = synchronized(lock) {
+        // Reused statement: close the ResultSet, never the statement itself.
+        // `.use` here would close the cached PreparedStatement, and the next
+        // read of the same SQL would then throw "statement is closed".
+        val ps = stmt(
+            "SELECT url, mime_type, itag, content_length, needs_warm, expires_at " +
+                "FROM stream_targets WHERE video_id = ?"
+        )
+        ps.setString(1, videoId)
+        ps.executeQuery().use { rs ->
+            if (!rs.next()) return@synchronized null
+            CachedStreamTarget(
+                StreamTarget(
+                    url = rs.getString(1),
+                    mimeType = rs.getString(2),
+                    itag = rs.getInt(3),
+                    contentLength = rs.getLong(4),
+                    needsExtractorWarm = rs.getInt(5) != 0,
+                ),
+                expiresAtMillis = rs.getLong(6),
+            )
+        }
+    }
+
+    override fun putStreamTarget(videoId: String, entry: CachedStreamTarget) = synchronized(lock) {
+        conn.prepareStatement(
+            """
+            INSERT INTO stream_targets
+                (video_id, url, mime_type, itag, content_length, needs_warm, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(video_id) DO UPDATE SET
+                url = excluded.url,
+                mime_type = excluded.mime_type,
+                itag = excluded.itag,
+                content_length = excluded.content_length,
+                needs_warm = excluded.needs_warm,
+                expires_at = excluded.expires_at
+            """.trimIndent()
+        ).use { ps ->
+            ps.setString(1, videoId)
+            ps.setString(2, entry.target.url)
+            ps.setString(3, entry.target.mimeType)
+            ps.setInt(4, entry.target.itag)
+            ps.setLong(5, entry.target.contentLength)
+            ps.setInt(6, if (entry.target.needsExtractorWarm) 1 else 0)
+            ps.setLong(7, entry.expiresAtMillis)
+            ps.executeUpdate()
+        }
+        val now = System.currentTimeMillis()
+        if (now >= nextStreamPruneAt) {
+            nextStreamPruneAt = now + STREAM_PRUNE_INTERVAL_MS
+            pruneStreamState(now)
+        }
+    }
+
+    override fun removeStreamTarget(videoId: String): Unit = synchronized(lock) {
+        conn.prepareStatement("DELETE FROM stream_targets WHERE video_id = ?").use { ps ->
+            ps.setString(1, videoId)
+            ps.executeUpdate()
+        }
+    }
+
+    override fun getWallThrottledUntil(videoId: String): Long = synchronized(lock) {
+        val ps = stmt("SELECT wall_until FROM stream_marks WHERE video_id = ?")
+        ps.setString(1, videoId)
+        ps.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else 0L }
+    }
+
+    override fun putWallThrottled(videoId: String, untilMillis: Long): Unit = synchronized(lock) {
+        conn.prepareStatement(
+            """
+            INSERT INTO stream_marks (video_id, wall_until) VALUES (?, ?)
+            ON CONFLICT(video_id) DO UPDATE SET wall_until = excluded.wall_until
+            """.trimIndent()
+        ).use { ps ->
+            ps.setString(1, videoId)
+            ps.setLong(2, untilMillis)
+            ps.executeUpdate()
+        }
+    }
+
+    /**
+     * Bounded on every write: expired targets and expired marks are dropped so
+     * weeks of playback cannot grow these tables without limit. The caps are
+     * generous (a personal library is a few thousand songs at most).
+     */
+    override fun pruneStreamState(nowMillis: Long): Unit = synchronized(lock) {
+        conn.prepareStatement("DELETE FROM stream_targets WHERE expires_at <= ?").use { ps ->
+            ps.setLong(1, nowMillis)
+            ps.executeUpdate()
+        }
+        conn.prepareStatement("DELETE FROM stream_marks WHERE wall_until <= ?").use { ps ->
+            ps.setLong(1, nowMillis)
+            ps.executeUpdate()
+        }
+        conn.prepareStatement(
+            "DELETE FROM stream_targets WHERE video_id NOT IN " +
+                "(SELECT video_id FROM stream_targets ORDER BY expires_at DESC LIMIT $MAX_STREAM_TARGETS)"
+        ).use { it.executeUpdate() }
     }
 
     private fun java.sql.ResultSet.toTrackDto() = TrackDto(

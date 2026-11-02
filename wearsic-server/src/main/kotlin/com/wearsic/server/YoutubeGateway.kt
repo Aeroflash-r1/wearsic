@@ -11,8 +11,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.schabi.newpipe.extractor.NewPipe
@@ -37,6 +37,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
@@ -50,12 +51,21 @@ import kotlinx.serialization.json.contentOrNull
  * iOS-mode, request B sets default-mode before A's fetchPage() reads it, and A
  * silently extracts with B's configuration.
  *
- * [YoutubeGateway] is the single choke point that owns that global toggle:
- * every extraction is serialized through [extractionMutex], so the
- * set -> fetch -> reset sequence is atomic with respect to every other
- * extraction. The serialization cost is acceptable for a personal low-QPS
- * server, and [streamTarget]'s result cache means repeat plays never re-enter
- * the lock at all.
+ * The old answer was a global mutex around `set -> fetch -> reset`. That
+ * serialized every extraction behind every other one, and — worse — let
+ * BACKGROUND work (search/album/radio prefetch) hold the lock for the ~10s a
+ * full fetchPage() takes while a user's tap queued behind it. That queue is
+ * the "sometimes it just sits there, then 404s" failure mode: a tap that
+ * waits out the 25s budget resolves to nothing and the watch gets a 404.
+ *
+ * The fix is to stop churning the flag per call. The client identity is now an
+ * EPOCH: one process-wide mode, written only when a resolution comes back with
+ * nothing playable (rate-limited, never from inside another extraction), and
+ * never reset afterwards. Every extraction reads it once and runs; there is no
+ * set/reset pair left to interleave, so extractions are safe to run
+ * concurrently. [extractionSlots] only bounds how many run at once, and
+ * background prefetch never enters the extractor at all
+ * (`streamTarget(id, allowExtraction = false)`).
  */
 class YoutubeGateway(
     /**
@@ -65,6 +75,11 @@ class YoutubeGateway(
     downloader: Downloader = NewPipeDownloader(NewPipeDownloader.buildClient()),
     /** Self-healing: records extraction success/failure when non-null. */
     private val healthMeter: ExtractionHealthMeter? = null,
+    /**
+     * Optional durable cache for resolved targets + throttle marks, so a
+     * restart does not cold-start every song (see [StreamTargetPersistence]).
+     */
+    private val persistence: StreamTargetPersistence? = null,
 ) : YoutubeMetadataClient {
 
     private val logger = LoggerFactory.getLogger(YoutubeGateway::class.java)
@@ -74,11 +89,21 @@ class YoutubeGateway(
         NewPipe.init(downloader)
     }
 
+    /** Bounds concurrent NewPipe extractions (was a single global mutex). */
+    private val extractionSlots = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
+
     /**
-     * Serializes ALL stream extractions because YoutubeStreamExtractor's
-     * client selection is global static state (see class docs).
+     * Client identity in force for EVERY extraction (see class docs). Written
+     * only by [flipModeForRetry], under [modeLock], at most once per
+     * [MODE_FLIP_COOLDOWN_MS] — never per call, and never reset.
      */
-    private val extractionMutex = Mutex()
+    @Volatile
+    private var useIosClientMode: Boolean = true
+
+    private val modeLock = Any()
+
+    @Volatile
+    private var lastModeFlipAtMs: Long = 0L
 
     /** Shared JDK HTTP client for the lean player fast path (own pool). */
     private val leanHttp: java.net.http.HttpClient by lazy {
@@ -109,6 +134,16 @@ class YoutubeGateway(
 
         /** NOT_PLAYABLE markers live much shorter than real targets. */
         internal const val NOT_PLAYABLE_TTL_MILLIS: Long = 5 * 60 * 1000L // 5 minutes
+
+        /**
+         * How many NewPipe extractions may run at once. Was effectively 1
+         * (a global mutex); 2 keeps a single slow video from blocking the
+         * next one while still bounding YouTube concurrency on a phone.
+         */
+        internal const val MAX_CONCURRENT_EXTRACTIONS = 2
+
+        /** Minimum gap between automatic process-wide client-mode flips. */
+        private const val MODE_FLIP_COOLDOWN_MS = 30_000L
 
         /** Wall-clock budget for one full stream resolution. */
         internal const val EXTRACTION_TIMEOUT_MS: Long = 25_000L
@@ -147,7 +182,19 @@ class YoutubeGateway(
             "com.google.ios.youtube/21.03.2 (iPhone16,2; U; CPU iOS 18_7_2 like Mac OS X; en_US)"
         private const val IOS_PLAYER_URL =
             "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+        /** Lean related-rail endpoint — see [leanRelated]. */
+        private const val NEXT_URL =
+            "https://www.youtube.com/youtubei/v1/next?prettyPrint=false"
+        /**
+         * One lean `next` attempt. Generous next to the player call (it is
+         * small) but hard-capped: this runs up to 6 times in parallel for
+         * "Made for you", so a stalled client must not hold the shelf open.
+         */
+        private const val LEAN_RELATED_TIMEOUT_MS: Long = 6_000L
         private val VIDEO_ID_RE = Regex("[A-Za-z0-9_-]{11}")
+
+        /** Duration badge text ("3:59", "1:02:03") on a lockup thumbnail. */
+        private val LENGTH_TEXT_RE = Regex("""^(\d+:)?\d{1,3}:\d{2}$""")
 
         /**
          * InnerTube client identities for the lean fast path.
@@ -201,6 +248,30 @@ class YoutubeGateway(
         // Ex-ANDROID (HTTP 400 / ciphered URLs only) and TVHTML5 (YouTube: "no
         // longer supported in this application or device") were dropped after
         // live probing — they only added latency to every resolve.
+
+        private const val WEB_CLIENT_VERSION = "2.20250101.00.00"
+        private const val WEB_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0"
+
+        /**
+         * InnerTube identities for the lean `next` (related rail) read — a
+         * DIFFERENT question from [LEAN_CLIENTS], which is ranked by stream
+         * URL survival. Measured live: WEB answers the related rail as a
+         * tidy `lockupViewModel` list in ~450KB, while IOS/ANDROID/visionOS
+         * now answer in the new "element" format — a 7MB blob whose rows
+         * carry no `lockupViewModel`, `compactVideoRenderer` or `videoId` at
+         * any depth (verified by scanning the whole payload). Asking those
+         * clients for `next` therefore cost 15x the bytes and yielded
+         * nothing, which is what made "Made for you" fall back to a full
+         * ~10s extraction for every one of its six seeds.
+         */
+        private val NEXT_CLIENTS: List<LeanClientProfile> = listOf(
+            LeanClientProfile(
+                clientName = "WEB", clientVersion = WEB_CLIENT_VERSION, clientIdHeader = "1",
+                userAgent = WEB_USER_AGENT,
+                contextFields = "",
+            ),
+        )
 
         private const val VISIONOS_USER_AGENT =
             "com.google.visionos.youtube/1.02 (RealityDevice14,1; U; CPU visionOS 25_6_0 like Mac OS X; en_US)"
@@ -518,9 +589,257 @@ class YoutubeGateway(
 
     // ---------------- Related / radio ----------------
 
+    /**
+     * Lean InnerTube `next` for the related rail: ONE POST (typically
+     * 0.3-0.5s) instead of a full NewPipe `fetchPage()` on the watch page —
+     * which costs ~10s because it drags in visitor tracking, the Shorts reel
+     * and the player response, none of which the rail needs.
+     *
+     * WHY THIS MATTERS: `related()` is what "Made for you" is built on. It
+     * asks for up to [RecommendationEngine.MAX_SEEDS] related lists in
+     * parallel, so a 10s fetch per seed made the shelf take 10-20s to appear
+     * (and radio's first hop paid the same price).
+     *
+     * Returns null when NOTHING usable came back — wrong response shape, a
+     * non-200, or every client failing — so the caller falls back to full
+     * extraction exactly as it did before. A non-null list is final, already
+     * filtered the same way the extractor path filters.
+     *
+     * It deliberately does NOT touch [healthMeter]: this is a metadata read,
+     * not an extraction, so a healthy lean rail must not be able to mask a
+     * broken extractor.
+     */
+    private suspend fun leanRelated(videoId: String): List<TrackDto>? {
+        if (!VIDEO_ID_RE.matches(videoId)) return null
+        // Metadata order is deliberately NOT the stream order: LEAN_CLIENTS is
+        // ranked by which client's STREAM URLs survive the CDN's 1MB wall,
+        // which is irrelevant here (see [NEXT_CLIENTS]).
+        val profiles = NEXT_CLIENTS
+        for (profile in profiles) {
+            // VISIONOS answers LOGIN_REQUIRED without the session id — same
+            // rule as the player path, so fetch it only for the client that
+            // asks (and it is cached for hours after the first time).
+            val visitor = if (profile.wantsVisitorData) currentVisitorData() else null
+            if (profile.wantsVisitorData && visitor == null) continue
+            val visitorField = visitor?.let { ""","visitorData":"$it"""" } ?: ""
+            val payload =
+                """{"videoId":"$videoId","context":{"client":{""" +
+                """"clientName":"${profile.clientName}","clientVersion":"${profile.clientVersion}",""" +
+                profile.contextFields +
+                """"hl":"en","gl":"US"$visitorField},"user":{}}}"""
+            val builder = HttpRequest.newBuilder(URI.create(NEXT_URL))
+                .timeout(Duration.ofMillis(LEAN_RELATED_TIMEOUT_MS))
+                .header("Content-Type", "application/json")
+                .header("Accept", "*/*")
+                .header("User-Agent", profile.userAgent)
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+            if (profile.clientIdHeader.isNotEmpty()) {
+                builder.header("X-YouTube-Client-Name", profile.clientIdHeader)
+                builder.header("X-YouTube-Client-Version", profile.clientVersion)
+            }
+            YoutubeSession.cookie?.let { builder.header("Cookie", it) }
+            val body = try {
+                val resp = leanHttp.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+                if (resp.statusCode() != 200) {
+                    logger.info("Lean next ({}) for {}: HTTP {}", profile.clientName, videoId, resp.statusCode())
+                    continue
+                }
+                resp.body()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                logger.info("Lean next ({}) failed for {}: {}", profile.clientName, videoId, t.message)
+                continue
+            }
+            // Shape recognised = this IS the answer, even when every row was
+            // filtered out (shorts, playlists): returning it stops the loop
+            // instead of paying the next client, and the caller skips the
+            // 10s extraction it would otherwise run for the same empty rail.
+            val parsed = parseRelatedJson(body) ?: continue
+            logger.info("Lean related {} -> {} row(s) via {}", videoId, parsed.size, profile.clientName)
+            return parsed
+        }
+        return null
+    }
+
+    /**
+     * Parses the `next` response's related rail. Null = "shape not
+     * recognised" (caller falls back to extraction); an empty list = the
+     * shape was right but nothing survived the filters (shorts, playlists,
+     * sub-10-minute cuts) — that is a real answer, not a failure, so the
+     * caller must not spend 10s re-deriving it.
+     */
+    internal fun parseRelatedJson(body: String): List<TrackDto>? {
+        val root = try {
+            Json.parseToJsonElement(body).jsonObject
+        } catch (t: Throwable) {
+            return null
+        }
+        val results = relatedRail(root) ?: return null
+        val out = ArrayList<TrackDto>(results.size)
+        for (element in results) {
+            val item = try {
+                element.jsonObject
+            } catch (t: Throwable) {
+                continue
+            }
+            val track = parseLockup(item["lockupViewModel"]?.jsonObject)
+                ?: parseVideoRenderer(item["compactVideoRenderer"]?.jsonObject)
+                ?: parseVideoRenderer(item["videoRenderer"]?.jsonObject)
+                ?: continue
+            if (!VIDEO_ID_RE.matches(track.videoId)) continue
+            out += track
+        }
+        // Same shape as the extractor path: dedupe, cap, then keep the
+        // dominant artist near the top so the shelf reads as one taste.
+        return orderByDominantArtist(out.distinctBy { it.videoId }.take(MAX_RESULTS))
+    }
+
+    /**
+     * The related rows, across the response shapes YouTube serves today.
+     *
+     * WEB (`twoColumnWatchNextResults`) nests the list one level deeper than
+     * it used to — `secondaryResults.secondaryResults.results` — and the
+     * pre-2025 shape put it at `secondaryResults.results`. Both are accepted
+     * so a future flip does not silently return "nothing related".
+     */
+    private fun relatedRail(root: JsonObject): JsonArray? {
+        val contents = root["contents"]?.jsonObject
+        val twoColumn = contents?.get("twoColumnWatchNextResults")?.jsonObject
+        if (twoColumn != null) {
+            twoColumn["secondaryResults"]?.jsonObject?.let { secondary ->
+                secondary["secondaryResults"]?.jsonObject
+                    ?.get("results")?.jsonArray
+                    ?.let { return it }
+                secondary["results"]?.jsonArray?.let { return it }
+            }
+        }
+        return null
+    }
+
+    /**
+     * One row of the modern `lockupViewModel` list (what WEB returns for
+     * `next`). Null for anything that is not a single video: album and
+     * playlist lockups share this renderer and must not become songs.
+     */
+    private fun parseLockup(lockup: JsonObject?): TrackDto? {
+        if (lockup == null) return null
+        val type = lockup["contentType"]?.jsonPrimitive?.contentOrNull
+        if (type != null && type != "LOCKUP_CONTENT_TYPE_VIDEO") return null
+        val vid = lockup["contentId"]?.jsonPrimitive?.contentOrNull ?: return null
+        val meta = lockup["metadata"]?.jsonObject
+            ?.get("lockupMetadataViewModel")?.jsonObject ?: return null
+        val title = meta["title"]?.jsonObject
+            ?.get("content")?.jsonPrimitive?.contentOrNull
+            ?.takeIf { it.isNotBlank() } ?: return null
+        // Row 0 part 0 is the artist; row 1 carries view count + age.
+        val uploader = runCatching {
+            meta["metadata"]?.jsonObject
+                ?.get("contentMetadataViewModel")?.jsonObject
+                ?.get("metadataRows")?.jsonArray
+                ?.firstOrNull()?.jsonObject
+                ?.get("metadataParts")?.jsonArray
+                ?.firstOrNull()?.jsonObject
+                ?.get("text")?.jsonObject
+                ?.get("content")?.jsonPrimitive?.contentOrNull
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Unknown"
+        val thumbs = lockup["contentImage"]?.jsonObject
+            ?.get("thumbnailViewModel")?.jsonObject
+            ?.get("image")?.jsonObject
+            ?.get("sources")?.jsonArray
+        val thumbUrl = thumbs?.lastOrNull()?.jsonObject
+            ?.get("url")?.jsonPrimitive?.contentOrNull
+        // The duration lives on a thumbnail badge ("3:59"); the MUSIC badge
+        // next to it has no text and is simply skipped.
+        val seconds = runCatching {
+            lockup["contentImage"]?.jsonObject
+                ?.get("thumbnailViewModel")?.jsonObject
+                ?.get("overlays")?.jsonArray
+                ?.asSequence()
+                ?.mapNotNull { it.jsonObject["thumbnailBottomOverlayViewModel"]?.jsonObject }
+                ?.flatMap { overlay ->
+                    overlay["badges"]?.jsonArray?.asSequence() ?: emptySequence()
+                }
+                ?.mapNotNull { it.jsonObject["thumbnailBadgeViewModel"]?.jsonObject }
+                ?.mapNotNull { it["text"]?.jsonPrimitive?.contentOrNull }
+                ?.filter { LENGTH_TEXT_RE.matches(it) }
+                ?.firstOrNull()
+        }.getOrNull()?.let { lengthToSeconds(it) } ?: 0L
+        if (seconds != 0L && seconds !in 30..(MAX_RELATED_MINUTES * 60)) return null
+        return TrackDto(
+            videoId = vid,
+            title = title,
+            uploader = uploader,
+            durationMs = seconds * 1000,
+            thumbnailUrl = thumbUrl,
+        )
+    }
+
+    /** One row of a legacy `compactVideoRenderer`/`videoRenderer`. */
+    private fun parseVideoRenderer(item: JsonObject?): TrackDto? {
+        if (item == null) return null
+        val vid = item["videoId"]?.jsonPrimitive?.contentOrNull ?: return null
+        val title = runsText(item["title"]) ?: return null
+        val uploader = runsText(item["longBylineText"])
+            ?: runsText(item["shortBylineText"])
+            ?: "Unknown"
+        // 0 = live / no length, which the extractor path also allows.
+        val seconds = durationSeconds(item["lengthText"])
+        if (seconds != 0L && seconds !in 30..(MAX_RELATED_MINUTES * 60)) return null
+        val thumbs = item["thumbnail"]?.jsonObject?.get("thumbnails")?.jsonArray
+        val thumbUrl = thumbs?.lastOrNull()?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull
+        return TrackDto(
+            videoId = vid,
+            title = title,
+            uploader = uploader,
+            durationMs = seconds * 1000,
+            thumbnailUrl = thumbUrl,
+        )
+    }
+
+    /** `simpleText` or the concatenated `runs[].text`, trimmed; null if blank. */
+    private fun runsText(node: JsonElement?): String? {
+        val o = node?.jsonObject ?: return null
+        o["simpleText"]?.jsonPrimitive?.contentOrNull?.let { simple ->
+            if (simple.isNotBlank()) return simple
+        }
+        val runs = o["runs"]?.jsonArray ?: return null
+        val joined = runs.joinToString("") { run ->
+            try {
+                run.jsonObject["text"]?.jsonPrimitive?.contentOrNull ?: ""
+            } catch (t: Throwable) {
+                ""
+            }
+        }
+        return joined.takeIf { it.isNotBlank() }
+    }
+
+    /** "3:45" -> 225, "1:02:03" -> 3723, anything unreadable -> 0 (unknown/live). */
+    private fun durationSeconds(node: JsonElement?): Long {
+        val text = runsText(node) ?: return 0L
+        return lengthToSeconds(text)
+    }
+
+    private fun lengthToSeconds(text: String): Long {
+        val parts = text.split(':').mapNotNull { it.trim().toIntOrNull() }
+        if (parts.isEmpty()) return 0L
+        return parts.fold(0L) { acc, p -> acc * 60 + p }
+    }
+
     override suspend fun related(videoId: String): List<TrackDto> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         relatedCache.get(videoId)?.let { if (it.expiresAt > now) return@withContext it.value }
+
+        // Fast path first: one lean POST instead of a 10s watch-page fetch.
+        val leanStarted = System.currentTimeMillis()
+        val lean = runCatching { leanRelated(videoId) }.getOrNull()
+        if (lean != null) {
+            LatencyMetrics.record("related.lean", System.currentTimeMillis() - leanStarted)
+            if (lean.isNotEmpty()) relatedCache.put(videoId, Timed(lean, now + RELATED_TTL_MS))
+            return@withContext lean
+        }
+
+        val extractStarted = System.currentTimeMillis()
         val result = runCatching {
             val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
             extractor.fetchPage()
@@ -539,6 +858,7 @@ class YoutubeGateway(
             .onSuccess { healthMeter?.recordSuccess() }
             .onFailure { healthMeter?.recordFailure("related: ${it.message}") }
             .getOrDefault(emptyList())
+        LatencyMetrics.record("related.extract", System.currentTimeMillis() - extractStarted)
         if (result.isNotEmpty()) relatedCache.put(videoId, Timed(result, now + RELATED_TTL_MS))
         result
     }
@@ -616,10 +936,25 @@ class YoutubeGateway(
 
     // ---------------- Stream resolution ----------------
 
-    override suspend fun streamTarget(videoId: String): StreamTarget? {
+    override suspend fun streamTarget(videoId: String): StreamTarget? =
+        streamTarget(videoId, allowExtraction = true)
+
+    override suspend fun streamTarget(videoId: String, allowExtraction: Boolean): StreamTarget? {
         val now = System.currentTimeMillis()
         streamCache.get(videoId)?.let { cached ->
             if (cached.expiresAtMillis > now) return cached.target
+        }
+        // Warm start: a target stored by an EARLIER run is served with no
+        // upstream round trip at all. This is what makes the first tap after a
+        // restart (engine update, reboot, lmkd kill — all routine here) feel
+        // like any other tap instead of paying a fresh resolve.
+        // Best effort: the store is a cache. A broken/unreadable database
+        // must cost one re-resolve, never fail playback.
+        runCatching { persistence?.getStreamTarget(videoId) }.getOrNull()?.let { cached ->
+            if (cached.expiresAtMillis > now) {
+                streamCache.put(videoId, cached)
+                return cached.target
+            }
         }
 
         return streamSingleFlight.run(videoId) {
@@ -631,6 +966,12 @@ class YoutubeGateway(
             streamCache.get(videoId)?.let { cached ->
                 if (cached.expiresAtMillis > joinedAt) return@run cached.target
             }
+            runCatching { persistence?.getStreamTarget(videoId) }.getOrNull()?.let { cached ->
+                if (cached.expiresAtMillis > joinedAt) {
+                    streamCache.put(videoId, cached)
+                    return@run cached.target
+                }
+            }
 
             // Fast path first: parallel player POSTs across client identities,
             // no mutex (pure HTTP, no global state). Skipped entirely for
@@ -640,11 +981,22 @@ class YoutubeGateway(
                 logger.info("{} is wall-throttled — resolving via extractor URLs", videoId)
                 null
             } else {
-                withContext(Dispatchers.IO) { resolveLeanFormats(videoId) }
+                withContext(Dispatchers.IO) {
+                    // ONE client on the hot path. Firing VISIONOS + IOS +
+                    // ANDROID_VR on every resolve cost three InnerTube POSTs
+                    // per song, times every row a search pre-warms, for
+                    // rotation tickets that are only ever needed if this URL
+                    // is refused mid-song — and by then the rotation path can
+                    // mint them from the other families. Those families are
+                    // only consulted here if the primary came back empty.
+                    resolveLeanFormats(videoId, LEAN_CLIENTS.take(1))
+                        ?: resolveLeanFormats(videoId, LEAN_CLIENTS.drop(1))
+                }
             }
             val lean = ranked?.firstOrNull()
             if (lean != null) {
                 healthMeter?.recordSuccess()
+                LatencyMetrics.record("resolve.lean", System.currentTimeMillis() - now)
                 stashFormatFallbacks(videoId, ranked.drop(1))
                 // NOTE: extractor-ticket warm deliberately does NOT run from
                 // here. streamTarget also serves search PREFETCH (every
@@ -665,7 +1017,7 @@ class YoutubeGateway(
                 streamCache.put(
                     videoId,
                     CachedStreamTarget(target, System.currentTimeMillis() + STREAM_CACHE_TTL_MILLIS)
-                )
+                ).also { rememberTarget(videoId) }
                 return@run target
             }
 
@@ -673,13 +1025,15 @@ class YoutubeGateway(
             // nothing: a timeout is TRANSIENT (queue jam / slow YouTube) and
             // must NOT be cached as NOT_PLAYABLE, or the next 5 min of taps
             // get instant-404s instead of a retry.
+            // BACKGROUND WORK MUST NEVER ENTER THE EXTRACTOR. A prefetch may
+            // still serve a cheap lean answer above; the moment it would need
+            // a ~10s fetchPage() it stops instead, so the tap that follows
+            // finds either a warm cache or an uncontended extractor.
+            if (!allowExtraction) return@run null
+
             var timedOut = false
             val rankedExtractor = withTimeoutOrNull(EXTRACTION_TIMEOUT_MS) {
-                extractionMutex.withLock {
-                    withContext(Dispatchers.IO) {
-                        resolveAudioStreamsWithFallback(videoId)
-                    }
-                }
+                extractWithSlot(videoId)
             } ?: run { timedOut = true; emptyList() }
 
             val audio = rankedExtractor.firstOrNull()
@@ -702,6 +1056,8 @@ class YoutubeGateway(
                         contentLength = audio.itagItem?.contentLength?.takeIf { it > 0L } ?: 0L,
                     )
                     streamCache.put(videoId, CachedStreamTarget(target, System.currentTimeMillis() + STREAM_CACHE_TTL_MILLIS))
+                        .also { rememberTarget(videoId) }
+                    LatencyMetrics.record("resolve.extract", System.currentTimeMillis() - now)
                     target
                 }
                 timedOut -> {
@@ -760,9 +1116,7 @@ class YoutubeGateway(
         // fail while lean still works.
         val fresh: List<LeanAudio> = if (isWallThrottled(videoId) || requireCompatible) {
             val streams = withTimeoutOrNull(EXTRACTION_TIMEOUT_MS) {
-                extractionMutex.withLock {
-                    withContext(Dispatchers.IO) { resolveAudioStreamsWithFallback(videoId) }
-                }
+                extractWithSlot(videoId)
             }.orEmpty()
             val tickets = extractorTickets(streams)
             if (tickets.isNotEmpty()) tickets else resolveLeanFormats(videoId).orEmpty()
@@ -796,7 +1150,12 @@ class YoutubeGateway(
 
     /** Marks [videoId] as wall-throttled for [WALL_THROTTLE_TTL_MS]. */
     internal fun markWallThrottled(videoId: String) {
-        wallThrottled.put(videoId, System.currentTimeMillis() + WALL_THROTTLE_TTL_MS)
+        val until = System.currentTimeMillis() + WALL_THROTTLE_TTL_MS
+        wallThrottled.put(videoId, until)
+        // Persisted: the mark is what makes the NEXT resolve skip the lean
+        // path entirely. Losing it to a restart would send the retry straight
+        // back into the URL family that just refused this network.
+        runCatching { persistence?.putWallThrottled(videoId, until) }
     }
 
     /**
@@ -839,9 +1198,7 @@ class YoutubeGateway(
                 // rotation could need them.
                 delay(WARM_EXTRACTOR_DELAY_MS)
                 val streams = withTimeoutOrNull(EXTRACTION_TIMEOUT_MS) {
-                    extractionMutex.withLock {
-                        withContext(Dispatchers.IO) { resolveAudioStreamsWithFallback(videoId) }
-                    }
+                    extractWithSlot(videoId)
                 }.orEmpty()
                 val tickets = extractorTickets(streams)
                 if (tickets.isNotEmpty()) {
@@ -857,8 +1214,21 @@ class YoutubeGateway(
     }
 
     private fun isWallThrottled(videoId: String): Boolean {
-        val until = wallThrottled.get(videoId) ?: return false
-        return until > System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        wallThrottled.get(videoId)?.let { return it > now }
+        val stored = runCatching { persistence?.getWallThrottledUntil(videoId) ?: 0L }.getOrDefault(0L)
+        if (stored > now) {
+            wallThrottled.put(videoId, stored)
+            return true
+        }
+        return false
+    }
+
+    /** Mirrors the in-memory entry into the durable store (best effort). */
+    private fun rememberTarget(videoId: String) {
+        val entry = streamCache.get(videoId) ?: return
+        if (entry.target.url == NOT_PLAYABLE) return
+        runCatching { persistence?.putStreamTarget(videoId, entry) }
     }
 
     private fun publishTicket(videoId: String, next: LeanAudio, why: String): StreamTarget {
@@ -1037,15 +1407,19 @@ class YoutubeGateway(
      * awaited: there, bailing out would only trigger the much slower
      * extraction fallback.
      */
-    private suspend fun resolveLeanFormats(videoId: String): List<LeanAudio>? {
+    private suspend fun resolveLeanFormats(
+        videoId: String,
+        profiles: List<LeanClientProfile> = LEAN_CLIENTS,
+    ): List<LeanAudio>? {
         if (!VIDEO_ID_RE.matches(videoId)) return null
+        if (profiles.isEmpty()) return null
         // Queries run on a DETACHED scope on purpose: java.net.http's send()
         // is blocking and not cancellation-interruptible, so structured
         // concurrency would keep this call parked in join() until a stalled
         // client hit its timeout even after an answer was picked.
         val queryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val answers = Channel<Pair<LeanClientProfile, List<LeanAudio>>>(Channel.UNLIMITED)
-        LEAN_CLIENTS.forEach { profile ->
+        profiles.forEach { profile ->
             queryScope.launch {
                 val audios = try {
                     // The visitor-id fetch overlaps the OTHER clients' POSTs
@@ -1070,11 +1444,11 @@ class YoutubeGateway(
                 answers.trySend(profile to audios)
             }
         }
-        val preferred = LEAN_CLIENTS.firstOrNull { it.wantsVisitorData } ?: LEAN_CLIENTS.first()
+        val preferred = profiles.firstOrNull { it.wantsVisitorData } ?: profiles.first()
         val collected = mutableListOf<Pair<LeanClientProfile, List<LeanAudio>>>()
         var firstGoodAt = 0L
         var preferredAnswered = false
-        while (collected.size < LEAN_CLIENTS.size) {
+        while (collected.size < profiles.size) {
             var answer = answers.tryReceive().getOrNull()
             if (answer == null) {
                 if (firstGoodAt == 0L) {
@@ -1101,7 +1475,7 @@ class YoutubeGateway(
         // Client order — not arrival order — ranks the tickets: an early IOS
         // answer must not demote VISIONOS's wall-safe URLs.
         val audios = collected
-            .sortedBy { LEAN_CLIENTS.indexOf(it.first) }
+            .sortedBy { profiles.indexOf(it.first) }
             .flatMap { it.second }
             .distinctBy { it.url }
         if (audios.isEmpty()) return null
@@ -1109,7 +1483,7 @@ class YoutubeGateway(
             "Lean resolve {}: {} tickets from {} client(s) [{}]",
             videoId, audios.size, collected.count { it.second.isNotEmpty() },
             collected.filter { it.second.isNotEmpty() }
-                .sortedBy { LEAN_CLIENTS.indexOf(it.first) }
+                .sortedBy { profiles.indexOf(it.first) }
                 .joinToString("+") { it.first.clientName },
         )
         // Same preference as the extractor path, as a RANKING so the caller
@@ -1203,31 +1577,73 @@ class YoutubeGateway(
      * Ordering: AAC-LC (hardware-decoded on the watch for low battery) near
      * the 128k tier first, then everything else by distance — the caller
      * plays [0] and stashes the rest as rotation tickets.
+     */    /**
+     * Runs one full extraction under a concurrency slot, timing the WAIT for
+     * the slot separately from the work: a resolve that took 9s without
+     * waiting is YouTube; one that waited 9s is our own queueing, and the two
+     * need opposite fixes.
      */
-    private fun resolveAudioStreamsWithFallback(videoId: String): List<AudioStream> {
-        for (useIos in CLIENT_ORDER) {
-            try {
-                val ranked = resolveAudioStreams(videoId, useIosClient = useIos)
-                if (ranked.isNotEmpty()) return ranked
-            } catch (e: Exception) {
-                logger.info(
-                    "{} client failed for video {}: {}",
-                    if (useIos) "iOS" else "Default", videoId, e.message,
-                )
-            }
+    private suspend fun extractWithSlot(videoId: String): List<AudioStream> {
+        val queuedAt = System.currentTimeMillis()
+        return extractionSlots.withPermit {
+            LatencyMetrics.record("resolve.extract.wait", System.currentTimeMillis() - queuedAt)
+            withContext(Dispatchers.IO) { resolveAudioStreamsWithFallback(videoId) }
         }
-        return emptyList()
+    }
+
+    private fun resolveAudioStreamsWithFallback(videoId: String): List<AudioStream> {
+        val mode = useIosClientMode
+        val first = attemptExtraction(videoId, mode)
+        if (first.isNotEmpty()) return first
+        // Nothing playable under the process-wide mode. Flip it ONCE
+        // (rate-limited) and retry. An extraction already running keeps the
+        // mode it started with, and nothing resets the flag afterwards, so the
+        // old set/reset interleaving cannot happen.
+        if (!flipModeForRetry(mode)) return emptyList()
+        return attemptExtraction(videoId, !mode)
+    }
+
+    private fun attemptExtraction(videoId: String, useIos: Boolean): List<AudioStream> =
+        try {
+            resolveAudioStreams(videoId, useIosClient = useIos)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            logger.info(
+                "{} client failed for video {}: {}", if (useIos) "iOS" else "Default", videoId, e.message,
+            )
+            emptyList()
+        }
+
+    /**
+     * Switches the process-wide extraction client, at most once per
+     * [MODE_FLIP_COOLDOWN_MS]. Returns false when the mode cannot be changed
+     * (someone else just changed it, or it changed too recently) — the caller
+     * then gives up rather than thrashing the global flag.
+     */
+    private fun flipModeForRetry(seenMode: Boolean): Boolean = synchronized(modeLock) {
+        if (useIosClientMode != seenMode) return true // already flipped by another resolve
+        val now = System.currentTimeMillis()
+        if (now - lastModeFlipAtMs < MODE_FLIP_COOLDOWN_MS) return false
+        useIosClientMode = !seenMode
+        lastModeFlipAtMs = now
+        logger.info(
+            "Extraction client mode -> {} (the previous mode resolved nothing)",
+            if (useIosClientMode) "iOS" else "default",
+        )
+        true
     }
 
     private fun resolveAudioStreams(videoId: String, useIosClient: Boolean): List<AudioStream> {
         val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
         if (extractor is YoutubeStreamExtractor) {
-            // setFetchIosClient is a STATIC global toggle: it must be set
-            // immediately before fetchPage() and always reset afterwards.
-            // All such sequences are serialized by extractionMutex.
+            // Process-wide mode (see class docs): SET, never reset. The old
+            // reset-in-finally was itself the race — it could clear another
+            // extraction's mode while that one was still fetching, which is
+            // what forced every extraction to be serialized behind a mutex.
             YoutubeStreamExtractor.setFetchIosClient(useIosClient)
         }
-        try {
+        run {
             extractor.fetchPage()
 
             val candidates = extractor.audioStreams.orEmpty().filter { it.isUrl }
@@ -1244,10 +1660,6 @@ class YoutubeGateway(
                     { kotlin.math.abs(it.averageBitrate - TARGET_AUDIO_BITRATE_KBPS) },
                 )
             )
-        } finally {
-            if (extractor is YoutubeStreamExtractor) {
-                YoutubeStreamExtractor.setFetchIosClient(false)
-            }
         }
     }
 

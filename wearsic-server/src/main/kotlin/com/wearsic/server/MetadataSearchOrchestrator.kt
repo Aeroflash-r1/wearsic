@@ -43,16 +43,24 @@ class MetadataSearchOrchestrator(
      * opens fast instead of paying a cold first byte (live-seen: 3.8s).
      */
     private val warmUpstream: ((videoId: String, url: String) -> Unit)? = null,
+    /**
+     * Fire-and-forget transcode warm (`Transcoder::prefetch`). A song YouTube
+     * only offers in Opus/WebM needs server-side AAC conversion, and warming it
+     * here means the tap (and every seek after it) is served from a file
+     * instead of starting ffmpeg at byte 0.
+     */
+    private val warmTranscode: ((videoId: String, url: String, mimeType: String) -> Unit)? = null,
 ) {
     companion object {
         /**
-         * Only the top-3 results are pre-resolved: the user taps one of them
-         * most of the time, and each prefetch used to hold the global
-         * extraction mutex for seconds. The lean player path needs NO mutex
-         * (pure HTTP), so 3 concurrent warms are cheap; the NewPipe fallback
-         * still serializes, and foreground playback preempts background work.
+         * How many rows are pre-resolved per list. Two, not three, and the
+         * warm is LEAN-ONLY: every extra row used to cost a full InnerTube
+         * round trip (three, before the client fan-out was cut) and could drop
+         * into a ~10s extractor run that the user's tap then queued behind.
+         * Two rows covers "tap the first or second result", which is what
+         * actually happens, for a third of the upstream traffic.
          */
-        private const val PREFETCH_COUNT = 3
+        private const val PREFETCH_COUNT = 2
 
 
         /** Prefix used by the removed iTunes layer; kept for legacy replay. */
@@ -126,7 +134,10 @@ class MetadataSearchOrchestrator(
 
     private val searchPoolCache = BoundedCache<String, SearchPool>(64)
 
-    suspend fun search(query: String, limit: Int = 10, offset: Int = 0): List<TrackDto> {
+    suspend fun search(query: String, limit: Int = 10, offset: Int = 0): List<TrackDto> =
+        LatencyMetrics.time("search.total") { searchInternal(query, limit, offset) }
+
+    private suspend fun searchInternal(query: String, limit: Int, offset: Int): List<TrackDto> {
         val normalized = query.trim().replace(Regex("\\s+"), " ")
         if (normalized.length < 2) return emptyList()
         require(normalized.length <= 200) { "Search query is too long" }
@@ -178,6 +189,17 @@ class MetadataSearchOrchestrator(
         // exactly `maxTake` after ranking.
         val safetyCap = (maxTake * 3).coerceAtMost(MAX_FETCH)
 
+        // ONE deadline for the whole page, enforced at EVERY step.
+        //
+        // Before this, only the relaxed-variant loop checked the budget: the
+        // first YouTube Music fetch alone could burn SEARCH_TIMEOUT_MS (30s)
+        // against a documented 7s first-page budget. "Fast first page" was a
+        // promise the code did not keep, and the watch spun for the whole
+        // overrun.
+        fun remainingMs(): Long = (budgetMs - (System.currentTimeMillis() - startedAt)).coerceAtLeast(0L)
+        fun stepTimeout(requested: Long, floor: Long = 600L): Long =
+            remainingMs().coerceIn(0L, requested).coerceAtLeast(floor)
+
         fun addAll(tracks: List<TrackDto>) {
             for (t in tracks) {
                 if (!byId.containsKey(t.videoId)) byId[t.videoId] = t
@@ -186,8 +208,9 @@ class MetadataSearchOrchestrator(
         }
 
         // 1. EXACT query on YouTube Music first.
-        if (byId.size < safetyCap) {
-            val ytmExact = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+        if (byId.size < safetyCap && remainingMs() > 0) {
+            val ytmStarted = System.currentTimeMillis()
+            val ytmExact = withTimeoutOrNull(stepTimeout(SEARCH_TIMEOUT_MS)) {
                 try {
                     metadata.searchSongs(normalized, collectLimit)
                 } catch (cancelled: CancellationException) {
@@ -195,7 +218,9 @@ class MetadataSearchOrchestrator(
                 } catch (_: Exception) {
                     emptyList()
                 }
-            }?.filter { it.videoId.isNotBlank() }?.distinctBy { it.videoId }?.take(collectLimit)
+            }
+                .also { LatencyMetrics.record("search.ytm", System.currentTimeMillis() - ytmStarted) }
+                ?.filter { it.videoId.isNotBlank() }?.distinctBy { it.videoId }?.take(collectLimit)
                 ?: emptyList()
             if (ytmExact.isNotEmpty()) {
                 prefetch(ytmExact.take(PREFETCH_COUNT))
@@ -203,41 +228,82 @@ class MetadataSearchOrchestrator(
             }
         }
 
-        // 2. Fast path: the exact query alone produced enough strong matches.
-        if (byId.size >= maxTake && strongMatchCount(byId.values, normalized) >= maxTake) {
+        // 2. Fast path: the exact query alone produced a FULL page that is
+        //    mostly on-query — answer NOW.
+        //
+        // This used to demand that EVERY row be strong. In practice a normal
+        // YTM page is 12-of-15 good with a couple of tangential rows, so the
+        // condition never held and every first search fell through into the
+        // general-YouTube consult (seconds of NewPipe scraping) plus the
+        // relaxed-variant loop — paying for a rescue the user did not need
+        // while they waited on a page that was already usable.
+        //
+        // Half-strong is the line: a genuinely weak or short page still gets
+        // the full rescue (that is what it exists for, and the tests below
+        // pin it), but a decent page no longer waits seconds to become
+        // perfect. Ranking still puts the strong rows first.
+        //
+        // Checked after EVERY rescue step, not just once: a weak first page
+        // used to run the general consult AND all five relaxed variants even
+        // after a rescue had already produced a good page — seconds of extra
+        // upstream per search, paid while the watch sits behind the shimmer.
+        fun goodEnough(): Boolean =
+            byId.size >= maxTake && strongMatchCount(byId.values, normalized).let { it > 0 && it * 2 >= maxTake }
+
+        if (goodEnough()) {
             return rankByQueryOverlap(byId.values.toList(), normalized)
         }
 
         // 3. Weak/missing exact page: ask GENERAL YouTube (bounded), even if
         //    the window is already full of weak rows — rank decides what the
         //    final slice keeps.
-        if (byId.size < safetyCap) {
-            val ytExact = withTimeoutOrNull(SEARCH_GENERAL_TIMEOUT_MS) {
+        if (byId.size < safetyCap && remainingMs() > 0) {
+            val generalStarted = System.currentTimeMillis()
+            val ytExact = withTimeoutOrNull(stepTimeout(SEARCH_GENERAL_TIMEOUT_MS, 300L)) {
                 youtube.searchGeneral(normalized, collectLimit)
             } ?: emptyList()
+            LatencyMetrics.record("search.general", System.currentTimeMillis() - generalStarted)
             val beforeYouTube = byId.size
             addAll(ytExact)
             if (byId.size > beforeYouTube) fallbackCount.incrementAndGet()
+            // The consult is the single most expensive rescue (NewPipe scrape);
+            // if it already fixed the page, stop here instead of paying for
+            // relaxed variants that can no longer improve the answer.
+            if (goodEnough()) return rankByQueryOverlap(byId.values.toList(), normalized)
         }
 
         // 4. Relaxed variants top up remaining slots, while budget allows.
+        //
+        // Each variant is capped by what is LEFT of the page budget, with no
+        // floor bump: `stepTimeout`'s 600ms floor used to let every one of
+        // the five variants overrun a nearly-spent budget, so a hopeless
+        // query could hold the watch ~1.5s past its own deadline (measured
+        // 8.3s against a 7s first-page budget).
         for (q in relaxedQueries(normalized)) {
             if (byId.size >= safetyCap) break
-            val elapsed = System.currentTimeMillis() - startedAt
-            if (elapsed > budgetMs) break
-            val remaining = budgetMs - elapsed
-            addAll(fetchWindowOnce(q, collectLimit, remaining.coerceAtLeast(500L)))
+            val left = remainingMs()
+            if (left <= 200L) break
+            addAll(fetchWindowOnce(q, collectLimit, left))
+            if (goodEnough()) break
         }
 
         return rankByQueryOverlap(byId.values.toList(), normalized)
     }
 
-    /** One query window = metadata source, then the YouTube scrape fallback. */
+    /**
+     * One query window = metadata source, then the YouTube scrape fallback.
+     *
+     * [timeoutMs] is the budget for the WHOLE window, not per stage: both
+     * stages share one deadline, otherwise a slow metadata call plus a slow
+     * scrape could each spend the full budget and double the caller's wait.
+     */
     private suspend fun fetchWindowOnce(
         query: String,
         take: Int,
         timeoutMs: Long = SEARCH_TIMEOUT_MS
     ): List<TrackDto> {
+        val startedAt = System.currentTimeMillis()
+        fun left(): Long = (timeoutMs - (System.currentTimeMillis() - startedAt)).coerceAtLeast(0L)
         val tracks = withTimeoutOrNull(timeoutMs) {
             try {
                 metadata.searchSongs(query, take)
@@ -253,7 +319,7 @@ class MetadataSearchOrchestrator(
             return tracks.map { metadata.toTrackDto(it) }
         }
         fallbackCount.incrementAndGet()
-        val fallback = withTimeoutOrNull(timeoutMs) {
+        val fallback = withTimeoutOrNull(left()) {
             youtube.search(query, take)
         } ?: emptyList()
         return fallback.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }.take(take)
@@ -368,8 +434,14 @@ class MetadataSearchOrchestrator(
             for (track in tracks) {
                 if (!isActive || foregroundPlaybackDemand.get() > 0) break
                 try {
-                    val target = youtube.streamTarget(track.videoId)
-                    if (target != null) warmUpstream?.invoke(track.videoId, target.url)
+                    // LEAN ONLY. Resolving a row the user never taps must never
+                    // spend ~10s inside the extractor: that was the queue a
+                    // tap landed behind (the "sits there, then 404s" mode).
+                    val target = youtube.streamTarget(track.videoId, allowExtraction = false)
+                    if (target != null) {
+                        warmUpstream?.invoke(track.videoId, target.url)
+                        warmTranscode?.invoke(track.videoId, target.url, target.mimeType)
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -417,6 +489,7 @@ class MetadataSearchOrchestrator(
         // This is what makes the next track's tap start instantly; it costs
         // the watch nothing.
         warmUpstream?.invoke(realId, target.url)
+        warmTranscode?.invoke(realId, target.url, target.mimeType)
         return true
     }
 

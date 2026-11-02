@@ -103,6 +103,15 @@ jobs:
       - name: Run server tests
         run: ./gradlew :wearsic-server:test --stacktrace
 
+      # Static analysis. Lint is the only analyzer in the build, and it has
+      # already caught a real Compose bug the tests did not: a StateFlow
+      # `.value` read inside composition (WearsicNavigation), which renders the
+      # initial empty value forever because it never observes later emissions.
+      # Warnings stay warnings; errors fail the job.
+      - name: Android lint (debug)
+        timeout-minutes: 15
+        run: ./gradlew :app:lintDebug --stacktrace
+
       # The Extractor Hotfix workflow rewrites version pins across the repo
       # through scripts/bump-version.py; a silent pattern drift there would
       # cut a malformed release, so the script's offline suite runs on every
@@ -116,6 +125,13 @@ jobs:
       # a logged-out phone (the bug that made funnel setup fail).
       - name: Run CLI shell tests (funnel/Tailscale state detection)
         run: bash wearsic-server/tests/funnel-state-test.sh
+
+      # The AOT cache is the one optimisation driven by a FILE on disk, so the
+      # gate that decides whether to load it (engine/JVM fingerprint) and the
+      # quarantine that retires a cache which killed a start must not drift.
+      # Offline: extracts the launcher's helpers and pins both paths.
+      - name: Run CLI shell tests (AOT cache gate + quarantine)
+        run: bash wearsic-server/tests/aot-cache-test.sh
 
       # Offline, fakes `curl`: pins `wearsic update --pre` so a published
       # pre-release is reachable, and so drafts / releases with no server
@@ -226,8 +242,95 @@ jobs:
           name: test-reports
           path: |
             app/build/reports/tests/
+            app/build/reports/lint-results-*.html
+            app/build/reports/lint-results-*.txt
             wearsic-server/build/reports/tests/
           if-no-files-found: ignore
+
+  # Every other job builds on JDK 21, so "the engine supports and prefers
+  # Java 25" would otherwise be a claim nobody executes. This job is the only
+  # place where it is real: build ON 25 (proving the Gradle build no longer
+  # requires a JDK 17 toolchain), run the whole server suite on 25, boot the
+  # engine with the 25-only flags, then do a real AOT record -> create
+  # round-trip and boot a SECOND time with the cache loaded.
+  jdk25:
+    name: JDK 25 (build + boot + AOT cache)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the engine on JDK 25
+        run: ./gradlew :wearsic-server:installDist --stacktrace
+
+      - name: Server tests on JDK 25
+        timeout-minutes: 15
+        run: ./gradlew :wearsic-server:test --stacktrace
+
+      - name: Script checks on JDK 25
+        run: |
+          set -euo pipefail
+          bash -n wearsic-server/run-termux.sh
+          bash -n wearsic-server/wearsic
+          bash wearsic-server/tests/aot-cache-test.sh
+
+      # The flags are extracted from the SHIPPED launcher, so this boots exactly
+      # what a phone boots: a JDK 25 flag set that a JDK 21 would reject.
+      - name: Boot the engine with the Java 25 flags
+        run: |
+          set -euo pipefail
+          SERVER_DIR="$PWD/wearsic-server"
+          DEST="$SERVER_DIR/build/install/wearsic-server"
+          sed -n '/^jvm_flags_for_java() {/,/^}/p' "$SERVER_DIR/run-termux.sh" > /tmp/jvmflags.sh
+          SCRIPT_DIR="$SERVER_DIR" . /tmp/jvmflags.sh
+          FLAGS="$(SCRIPT_DIR="$SERVER_DIR" jvm_flags_for_java 25)"
+          echo "flags: $FLAGS"
+          case "$FLAGS" in
+            *UseCompactObjectHeaders*) echo "compact object headers: ON" ;;
+            *) echo "::error::compact object headers missing from the Java 25 flag set"; exit 1 ;;
+          esac
+
+          boot() { # $1 = log, $2 = extra flags
+            env PORT=18080 WEARSIC_DB_PATH=/tmp/wearsic-ci.db \
+              WEARSIC_STATE_DIR=/tmp/wearsic-ci-state WEARSIC_AUTO_UPDATE=0 \
+              JAVA_OPTS="$FLAGS $2" "$DEST/bin/wearsic-server" > "$1" 2>&1 &
+            BOOT_PID=$!
+            for _ in $(seq 1 120); do
+              if curl -sf -m 2 http://127.0.0.1:18080/health >/dev/null 2>&1; then return 0; fi
+              kill -0 "$BOOT_PID" 2>/dev/null || return 1
+              sleep 1
+            done
+            return 1
+          }
+          stop() { kill "$BOOT_PID" 2>/dev/null || true; wait "$BOOT_PID" 2>/dev/null || true; }
+
+          echo "== boot without a cache =="
+          boot /tmp/boot1.log "" || { cat /tmp/boot1.log; exit 1; }
+          echo "healthy (no cache)"; stop
+
+          echo "== AOT round-trip: record -> create =="
+          bash "$SERVER_DIR/run-termux.sh" __aot_train
+          test -s "$SERVER_DIR/wearsic.aot" || { echo "::error::no AOT cache was produced"; exit 1; }
+
+          echo "== boot WITH the cache =="
+          boot /tmp/boot2.log "-XX:AOTCache=$SERVER_DIR/wearsic.aot" || { cat /tmp/boot2.log; exit 1; }
+          stop
+          # A rejected cache prints an [aot] warning and is silently ignored —
+          # that is exactly the failure this job exists to catch.
+          if grep -i 'aot' /tmp/boot2.log | grep -i 'warn'; then
+            echo "::error::the JVM rejected the AOT cache"
+            exit 1
+          fi
+          echo "healthy with the AOT cache loaded"
 
   build-debug:
     name: Debug APK

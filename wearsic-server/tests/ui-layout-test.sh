@@ -243,7 +243,28 @@ else
   fail "state chips fall back to [label] when colour is off"
 fi
 
+# ═══ 12. a POSIX locale must not shred the box drawing ════════════════════
+# Termux can start with LANG unset. Bash then counts BYTES for ${#s}, which
+# used to pad panels for the wrong width and cut the checkup rule mid-glyph
+# ("�"). The CLI re-selects a UTF-8 locale itself when one exists.
+c_doc="$(WEARSIC_DIR="$DEST" LC_ALL=C LANG=C WEARSIC_COLOR=always COLUMNS=40 \
+  bash "$CLI" doctor 2>&1 || true)"
+if printf '%s' "$c_doc" | grep -q '�'; then
+  fail "doctor under LC_ALL=C prints no replacement glyphs"
+else
+  pass "doctor under LC_ALL=C prints no replacement glyphs"
+fi
+# Count with bash, like the main loop: awk's length() depends on the awk
+# build (mawk counts BYTES here, so every box-drawing row would look wide).
+c_bad=0
+while IFS= read -r c_line; do
+  c_plain="$(printf '%s' "$c_line" | strip)"
+  [ "${#c_plain}" -gt 40 ] && c_bad=$((c_bad + 1))
+done <<< "$c_doc"
+check "doctor under LC_ALL=C stays within 40 columns" "0" "$c_bad"
+
 echo
+
 if [ "$fails" -eq 0 ]; then
   echo "ui-layout-test: PASSED ($passes checks)"
   exit 0

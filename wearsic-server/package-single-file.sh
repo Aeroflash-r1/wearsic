@@ -59,7 +59,8 @@ mkdir -p "$(dirname "$OUT")"
 #   ./wearsic-server.sh start|stop|restart|status|logs|health|url|api-key|update|doctor
 #   ./wearsic-server.sh uninstall
 #
-# Requires Java (Termux: pkg install -y openjdk-17). The install generates a
+# Requires Java 17+ (Termux: pkg install -y openjdk-25; 21 and 17 also work).
+# The install generates a
 # secure API key for you and preserves your database / key on reinstall.
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
@@ -86,7 +87,7 @@ generate_api_key() {
 
 install_bundle() {
   command -v java >/dev/null 2>&1 \
-    || die "Java is missing. In Termux run: pkg install -y openjdk-17"
+    || die "Java is missing. In Termux run: pkg install -y openjdk-25 (or openjdk-21 / openjdk-17)"
   say "Installing Wearsic server to $DEST …"
   mkdir -p "$DEST"
 

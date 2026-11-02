@@ -24,6 +24,10 @@
 #
 # Installed to $PREFIX/bin by install.sh. Finds the server in
 # $WEARSIC_DIR, else ~/wearsic-server.
+#
+# THIS FILE IS THE SOURCE. package-single-file.sh copies it verbatim into the
+# all-in-one installer, so it is not a generated bundle and there is nothing to
+# regenerate: edit it here.
 # ─────────────────────────────────────────────────────────────────────
 set -u
 
@@ -164,6 +168,24 @@ cur_cols() {
 trap '_COLS_CACHE=""' WINCH 2>/dev/null || true
 
 ESC="$(printf '\033')"
+
+# Width math counts CHARACTERS with ${#s}. If the shell starts in a non-UTF-8
+# locale (Termux can have LANG unset), bash counts BYTES instead — panels then
+# pad to the wrong width and a box-drawing rule gets cut mid-glyph, printing
+# "�" at the right edge. Prefer a UTF-8 locale when the platform has one;
+# C.UTF-8 is tried first because it keeps the byte-order semantics these
+# scripts already assume.
+_wearsic_probe="─"
+if [ "${#_wearsic_probe}" -ne 1 ]; then
+  for _wearsic_loc in C.UTF-8 en_US.UTF-8 en_GB.UTF-8; do
+    if [ "$(LC_ALL=$_wearsic_loc; printf '%s' "${#_wearsic_probe}")" = "1" ]; then
+      export LC_ALL="$_wearsic_loc"
+      break
+    fi
+  done
+  unset _wearsic_loc
+fi
+unset _wearsic_probe
 
 # Visible width of a string: colour codes stripped, then the CHARACTER count
 # (bash counts multibyte characters, so ✓ ● … each take one column).
@@ -6300,6 +6322,21 @@ cmd_version() {
   fi
 }
 
+# /aot: build, inspect or drop the JDK 25 AOT cache. The work itself lives in
+# the launcher (run-termux.sh) because that is where the engine, its classpath
+# and the JVM flags are resolved — the CLI only dispatches into it.
+cmd_aot() {
+  installed
+  local sub="${1:-status}"
+  brand "aot"
+  case "$sub" in
+    train)   bash "$RUN" __aot_train ;;
+    clear)   bash "$RUN" __aot_clear ;;
+    status)  bash "$RUN" __aot_status ;;
+    *) die "Unknown aot action: $sub — use: wearsic aot [train|status|clear]" ;;
+  esac
+}
+
 # /ready: can the server serve music RIGHT NOW?
 cmd_ready() {
   installed
@@ -6397,7 +6434,21 @@ cmd_doctor() {
       fails=$((fails+1))
     fi
   else
-    doctor_row "java" err "missing — pkg install -y openjdk-17"; fails=$((fails+1))
+    doctor_row "java" err "missing — pkg install -y openjdk-25 (or 21/17)"; fails=$((fails+1))
+  fi
+
+  # AOT cache (Java 25+): an OPTIMISATION, never a problem — a missing or stale
+  # cache only means slower cold starts, so these rows never add a failure.
+  local aot_major="${jv:-}"; aot_major="${aot_major%%[!0-9]*}"
+  case "$aot_major" in ''|*[!0-9]*) aot_major=0 ;; esac
+  if [ -f "$DEST/wearsic.aot" ] && [ -f "$DEST/wearsic.aot.stamp" ]; then
+    doctor_row "aot cache" ok "built — faster cold start"
+  elif [ -f "$DEST/wearsic.aot.bad" ]; then
+    doctor_row "aot cache" warn "quarantined after a failed start — rebuild: wearsic aot train"; warns=$((warns+1))
+  elif [ "$aot_major" -ge 25 ] 2>/dev/null; then
+    doctor_row "aot cache" off "not built — wearsic aot train (faster restarts)"
+  else
+    doctor_row "aot cache" off "needs Java 25"
   fi
 
   if command -v ffmpeg >/dev/null 2>&1; then
@@ -6961,6 +7012,7 @@ usage() {
   ICOL=16
   section "Engine" lavender
   item "update [--pre]" "verified, rollback-safe" "update to the latest release (verified, rollback-safe)"
+  item "aot [train|status|clear]" "faster cold starts (Java 25)" "build the Java 25 AOT cache: faster cold start after every restart"
   item "version" "engine version" "installed + running engine version"
   item "health [--json]" "server snapshot" "server snapshot (--json for scripts)"
   item "ready [--json]" "can it play right now?" "can the server play music right now?"
@@ -7011,6 +7063,7 @@ case "${1:-}" in
       sideload) shift 2; cmd_sideload "$@" ;;
       pair)     shift 2; cmd_pair "$@" ;;
       doctor)  cmd_doctor ;;
+      aot)     shift 2; cmd_aot "$@" ;;
       api)
         case "${3:-}" in
           key) shift 3; cmd_api_key "$@" ;;
@@ -7041,6 +7094,7 @@ case "${1:-}" in
   sideload)  shift; cmd_sideload "$@" ;;
   pair)      shift; cmd_pair "$@" ;;
   doctor)    cmd_doctor ;;
+  aot)       shift; cmd_aot "$@" ;;
   api-key|apikey) shift; cmd_api_key "$@" ;;
   cookies)   shift; cmd_cookies "$@" ;;
   setup)     shift; cmd_setup "$@" ;;

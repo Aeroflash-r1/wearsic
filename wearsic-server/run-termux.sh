@@ -72,22 +72,72 @@ fi
 
 # --- Perf-tuned JVM flags ---
 # G1GC with a 512m heap (SerialGC froze the whole server on every
-# collection). TieredStopAtLevel=1: this server is I/O-bound (network +
-# SQLite), so C2's peak-throughput win never materializes while its slow
-# optimizing compiles stretch cold boots on little phone CPUs by ~30%.
-# Drop -Xmx512m to -Xmx384m on phones with <3-4GB free RAM.
-# -Djava.net.preferIPv4Stack=true: this network resolves AAAA records that
-# are NOT routable (documented for the Gradle daemon in gradle.properties;
-# the engine JVM was missing it). The dual-stack stall it causes showed up
-# as update.lastError=UnresolvedAddressException in /health.
-# -XX:+ExitOnOutOfMemoryError: a half-alive JVM wedged after OOM is worse
-# than a dead one — the supervisor's restart loop IS the recovery path.
-# GC log: bounded (2×2MB) for post-mortem, always on disk when it matters.
-# The `::` after the log path is an EMPTY decorator list: without it the
-# parser reads `filecount=2` as a DECORATOR, rejects the option and the
-# JVM refuses to start at all (this shipped once — every engine start
-# failed with "Invalid decorator 'filecount=2'").
-export JAVA_OPTS="${JAVA_OPTS:--Xms64m -Xmx512m -XX:+UseG1GC -XX:TieredStopAtLevel=1 -XX:MaxGCPauseMillis=150 -Dhttp.keepAlive=true -Dhttp.maxConnections=10 -Djava.net.preferIPv4Stack=true -XX:+ExitOnOutOfMemoryError -Xlog:gc:file=$SCRIPT_DIR/wearsic-gc.log::filecount=2,filesize=2M}"
+# collection). Drop -Xmx512m to -Xmx384m on phones with <3-4GB free RAM.
+#
+# TieredStopAtLevel=1 (C1 only) was removed on purpose. It bought a ~30%
+# shorter cold boot, once per process, at the cost of C2 for the whole
+# lifetime of the server — and the hot CPU work here is not a tight numeric
+# loop but InnerTube JSON (100-500 KB parsed per search, per page) plus the
+# extraction and gzip paths. A one-off boot saving is a bad trade for that.
+# -Xms was raised to 128m because a 64m initial heap meant the first minutes
+# after every restart were a sequence of heap-growth young collections —
+# JVM tuning itself lives in [jvm_flags_for_java] below: the flags now depend
+# on WHICH JDK is installed, so they cannot be a single export up here.
+# --- Logging helper -------------------------------------------------------
+# Defined BEFORE the JVM-bootstrap block below: that block reports through
+# `log`, and a bash function must already exist when it is called (the old
+# order meant a shim-recovery path printed "log: command not found").
+log() { echo "[wearsic $(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
+
+# The `__aot_*` entry points are CLI subcommands: they print their own plain
+# output and must not scatter supervisor chatter into it or append detection
+# lines to the server log every time someone checks the cache.
+AOT_ENTRY=0
+case "${1:-}" in __aot_*) AOT_ENTRY=1 ;; esac
+
+# --- JVM flags, chosen from the JDK that is actually installed --------------
+# The engine's bytecode is Java 17, so JDK 17, 21 and 25 all run it. 25 is the
+# best of the three for THIS workload:
+#   -XX:+UseCompactObjectHeaders (JEP 519; a product flag in 25, still opt-in)
+#   halves the object header (128 -> 64 bits). On a 512 MB heap — which is what
+#   this launcher asks for — that is a smaller resident set and fewer
+#   collections, i.e. less pressure from Android's lmkd.
+# Older JDKs reject unknown options outright ("Unrecognized VM option"), so the
+# flag is added only when `java -version` reports 25 or newer.
+java_major_version() {
+  java -version 2>&1 | head -1 | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p'
+}
+
+jvm_flags_for_java() {
+  local major="${1:-0}"
+  case "$major" in ''|*[!0-9]*) major=0 ;; esac
+  local flags
+  # G1GC with a 512m heap (SerialGC froze the whole server on every
+  # collection). TieredStopAtLevel=1 (C1 only) was dropped on purpose: it
+  # shortened cold boot once per process at the cost of C2 for the whole
+  # lifetime of the server, and the hot CPU work here is InnerTube JSON
+  # parsing, extraction and gzip — not a tight numeric loop.
+  # -Xms128m: a 64m initial heap meant the first minutes after every restart
+  # were a sequence of heap-growth young collections.
+  # -Djava.net.preferIPv4Stack=true: this network resolves AAAA records that
+  # are NOT routable (documented for the Gradle daemon in gradle.properties;
+  # the engine JVM was missing it) — the dual-stack stall showed up as
+  # update.lastError=UnresolvedAddressException in /health.
+  # -XX:+ExitOnOutOfMemoryError: a wedged half-alive JVM is worse than a dead
+  # one; the supervisor's restart loop IS the recovery path.
+  # GC log: bounded (2x2MB) for post-mortem. The `::` after the path is an
+  # EMPTY decorator list: without it the parser reads `filecount=2` as a
+  # DECORATOR, rejects the option and the JVM refuses to start at all (this
+  # shipped once — every engine start failed with "Invalid decorator").
+  flags="-Xms128m -Xmx512m -XX:+UseG1GC -XX:MaxGCPauseMillis=150"
+  flags="$flags -Djava.net.preferIPv4Stack=true -XX:+ExitOnOutOfMemoryError"
+  flags="$flags -Xlog:gc:file=$SCRIPT_DIR/wearsic-gc.log::filecount=2,filesize=2M"
+  if [ "$major" -ge 25 ]; then
+    flags="$flags -XX:+UseCompactObjectHeaders"
+  fi
+  printf '%s' "$flags"
+}
+
 export PORT="${PORT:-8080}"
 export WEARSIC_DB_PATH="${WEARSIC_DB_PATH:-$SCRIPT_DIR/wearsic.db}"
 
@@ -117,7 +167,24 @@ if ! java -version >/dev/null 2>&1; then
   fi
 fi
 
-log() { echo "[wearsic $(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
+# Resolve the JVM flags LAST: the bootstrap above may be what makes `java`
+# runnable at all (the LD_PRELOAD shim), and detection needs a working `java`.
+JAVA_MAJOR="$(java_major_version 2>/dev/null)"
+case "$JAVA_MAJOR" in ''|*[!0-9]*) JAVA_MAJOR=0 ;; esac
+# BASE_JAVA_OPTS is kept separately: the restart loop rebuilds the effective
+# JAVA_OPTS every cycle (the AOT cache flag is added or dropped per start), and
+# it must never accumulate or lose a user-supplied override.
+BASE_JAVA_OPTS="${JAVA_OPTS:-$(jvm_flags_for_java "$JAVA_MAJOR")}"
+export JAVA_OPTS="$BASE_JAVA_OPTS"
+if [ "$AOT_ENTRY" = "0" ]; then
+  if [ "$JAVA_MAJOR" -ge 25 ]; then
+    log "java $JAVA_MAJOR detected — compact object headers ON (smaller heap, fewer GCs)"
+  elif [ "$JAVA_MAJOR" -ge 17 ]; then
+    log "java $JAVA_MAJOR detected (java 25 would use less memory: pkg install openjdk-25)"
+  else
+    log "WARNING: java ${JAVA_MAJOR:-unknown} detected — java 17 or newer is required"
+  fi
+fi
 
 rotate_log() {
   if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 2000000 ]; then
@@ -385,6 +452,190 @@ apply_staged_update() {
   finish_applied_update "${NEW_VER:-?}"
 }
 
+# --- AOT cache (JDK 25+) ----------------------------------------------------
+# The engine's cold start — config, SQLite, Ktor/CIO, extractor class loading —
+# is the part the watch FEELS after every restart. Project Leyden's AOT cache
+# (JEP 483/514) loads those classes from a pre-built archive instead of parsing
+# them, which is exactly the "first song after a restart is slow" complaint.
+#
+# Two-step workflow on purpose. `-XX:AOTCacheOutput` in JDK 25 does record and
+# create in ONE run, but it holds TWO heaps at once (training + creation) — on
+# a 512 MB phone heap that is an OOM, and the OOM would look like "AOT is
+# broken". record -> create keeps each phase inside a small heap.
+#
+# The cache is only valid for the exact engine + JVM it was built from, so a
+# stamp file records a fingerprint; a stale stamp simply means "no AOT" (the
+# server runs normally), never a failed start. A start that FAILS with the
+# cache loaded is quarantined in the supervisor loop below.
+AOT_CACHE="$SCRIPT_DIR/wearsic.aot"
+AOT_STAMP="$SCRIPT_DIR/wearsic.aot.stamp"
+AOT_CONF_TMP="$SCRIPT_DIR/wearsic.aot.conf"
+AOT_MIN_JAVA=25
+
+# Fingerprint of "everything the cache was built against": the engine jars,
+# the JVM that built it, and the JVM flags. Cheap on purpose (a file listing,
+# not a hash of 40 MB of jars): this runs on every restart.
+aot_fingerprint() {
+  local sig f
+  sig="$( { for f in "$PKG_DIR"/lib/*.jar; do
+             [ -f "$f" ] || continue
+             printf '%s %s\n' "${f##*/}" "$(wc -c < "$f")"
+           done ; } 2>/dev/null | sort )"
+  sig="$sig|java=${JAVA_MAJOR:-0}|flags=$(jvm_flags_for_java "${JAVA_MAJOR:-0}")"
+  printf '%s' "$sig" | cksum | awk '{print $1 "-" $2}'
+}
+
+aot_stamp_matches() {
+  [ -f "$AOT_STAMP" ] || return 1
+  [ "$(sed -n 's/^fingerprint=//p' "$AOT_STAMP" 2>/dev/null | head -1)" = "$(aot_fingerprint)" ]
+}
+
+# "Can this start use the cache?" — the single gate for the supervisor loop.
+aot_usable() {
+  [ "${JAVA_MAJOR:-0}" -ge "$AOT_MIN_JAVA" ] 2>/dev/null || return 1
+  [ -s "$AOT_CACHE" ] || return 1
+  aot_stamp_matches
+}
+
+# A cache that made the JVM die is worse than no cache: park it (kept for
+# inspection, never used) and let the next cycle start clean. The stamp goes
+# too, so nothing re-enables it: the phone cannot churn on a bad archive.
+# The file is kept as wearsic.aot.bad for inspection, never loaded.
+aot_quarantine() { # $1 = reason
+  local reason="${1:-startup-failed}"
+  [ -f "$AOT_CACHE" ] || return 1
+  mv -f "$AOT_CACHE" "$AOT_CACHE.bad" 2>/dev/null || rm -f "$AOT_CACHE"
+  rm -f "$AOT_STAMP"
+  log "AOT cache quarantined ($reason) — the next start runs without it; rebuild with 'wearsic aot train'"
+  history "aot cache quarantined: $reason"
+}
+
+# Build (or rebuild) the cache. Deliberately runs the REAL engine classpath in
+# a throwaway DB/state dir on port 0, so it never touches the live database and
+# never collides with a running server's port.
+aot_train() {
+  if [ ! -x "$APP" ] || [ -z "$(ls -A "$PKG_DIR/lib" 2>/dev/null)" ]; then
+    printf 'wearsic aot: engine is not installed here (%s)\n' "$PKG_DIR" >&2
+    return 1
+  fi
+  if [ "${JAVA_MAJOR:-0}" -lt "$AOT_MIN_JAVA" ] 2>/dev/null; then
+    printf 'wearsic aot: Java %s is too old — the AOT cache needs Java %s+.\n' \
+      "${JAVA_MAJOR:-unknown}" "$AOT_MIN_JAVA" >&2
+    printf '  install it with:  pkg install -y openjdk-25\n' >&2
+    return 1
+  fi
+
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/wearsic-aot.XXXXXX")" || return 1
+
+  local conf="$tmp/train.aotconf" cache="$tmp/wearsic.aot"
+  local cp="$PKG_DIR/lib/*"
+  local rc
+
+  # The flags go on the COMMAND LINE, not in JAVA_OPTS: this calls `java`
+  # directly, and JAVA_OPTS is only honoured by the generated start script.
+  # Same flags as production on purpose — the cache is built for the VM shape
+  # the engine will actually run in (GC choice, compact object headers).
+  local flags
+  flags="$(jvm_flags_for_java "$JAVA_MAJOR")"
+
+  printf 'AOT cache: training the cold start (Java %s)\n' "$JAVA_MAJOR"
+  printf '  phase 1/2  recording…\n'
+  # WEARSIC_AOT_TRAIN makes the server exit right after it is live; recording
+  # only flushes at a NORMAL VM exit, which is why the hook exists at all.
+  # shellcheck disable=SC2086
+  PORT=0 \
+  WEARSIC_AOT_TRAIN=1 \
+  WEARSIC_AUTO_UPDATE=0 \
+  WEARSIC_DB_PATH="$tmp/train.db" \
+  WEARSIC_STATE_DIR="$tmp/state" \
+    java $flags -XX:AOTMode=record -XX:AOTConfiguration="$conf" -cp "$cp" \
+    com.wearsic.server.ApplicationKt >"$tmp/record.log" 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ] || [ ! -s "$conf" ]; then
+    printf '  FAILED: the training run did not record (exit %s)\n' "$rc" >&2
+    sed -n '1,20p' "$tmp/record.log" >&2
+    printf '  keeping the training log: %s\n' "$tmp/record.log" >&2
+    return 1
+  fi
+
+  # Creation only assembles the archive from the configuration; it does not
+  # need the production heap, and a smaller one keeps peak RAM low on a phone.
+  # The trailing -Xmx wins over the production -Xmx512m (last one on the line).
+  printf '  phase 2/2  creating the archive…\n'
+  # shellcheck disable=SC2086
+  java $flags -Xmx384m -XX:AOTMode=create -XX:AOTConfiguration="$conf" \
+    -XX:AOTCache="$cache" -cp "$cp" >"$tmp/create.log" 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ] || [ ! -s "$cache" ]; then
+    printf '  FAILED: the archive was not created (exit %s)\n' "$rc" >&2
+    sed -n '1,20p' "$tmp/create.log" >&2
+    printf '  keeping the training log: %s\n' "$tmp/create.log" >&2
+    return 1
+  fi
+
+  # Replace atomically: a half-written cache would be a broken start.
+  mv -f "$cache" "$AOT_CACHE.new" || { printf '  FAILED: cannot write %s\n' "$AOT_CACHE" >&2; return 1; }
+  mv -f "$AOT_CACHE.new" "$AOT_CACHE"
+  rm -rf "$tmp" "$AOT_CONF_TMP" 2>/dev/null
+  {
+    printf 'fingerprint=%s\n' "$(aot_fingerprint)"
+    printf 'builtAt=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    printf 'java=%s\n' "$JAVA_MAJOR"
+    printf 'engine=%s\n' "$(sed -n 's/^version=//p' "$STATE_DIR/update-in-progress" 2>/dev/null | head -1)"
+  } > "$AOT_STAMP"
+  local size
+  size="$(du -h "$AOT_CACHE" 2>/dev/null | cut -f1)"
+  printf '  done: %s (%s)\n' "$AOT_CACHE" "${size:-?}"
+  printf '  restart the server to use it:  wearsic restart\n'
+  return 0
+}
+
+aot_status() {
+  printf 'AOT cache\n'
+  printf '  java        %s\n' "${JAVA_MAJOR:-unknown}"
+  if [ "${JAVA_MAJOR:-0}" -lt "$AOT_MIN_JAVA" ] 2>/dev/null; then
+    printf '  supported   no — needs Java %s+ (pkg install -y openjdk-25)\n' "$AOT_MIN_JAVA"
+  else
+    printf '  supported   yes\n'
+  fi
+  local built=""
+  [ -f "$AOT_STAMP" ] && built="$(sed -n 's/^builtAt=//p' "$AOT_STAMP" 2>/dev/null | head -1)"
+  if [ -f "$AOT_CACHE" ]; then
+    local size
+    size="$(du -h "$AOT_CACHE" 2>/dev/null | cut -f1)"
+    printf '  archive     %s (%s, built %s)\n' "$AOT_CACHE" "${size:-?}" "${built:-unknown}"
+    if aot_stamp_matches; then
+      printf '  state       valid for this engine + JVM — used on the next start\n'
+    else
+      printf '  state       STALE (engine or Java changed) — rebuild: wearsic aot train\n'
+    fi
+  elif [ -f "$AOT_CACHE.bad" ]; then
+    printf '  archive     none — a previous cache was quarantined (%s.bad)\n' "$AOT_CACHE"
+    printf '  state       rebuild with: wearsic aot train\n'
+  else
+    printf '  archive     none — build one with: wearsic aot train\n'
+  fi
+  # Whether the CURRENT process actually loaded it (the flag is in its argv).
+  local pid inuse="no"
+  for pid in $(pgrep -f "wearsic-server" 2>/dev/null || true); do
+    if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q -- \-XX:AOTCache; then inuse="yes"; break; fi
+  done
+  printf '  in use now  %s\n' "$inuse"
+}
+
+aot_clear() {
+  rm -f "$AOT_CACHE" "$AOT_STAMP" "$AOT_CACHE.bad"
+  printf 'AOT cache cleared — restart the server to run without it: wearsic restart\n'
+}
+
+# Entry points the CLI calls (before the singleton guard and the main loop).
+case "${1:-}" in
+  __aot_train)  aot_train  ; exit $? ;;
+  __aot_status) aot_status ; exit $? ;;
+  __aot_clear)  aot_clear  ; exit $? ;;
+esac
+
 # Keep Android from freezing/killing Termux in the background.
 command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock && log "wake lock acquired"
 
@@ -444,9 +695,22 @@ while true; do
   ensure_front_door
   apply_staged_update
   CYCLE_START_MS="$(date +%s)000"
+  # Recomputed EVERY cycle: a staged update can replace the engine between
+  # cycles, which invalidates the cache fingerprint (aot_usable re-checks it).
+  JAVA_OPTS="$BASE_JAVA_OPTS"
+  CYCLE_AOT=0
+  if aot_usable; then
+    JAVA_OPTS="$JAVA_OPTS -XX:AOTCache=$AOT_CACHE"
+    CYCLE_AOT=1
+  fi
+  export JAVA_OPTS
   "$APP" >> "$LOG" 2>&1 &
   CHILD=$!
-  log "server started (pid $CHILD, port $PORT)"
+  if [ "$CYCLE_AOT" = "1" ]; then
+    log "server started (pid $CHILD, port $PORT, AOT cache on)"
+  else
+    log "server started (pid $CHILD, port $PORT)"
+  fi
 
   FAILS=0
   EVER_HEALTHY=0
@@ -502,6 +766,16 @@ while true; do
     fi
   else
     log "ERROR: server never became healthy this cycle (exit code $EXIT_CODE)"
+    # A cache that killed a START is not worth keeping: quarantine it so the
+    # next cycle boots plainly. Only when the process died quickly — a server
+    # that lived for minutes and then lost health (network, CDN) is not an
+    # AOT problem and its cache must survive.
+    if [ "$CYCLE_AOT" = "1" ]; then
+      NOW_MS=$(date +%s)000
+      if [ $(( NOW_MS - CYCLE_START_MS )) -lt 120000 ]; then
+        aot_quarantine "died $(( (NOW_MS - CYCLE_START_MS) / 1000 ))s after start"
+      fi
+    fi
     # A freshly replaced engine that NEVER becomes healthy is rolled back to
     # the previous known-good build — but at most once per hour, so a
     # genuinely broken phone environment can never cause a rollback/restart

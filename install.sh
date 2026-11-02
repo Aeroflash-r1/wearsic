@@ -1102,23 +1102,58 @@ command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 \
   || die "sha256sum is missing (install coreutils)"
 
 # ── dependencies (installed in the BACKGROUND while the release downloads) ─
+# Termux package names for the JDK, newest first. The engine's bytecode is
+# Java 17, so all three run it; 25 is preferred because compact object headers
+# (opt-in on 25) are worth real memory on a 512 MB heap. The order is a
+# FALLBACK CHAIN, not a requirement: any JDK the repo actually carries wins.
+JDK_PACKAGES="openjdk-25 openjdk-21 openjdk-17"
+
+# The JDK package already installed, if any (empty when none).
+installed_jdk() {
+  local p
+  for p in $JDK_PACKAGES; do
+    pkg list-installed 2>/dev/null | grep -q "^${p}/" && { printf '%s' "$p"; return 0; }
+  done
+  printf ''
+}
+
 deps_start() {
   [ "$IS_TERMUX" = "1" ] || return 0
   command -v pkg >/dev/null 2>&1 || return 0
   PKG_NEED=""
   local p
-  for p in openjdk-17 unzip curl; do
+  for p in unzip curl; do
     pkg list-installed 2>/dev/null | grep -q "^${p}/" || PKG_NEED="$PKG_NEED $p"
   done
-  [ -n "$PKG_NEED" ] || return 0
+  DEP_JDK="$(installed_jdk)"
+  # A missing JDK must count as "something to install" even when unzip/curl are
+  # already present — DEP_JDK is empty in exactly that case, so it cannot be
+  # used as the flag (empty means "absent", not "nothing to do").
+  NEED_JDK=0
+  [ -n "$DEP_JDK" ] || NEED_JDK=1
+  [ -n "$PKG_NEED" ] || [ "$NEED_JDK" = "1" ] || return 0
   ( if command -v timeout >/dev/null 2>&1; then
       timeout 600 pkg update -y >/dev/null 2>&1
       # shellcheck disable=SC2086
       timeout 600 pkg install -y $PKG_NEED >/dev/null 2>&1
+      # Newest JDK first, falling back when the repo does not carry it — a
+      # hard `openjdk-25` would fail the whole install on an older mirror.
+      if [ "$NEED_JDK" = "1" ]; then
+        for p in $JDK_PACKAGES; do
+          timeout 600 pkg install -y "$p" >/dev/null 2>&1 \
+            && command -v java >/dev/null 2>&1 && { DEP_JDK="$p"; break; }
+        done
+      fi
     else
       pkg update -y >/dev/null 2>&1
       # shellcheck disable=SC2086
       pkg install -y $PKG_NEED >/dev/null 2>&1
+      if [ "$NEED_JDK" = "1" ]; then
+        for p in $JDK_PACKAGES; do
+          pkg install -y "$p" >/dev/null 2>&1 \
+            && command -v java >/dev/null 2>&1 && { DEP_JDK="$p"; break; }
+        done
+      fi
     fi ) >"$WORK/pkg.log" 2>&1 &
   PKG_PID=$!
 }
@@ -1128,14 +1163,19 @@ deps_wait() {
   shim_stage_status "waiting for the dependencies (Java is ~100MB on first install)"
   if ! wait "$PKG_PID"; then
     shim_log_tail "$WORK/pkg.log" 6
-    die "Failed to install dependencies. Run: pkg update -y && pkg install -y openjdk-17 unzip curl"
+    die "Failed to install dependencies. Run: pkg update -y && pkg install -y openjdk-25 unzip curl"
   fi
   PKG_PID=0
   local p
-  for p in openjdk-17 unzip curl; do
+  for p in unzip curl; do
     pkg list-installed 2>/dev/null | grep -q "^${p}/" \
       || die "Dependency '$p' is still missing after install. Run: pkg install -y $p"
   done
+  # The JDK is verified by capability, not by package name: whichever of
+  # 25 / 21 / 17 the repo carried has to leave a working `java` behind.
+  command -v java >/dev/null 2>&1 \
+    || die "No Java runtime after install. Run: pkg install -y openjdk-25 (or openjdk-21 / openjdk-17)"
+  DEP_JDK="${DEP_JDK:-$(installed_jdk)}"
 }
 
 # The payload sitting next to this installer (a release package): no

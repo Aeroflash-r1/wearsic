@@ -43,3 +43,10 @@ wearsic-server/wearsic-state/
 wearsic-server/bin/
 wearsic-server/lib/lib/
 wearsic-server/wearsic-gc.log.*
+
+# JDK 25 AOT cache built by `wearsic aot train` (tied to one machine's engine
+# jars + JVM, so it is regenerated, never shared)
+wearsic-server/wearsic.aot
+wearsic-server/wearsic.aot.stamp
+wearsic-server/wearsic.aot.bad
+wearsic-server/wearsic.aot.new

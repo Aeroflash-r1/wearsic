@@ -11,6 +11,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.wear.compose.material3.CircularProgressIndicator
 import com.wearsic.app.model.LyricsMode
 import com.wearsic.app.ui.theme.LocalWearsicAccent
+import com.wearsic.app.ui.theme.WearsicGlassBorder
+import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.viewmodel.LyricsViewModel
 import kotlin.math.roundToInt
 import androidx.compose.animation.core.LinearEasing
@@ -70,6 +72,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -599,6 +602,7 @@ private fun NowPlayingPage(
                 lyricsState = lyricsState,
                 activeIndex = activeIndex,
                 hasTrack = hasTrack,
+                colors = colors,
                 onRetry = onRetryLyrics,
                 modifier = Modifier.padding(horizontal = WearsicDimens.ScreenPaddingH),
             )
@@ -613,61 +617,103 @@ private fun LyricsSheet(
     lyricsState: LyricsViewModel.LyricsUiState,
     activeIndex: Int,
     hasTrack: Boolean,
+    colors: ArtworkColors,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            text = "Lyrics",
-            color = Color.White.copy(alpha = 0.9f),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.5.sp,
-            modifier = Modifier.padding(top = 16.dp, bottom = 14.dp),
-        )
+    // The active line takes the artwork's accent (when real colours were
+    // extracted) so the sheet reads as part of the album art, not as white
+    // text on black. A hint of white keeps it readable on any palette.
+    val activeColor = if (colors.fromArtwork) {
+        lerp(colors.accent, Color.White, 0.12f)
+    } else {
+        Color.White
+    }
+    val headerColor = if (colors.fromArtwork) colors.accent else Color.White.copy(alpha = 0.9f)
 
-        when {
-            !hasTrack -> {
-                LyricsPlaceholder("No song playing", isError = false, onRetry = null)
-            }
-            lyricsState.isLoading -> {
-                LyricsLoading()
-            }
-            lyricsState.errorMessage != null -> {
-                LyricsPlaceholder(
-                    lyricsState.errorMessage ?: "Could not load lyrics",
-                    isError = true,
-                    onRetry = onRetry,
-                )
-            }
-            lyricsState.mode == LyricsMode.Unavailable -> {
-                LyricsPlaceholder("No lyrics found for this song", isError = false, onRetry = onRetry)
-            }
-            lyricsState.mode == LyricsMode.Plain -> {
-                lyricsState.lines.forEach { line ->
-                    Text(
-                        text = line.text,
-                        color = Color.White.copy(alpha = 0.62f),
-                        fontSize = 14.sp,
-                        lineHeight = 22.sp,
-                        modifier = Modifier.padding(bottom = 10.dp),
+    Column(modifier = modifier.fillMaxWidth()) {
+        // Translucent glass panel: white 8% fill + 18% border, with a soft
+        // accent glow bleeding from the top edge — the same material
+        // language as the rest of the player.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            colors.accent.copy(alpha = if (colors.fromArtwork) 0.10f else 0.05f),
+                            Color.Transparent,
+                        )
                     )
+                )
+                .background(WearsicGlassFill)
+                .border(1.dp, WearsicGlassBorder, RoundedCornerShape(24.dp))
+                .padding(horizontal = 12.dp, vertical = 18.dp),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Lyrics",
+                    color = headerColor,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+
+                when {
+                    !hasTrack -> {
+                        LyricsPlaceholder("No song playing", isError = false, onRetry = null)
+                    }
+                    lyricsState.isLoading -> {
+                        LyricsLoading()
+                    }
+                    lyricsState.errorMessage != null -> {
+                        LyricsPlaceholder(
+                            lyricsState.errorMessage ?: "Could not load lyrics",
+                            isError = true,
+                            onRetry = onRetry,
+                        )
+                    }
+                    lyricsState.mode == LyricsMode.Unavailable -> {
+                        LyricsPlaceholder(
+                            "No lyrics found for this song",
+                            isError = false,
+                            onRetry = onRetry,
+                        )
+                    }
+                    lyricsState.mode == LyricsMode.Plain -> {
+                        lyricsState.lines.forEach { line ->
+                            Text(
+                                text = line.text,
+                                color = Color.White.copy(alpha = 0.62f),
+                                fontSize = 14.sp,
+                                lineHeight = 22.sp,
+                                modifier = Modifier.padding(bottom = 10.dp),
+                            )
+                        }
+                        LyricsSourceTag(lyricsState.source)
+                    }
+                    else -> {
+                        // Synced rows: highlight the active line in the
+                        // artwork accent, dim the rest.
+                        lyricsState.lines.forEachIndexed { index, line ->
+                            SyncedLyricLine(
+                                text = line.text,
+                                active = index == activeIndex,
+                                activeColor = activeColor,
+                            )
+                        }
+                        LyricsSourceTag(lyricsState.source)
+                    }
                 }
-                LyricsSourceTag(lyricsState.source)
-            }
-            else -> {
-                // Synced rows: highlight the active line, dim the rest.
-                lyricsState.lines.forEachIndexed { index, line ->
-                    SyncedLyricLine(text = line.text, active = index == activeIndex)
-                }
-                LyricsSourceTag(lyricsState.source)
             }
         }
     }
 }
 
 @Composable
-private fun SyncedLyricLine(text: String, active: Boolean) {
+private fun SyncedLyricLine(text: String, active: Boolean, activeColor: Color) {
     val alpha by animateFloatAsState(if (active) 1f else 0.38f, tween(260), label = "lyricAlpha")
     val fontSize by animateFloatAsState(if (active) 17f else 14f, tween(260), label = "lyricSize")
     Box(
@@ -678,7 +724,7 @@ private fun SyncedLyricLine(text: String, active: Boolean) {
     ) {
         Text(
             text = text,
-            color = Color.White.copy(alpha = alpha),
+            color = if (active) activeColor else Color.White.copy(alpha = alpha),
             fontSize = fontSize.sp,
             fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Normal,
             lineHeight = 20.sp,

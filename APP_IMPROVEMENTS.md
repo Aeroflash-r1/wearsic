@@ -52,12 +52,17 @@ of v1.9.39.
   "Download all / Download remaining" pill. Idempotent: already-saved tracks
   are skipped, and the count reflects only what is missing. Wiring:
   `DownloadsViewModel.startDownloadBatch(...)`.
-- **Queue reorder.** Every Up Next row now has a ⋯ action (and long-press)
-  opening a menu: Move to top / Move to bottom / Remove. Backed by
+- **Queue reorder.** Long-press an Up Next row and drag it: the row lifts,
+  the rows it passes open a gap, and the drop slot is chosen by matching the
+  lifted row's centre against the nearest laid-out row (accurate even where
+  `ScalingLazyColumn` shrinks rows at the edges). Edge auto-scroll arms only
+  after the finger pushes into the band and holds (~180 ms), so grabbing a row
+  that already sits near the top/bottom never scrolls by itself. Backed by
   `WearsicPlaybackController.moveQueueItem(...)` (Media3 `moveMediaItem`),
   which keeps the current track playing and recomputes the current index.
   Manual edits clear the retained pre-shuffle order so shuffle-off still
-  restores the original list.
+  restores the original list. (This replaced the earlier ⋯ menu — move to
+  top / bottom / remove; Remove remains the row's inline close button.)
 - **Offline surface.** The library tracks server reachability
   (`LibraryViewModel.serverReachable`, driven by network-shaped failures of
   actual requests). When the server is unreachable, the home screen shows an

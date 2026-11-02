@@ -17,11 +17,11 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.itemsIndexed
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.components.WearsicScreenHeader
+import com.wearsic.app.ui.components.WearsicSearchShimmerRow
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicTextMuted
@@ -46,6 +46,14 @@ fun RecommendationsScreen(
     val listState = rememberScalingLazyListState()
     LaunchedEffect(Unit) { onRefresh() }
 
+    // While the shelf holds nothing but placeholders there is nothing to
+    // scroll TO: the list used to let you push the three shimmer cards up
+    // into empty black, which reads as a broken screen rather than a wait.
+    // Freeze it here — touch AND bezel (rotary dispatches raw deltas, so it
+    // has to be gated separately) — and hand scrolling back the moment real
+    // rows, an error or the empty-state message land.
+    val shimmerOnly = recommendationsState.isLoading && recommendationsState.tracks.isEmpty()
+
     ScreenScaffold(
         scrollState = listState,
         modifier = modifier
@@ -54,10 +62,11 @@ fun RecommendationsScreen(
     ) {
         ScalingLazyColumn(
             state = listState,
+            userScrollEnabled = !shimmerOnly,
             modifier = Modifier
                 .fillMaxSize()
                 .wearsicEntrance()
-                .wearsicRotaryScroll(listState)
+                .wearsicRotaryScroll(listState, enabled = !shimmerOnly)
                 .testTag("recommendations_lazy_column"),
             contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -72,8 +81,12 @@ fun RecommendationsScreen(
 
             when {
                 recommendationsState.isLoading && recommendationsState.tracks.isEmpty() -> {
-                    item {
-                        CircularProgressIndicator(modifier = Modifier.padding(vertical = 24.dp))
+                    // Same shimmer language as search — pulsing song-row
+                    // placeholders, not a spinner.
+                    repeat(3) { shimmerIndex ->
+                        item(key = "rec_shimmer_$shimmerIndex") {
+                            WearsicSearchShimmerRow(modifier = Modifier)
+                        }
                     }
                 }
                 recommendationsState.errorMessage != null && recommendationsState.tracks.isEmpty() -> {

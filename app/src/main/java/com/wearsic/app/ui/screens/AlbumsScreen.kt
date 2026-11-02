@@ -133,6 +133,11 @@ fun AlbumsScreen(
         }
     }
 
+    // Placeholder-only loading: the three album cards are all there is, so
+    // the list must not scroll past them into empty black. Real rows (or the
+    // empty/error state) restore scrolling.
+    val shimmerOnly = albumsState.isLoading && albumsState.albums.isEmpty()
+
     ScreenScaffold(
         scrollState = listState,
         modifier = modifier
@@ -141,10 +146,11 @@ fun AlbumsScreen(
     ) {
         ScalingLazyColumn(
             state = listState,
+            userScrollEnabled = !shimmerOnly,
             modifier = Modifier
                 .fillMaxSize()
                 .wearsicEntrance()
-                .wearsicRotaryScroll(listState),
+                .wearsicRotaryScroll(listState, enabled = !shimmerOnly),
             contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally

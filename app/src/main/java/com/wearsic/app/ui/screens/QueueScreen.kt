@@ -31,11 +31,15 @@ import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,6 +93,7 @@ import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicLongPressDrag
 import com.wearsic.app.ui.util.wearsicRotaryScroll
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -115,26 +120,188 @@ fun QueueScreen(
     val haptic = LocalHapticFeedback.current
 
     // ── Drag-to-reorder ──────────────────────────────────────────────────
-    // Long-press lifts a row; dragging up/down moves it through the queue.
-    // Near the top/bottom edges the list auto-scrolls so the drop can be
-    // placed precisely anywhere in a long queue. On release the move
-    // commits. No ⋯ button — rows keep their full width for the song name.
-    val dragRowHeight = 64.dp
-    var dragIndex by remember { mutableStateOf<Int?>(null) }
-    var dragTarget by remember { mutableStateOf(-1) }
-    var dragDy by remember { mutableStateOf(0f) }
-    val scope = rememberCoroutineScope()
-    var lastAutoScrollMs by remember { mutableStateOf(0L) }
-    var edgeHoldSinceMs by remember { mutableStateOf(0L) }
+    // Long-press lifts a row (400 ms, timer-driven — see
+    // WearsicLongPressDrag); dragging moves it through the queue. Near the
+    // top/bottom edges the list auto-scrolls on the frame clock, so any
+    // position in a long queue is reachable without lifting the finger.
+    //
+    // AUTO-SCROLL IS ARMED BY INTENT, NOT BY POSITION. The first version
+    // derived scrolling from where the lifted row's centre WAS, so grabbing a
+    // row near the top or bottom of the screen (where rows naturally sit on a
+    // round watch) started scrolling the instant it lifted, in the direction
+    // of that edge, and at a speed proportional to how deep it already was —
+    // a fast, one-directional runaway that made the whole gesture unreliable.
+    // Now the lift position only sets a BASELINE: the finger must push at
+    // least one more entry margin (18dp) INTO the band, in the direction it
+    // is already moving, and hold there for a short dwell (~180ms) before
+    // anything scrolls. Grabbing a row at the top and dragging it down never
+    // scrolls up; pushing to the edge and holding does, gradually.
+    //
+    // The lifted row is moved by ONE offset: finger travel + an equal
+    // compensation for however far the list scrolled beneath it. Without
+    // that compensation the row drifts off the finger as soon as
+    // auto-scroll starts; with it, the row stays pinned under the fingertip.
+    //
+    // THE DROP SLOT IS NOT THAT OFFSET DIVIDED BY A ROW HEIGHT. It used to be
+    // (offset / 72dp, rounded), which assumes every row on screen is exactly
+    // one row pitch apart. A ScalingLazyColumn shrinks rows as they approach
+    // the top and bottom edges, so the real on-screen pitch there is a
+    // fraction of the layout pitch — at the edges, one row of finger travel is
+    // less than 72dp, the division rounded down, and the drop landed a row or
+    // two away from what the user saw. Here the lifted row's CENTRE is matched
+    // against the centre of each actually laid-out row and the nearest one
+    // wins, so one row of travel is one row at every scale.
     val density = LocalDensity.current
+    // Fallback pitch only; a measured one is taken on lift.
+    val defaultRowStepPx = with(density) { 72.dp.toPx() }
+    val rowSpacingPx = with(density) { 8.dp.toPx() }
+
+    // Stable keys shared by the list AND by the drop-target lookup. The list
+    // also holds the header and the transport row, so a laid-out item's own
+    // `index` is not a queue index — the key is the only safe join.
+    val rowKeys = remember(queue) {
+        val occurrences = HashMap<String, Int>()
+        queue.map { track ->
+            val seen = occurrences[track.id] ?: 0
+            occurrences[track.id] = seen + 1
+            "${track.id}#$seen"
+        }
+    }
+    val queueIndexByKey = remember(rowKeys) {
+        HashMap<String, Int>(rowKeys.size).apply {
+            rowKeys.forEachIndexed { index, key -> put(key, index) }
+        }
+    }
+
+    var dragIndex by remember { mutableStateOf<Int?>(null) }
+    // Viewport-space centre of the lifted row at the moment it lifted.
+    var dragStartCentrePx by remember { mutableFloatStateOf(0f) }
+    var dragFingerDy by remember { mutableFloatStateOf(0f) }
+    var dragScrollPx by remember { mutableFloatStateOf(0f) }
+    // Measured row pitch, for the parting gap of the rows that make way.
+    var dragStepPx by remember { mutableFloatStateOf(0f) }
+    // How far into an edge band the row already was when it lifted. Auto-scroll
+    // needs to get CLEARLY deeper than this before it arms (NaN = not lifted).
+    var autoScrollStartDepthPx by remember { mutableFloatStateOf(Float.NaN) }
+    var autoScrollPxPerFrame by remember { mutableFloatStateOf(0f) }
+
+    // Visual offset of the lifted row (see comment above).
+    val dragOffsetPx = dragFingerDy + dragScrollPx
+    val rowStepPx = if (dragStepPx > 0f) dragStepPx else defaultRowStepPx
+
+    // The queue row whose centre is nearest `centrePx`. Reading `layoutInfo`
+    // here (rather than a value computed during composition) keeps the answer
+    // live: the pointer-input coroutine holds lambdas from the composition
+    // that started the gesture.
+    fun dropTargetFor(from: Int, centrePx: Float): Int {
+        val last = queue.lastIndex
+        if (last < 1) return from
+        var best = from
+        var bestDistance = Float.MAX_VALUE
+        for (item in listState.layoutInfo.visibleItemsInfo) {
+            val key = item.key as? String ?: continue
+            val queueIndex = queueIndexByKey[key] ?: continue
+            val distance = kotlin.math.abs(item.offset + item.size / 2f - centrePx)
+            if (distance < bestDistance) {
+                bestDistance = distance
+                best = queueIndex
+            }
+        }
+        // "Stay put" must stay a no-op: clamping a result of 0 up to the first
+        // droppable slot would otherwise turn an untouched drag into a move.
+        if (best == from) return from
+        // Index 0 is the already-played tail / the Now Playing card, which has
+        // no row to open a gap for — never drop into it.
+        return best.coerceIn(1, last)
+    }
+
+    // The slot the lifted row will land in. Held as state and recomputed
+    // imperatively (lift, movement, auto-scroll) rather than derived during
+    // composition: a scroll frame that does not change the slot must not
+    // recompose the whole queue.
+    var dragTarget by remember { mutableIntStateOf(-1) }
+
+    fun recomputeDragTarget() {
+        val from = dragIndex ?: return
+        // Centre = lift centre + finger travel. The list's scroll moves the row
+        // up by exactly the compensation its translation adds back, so the two
+        // cancel and the centre follows the finger.
+        val to = dropTargetFor(from, dragStartCentrePx + dragFingerDy)
+        if (to != dragTarget) dragTarget = to
+    }
+
+    fun resetDrag() {
+        dragIndex = null
+        dragTarget = -1
+        dragFingerDy = 0f
+        dragScrollPx = 0f
+        autoScrollStartDepthPx = Float.NaN
+        autoScrollPxPerFrame = 0f
+    }
+
+    /**
+     * How far the finger's centre has pushed past the top or bottom band line
+     * (0 when it is nowhere near an edge). The band is a fraction of the
+     * viewport so it needs no dp guess and survives short viewports.
+     */
+    fun edgeDepthPx(): Float {
+        val vp = listState.layoutInfo.viewportSize.height.toFloat()
+        if (vp <= 0f) return 0f
+        val band = vp * AUTO_SCROLL_BAND_FRACTION
+        val centre = dragStartCentrePx + dragFingerDy
+        return maxOf(band - centre, centre - (vp - band), 0f)
+    }
+
+    // Auto-scroll speed, armed by depth BEYOND where the drag began. Called on
+    // lift and on every movement; a speed of 0 keeps the loop idle.
+    fun updateAutoScroll() {
+        val vp = listState.layoutInfo.viewportSize.height.toFloat()
+        if (vp <= 0f) {
+            autoScrollPxPerFrame = 0f
+            return
+        }
+        val band = vp * AUTO_SCROLL_BAND_FRACTION
+        val centre = dragStartCentrePx + dragFingerDy
+        val depthUp = band - centre
+        val depthDown = centre - (vp - band)
+        val direction = when {
+            depthUp > 0f -> -1f
+            depthDown > 0f -> 1f
+            else -> 0f
+        }
+        if (direction == 0f) {
+            autoScrollPxPerFrame = 0f
+            return
+        }
+        val startDepth = if (autoScrollStartDepthPx.isNaN()) 0f else autoScrollStartDepthPx
+        val armDepth = startDepth + with(density) { AUTO_SCROLL_ENTRY.toPx() }
+        val depth = if (direction < 0f) depthUp else depthDown
+        // Not deep enough YET: grabbing a row that already sits in the band
+        // must not scroll until the finger deliberately pushes further in.
+        if (depth <= armDepth) {
+            autoScrollPxPerFrame = 0f
+            return
+        }
+        // Ramp from the entry threshold to the band's far edge, then hold at a
+        // brisk-but-controllable cap (4 px/frame ≈ 1.7 rows/s at watch
+        // density) instead of the old 8 px/frame runaway.
+        val span = (band - armDepth).coerceAtLeast(1f)
+        val t = ((depth - armDepth) / span).coerceIn(0f, 1f)
+        autoScrollPxPerFrame = direction * (AUTO_SCROLL_MIN_SPEED + (AUTO_SCROLL_MAX_SPEED - AUTO_SCROLL_MIN_SPEED) * t)
+    }
 
     fun commitDrag() {
         val from = dragIndex ?: return
-        val to = dragTarget.coerceIn(1, queue.lastIndex)
-        if (to != from) onMoveItem(from, to)
-        dragIndex = null
-        dragTarget = -1
-        dragDy = 0f
+        // Compute the destination from LIVE state: the pointer-input coroutine
+        // keeps the lambdas from the composition that started the gesture, so
+        // reading a value derived during composition here would use a stale
+        // index. These state reads and the layout query are always current.
+        val to = dropTargetFor(from, dragStartCentrePx + dragFingerDy)
+        // Drop the drag visuals BEFORE mutating the queue: the rows are keyed
+        // by track, so for one frame the lifted index would otherwise point at
+        // a different song than the one under the finger.
+        resetDrag()
+        if (to != from && to in queue.indices) onMoveItem(from, to)
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
@@ -144,11 +311,40 @@ fun QueueScreen(
         val to = dragTarget
         if (from == to) return 0f
         return if (from < to) {
-            // moving down: items above target shift up to fill the gap
-            if (index in (from + 1)..to) -with(density) { dragRowHeight.toPx() } else 0f
+            // moving down: the rows it passes slide up to fill the gap
+            if (index in (from + 1)..to) -rowStepPx else 0f
         } else {
-            // moving up: items below target shift down to fill the gap
-            if (index in to until from) with(density) { dragRowHeight.toPx() } else 0f
+            // moving up: the rows it passes slide down to fill the gap
+            if (index in to until from) rowStepPx else 0f
+        }
+    }
+
+    // Auto-scroll loop: runs only while a row is lifted. A nonzero speed is
+    // armed but not acted on until it has persisted for the dwell window — a
+    // row dragged THROUGH an edge on its way somewhere else must not kick the
+    // list into motion. Leaving the band (speed 0) disarms the timer again.
+    LaunchedEffect(dragIndex) {
+        if (dragIndex == null) return@LaunchedEffect
+        var armedAtNanos = 0L
+        while (isActive) {
+            val frameNanos = withFrameNanos { it }
+            val speed = autoScrollPxPerFrame
+            if (speed == 0f) {
+                armedAtNanos = 0L
+                continue
+            }
+            if (armedAtNanos == 0L) {
+                armedAtNanos = frameNanos
+                continue
+            }
+            if (frameNanos - armedAtNanos < AUTO_SCROLL_DWELL_NANOS) continue
+            val consumed = listState.dispatchRawDelta(speed)
+            if (consumed != 0f) {
+                dragScrollPx += consumed
+                // The list moved under a pinned row, so the slot under it may
+                // have changed.
+                recomputeDragTarget()
+            }
         }
     }
 
@@ -275,10 +471,7 @@ fun QueueScreen(
                 // as it moves, so `animateItem` can slide reorders and fade
                 // removals instead of teleporting them. Advancing to the next
                 // track never remounts rows (ids don't change).
-                itemsIndexed(queue, key = { index, track ->
-                    val occurrence = queue.subList(0, index).count { it.id == track.id }
-                    "${track.id}#$occurrence"
-                }) { index, track ->
+                itemsIndexed(queue, key = { index, _ -> rowKeys[index] }) { index, track ->
                     if (index == currentIndex) {
                         QueueCurrentCard(
                             track = track,
@@ -287,7 +480,7 @@ fun QueueScreen(
                     } else {
                         val isDragged = dragIndex == index
                         val shift = shiftFor(index)
-                        // Rows part with a spring — no instant snapping.
+                        // Other rows part with a spring — no instant snapping.
                         val animatedShift by animateFloatAsState(
                             targetValue = if (isDragged) 0f else shift,
                             animationSpec = WearsicMotion.Gentle,
@@ -299,100 +492,44 @@ fun QueueScreen(
                             // also fire the row click (play/remove).
                             onClick = { if (dragIndex == null) onPlayItem(index) },
                             onRemove = { if (dragIndex == null) onRemoveItem(index) },
+                            translationY = if (isDragged) dragOffsetPx else animatedShift,
+                            lifted = isDragged,
                             modifier = Modifier
-                                .then(
-                                    if (isDragged) {
-                                        Modifier
-                                            .zIndex(2f)
-                                            .graphicsLayer {
-                                                translationY = dragDy
-                                                shadowElevation = 16f
-                                                alpha = 0.96f
-                                            }
-                                    } else if (shift != 0f) {
-                                        Modifier.graphicsLayer {
-                                            translationY = animatedShift
-                                        }
-                                    } else {
-                                        Modifier
-                                    }
-                                )
+                                .zIndex(if (isDragged) 2f else 0f)
                                 .wearsicLongPressDrag(
+                                    key = index,
                                     onDragStart = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        // Anchor on the row's real laid-out centre,
+                                        // and take its real (scaled) height as the
+                                        // pitch the parting rows shift by.
+                                        val own = listState.layoutInfo.visibleItemsInfo
+                                            .firstOrNull { it.key == rowKeys[index] }
+                                        dragStartCentrePx = own
+                                            ?.let { it.offset + it.size / 2f }
+                                            ?: (listState.layoutInfo.viewportSize.height / 2f)
+                                        dragStepPx = own
+                                            ?.let { (it.size + rowSpacingPx).toFloat() }
+                                            ?: 0f
                                         dragIndex = index
-                                        dragTarget = index
-                                        dragDy = 0f
+                                        dragFingerDy = 0f
+                                        dragScrollPx = 0f
+                                        // Baseline for arming auto-scroll: a row
+                                        // lifted already inside the edge band
+                                        // must be pushed FURTHER in before the
+                                        // list starts moving on its own.
+                                        autoScrollStartDepthPx = edgeDepthPx()
+                                        autoScrollPxPerFrame = 0f
+                                        recomputeDragTarget()
+                                        updateAutoScroll()
                                     },
-                                    onDrag = { deltaY, positionY ->
-                                        dragDy += deltaY
-                                        val rowPx = with(density) { dragRowHeight.toPx() }
-                                        val visible = listState.layoutInfo.visibleItemsInfo
-                                        // The pointer's Y is relative to THIS row,
-                                        // not the viewport — convert to screen
-                                        // space using the row's own offset, or
-                                        // the edge bands (and thus auto-scroll
-                                        // direction) are wrong on a round watch.
-                                        val selfOffset = visible.firstOrNull { it.index == index }?.offset ?: 0
-                                        val screenY = selfOffset + positionY
-                                        val vp = listState.layoutInfo.viewportSize.height
-                                        // Drop slot tracks whatever row is under
-                                        // the finger right now (screen-space), so
-                                        // while auto-scrolling the hovered row is
-                                        // the target.
-                                        val under = visible.firstOrNull {
-                                            screenY >= it.offset && screenY <= it.offset + it.size
-                                        }
-                                        val target = if (under != null) {
-                                            under.index.coerceIn(1, queue.lastIndex)
-                                        } else {
-                                            (index + (dragDy / rowPx).toInt()).coerceIn(1, queue.lastIndex)
-                                        }
-                                        dragTarget = target
-
-                                        // Auto-scroll only while the finger is
-                                        // parked in a REAL edge band — and only
-                                        // after it has sat there a moment. A
-                                        // hold anywhere else NEVER scrolls, and a
-                                        // quick touch never scrolls. Direction is
-                                        // driven by the band the finger is in
-                                        // (up at the top, down at the bottom);
-                                        // steps are a mild 1 row per tick using
-                                        // scrollBy (incremental — no animation
-                                        // cancel-churn).
-                                        val edgePx = with(density) { 44.dp.toPx() }
-                                        val atTopEdge = screenY < edgePx && visible.minByOrNull { it.index }?.index != 0
-                                        val atBottomEdge = screenY > vp - edgePx && visible.maxByOrNull { it.index }?.index != queue.lastIndex
-                                        val seekDir = when {
-                                            atTopEdge -> -1
-                                            atBottomEdge -> 1
-                                            else -> 0
-                                        }
-                                        val nowMs = System.currentTimeMillis()
-                                        if (seekDir == 0) {
-                                            edgeHoldSinceMs = 0L
-                                        } else {
-                                            if (edgeHoldSinceMs == 0L) edgeHoldSinceMs = nowMs
-                                            if (nowMs - edgeHoldSinceMs >= 160L && nowMs - lastAutoScrollMs >= 140L) {
-                                                val firstVisible = visible.minByOrNull { it.index }?.index ?: 0
-                                                val lastVisible = visible.maxByOrNull { it.index }?.index ?: firstVisible
-                                                scope.launch {
-                                                    if (seekDir < 0) {
-                                                        listState.scrollToItem((firstVisible - 1).coerceAtLeast(0))
-                                                    } else {
-                                                        listState.scrollToItem((lastVisible + 1).coerceAtMost(queue.lastIndex))
-                                                    }
-                                                }
-                                                lastAutoScrollMs = nowMs
-                                            }
-                                        }
+                                    onDrag = { deltaY ->
+                                        dragFingerDy += deltaY
+                                        recomputeDragTarget()
+                                        updateAutoScroll()
                                     },
                                     onDragEnd = { commitDrag() },
-                                    onDragCancel = {
-                                        dragIndex = null
-                                        dragTarget = -1
-                                        dragDy = 0f
-                                    },
+                                    onDragCancel = { resetDrag() },
                                 )
                         )
                     }
@@ -537,28 +674,59 @@ private fun QueueTrackItem(
     track: Track,
     onClick: () -> Unit,
     onRemove: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    translationY: Float = 0f,
+    lifted: Boolean = false
 ) {
-    WearsicSongRow(
-        title = track.title,
-        artist = track.artist,
-        artworkUrl = track.artworkUrl,
-        onClick = onClick,
-        modifier = modifier,
-        testTag = "queue_track_${track.id}",
-        trailing = {
-            // Only the remove action stays inline — the row keeps its full
-            // width for the song name; reorder is drag-only.
-            WearsicSongRowActionButton(
-                icon = Icons.Rounded.Close,
-                contentDescription = "Remove from Queue",
-                onClick = onRemove,
-                testTag = "queue_remove_${track.id}",
-                tint = WearsicTextMuted
-            )
-        }
-    )
+    // Two boxes on purpose: the OUTER one owns the drag pointer input and
+    // never moves, so pointer deltas stay in a stable coordinate space. The
+    // INNER box carries the visual translation/shadow of a lifted row. If
+    // both lived on one node the row would move with the finger and the
+    // reported deltas would collapse to nearly zero.
+    Box(modifier = modifier.fillMaxWidth()) {
+        WearsicSongRow(
+            title = track.title,
+            artist = track.artist,
+            artworkUrl = track.artworkUrl,
+            onClick = onClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    this.translationY = translationY
+                    if (lifted) {
+                        shadowElevation = 18f
+                        alpha = 0.98f
+                    }
+                },
+            testTag = "queue_track_${track.id}",
+            trailing = {
+                // Only the remove action stays inline — the row keeps its full
+                // width for the song name; reorder is drag-only.
+                WearsicSongRowActionButton(
+                    icon = Icons.Rounded.Close,
+                    contentDescription = "Remove from Queue",
+                    onClick = onRemove,
+                    testTag = "queue_remove_${track.id}",
+                    tint = WearsicTextMuted
+                )
+            }
+        )
+    }
 }
+
+/**
+ * Auto-scroll tuning, in one place because these three numbers decide whether
+ * the gesture feels controlled or runaway.
+ */
+/** Fraction of the viewport that counts as the top/bottom edge band. */
+private const val AUTO_SCROLL_BAND_FRACTION = 0.16f
+/** How far past the lift point the finger must push in before scrolling arms. */
+private val AUTO_SCROLL_ENTRY = 18.dp
+/** Speeds in px per frame, ramped across the band. 4px/frame ≈ 1.7 rows/s. */
+private const val AUTO_SCROLL_MIN_SPEED = 1.2f
+private const val AUTO_SCROLL_MAX_SPEED = 4f
+/** Hold time inside the armed band before the list actually moves (~180ms). */
+private const val AUTO_SCROLL_DWELL_NANOS = 180_000_000L
 
 @Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
 @Composable

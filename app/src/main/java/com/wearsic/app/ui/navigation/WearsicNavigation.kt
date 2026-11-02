@@ -115,6 +115,10 @@ fun WearsicApp(
     val favoritesState by libraryVM.favoritesState.collectAsStateWithLifecycle()
     val playlistsState by libraryVM.playlistsState.collectAsStateWithLifecycle()
     val playlistDetailState by libraryVM.playlistDetailState.collectAsStateWithLifecycle()
+    // Observed like every other flow: reading the StateFlow's `.value` inside
+    // composition would render the initial empty shelf forever, because it
+    // never recomposes when the flow emits.
+    val recommendationsState by libraryVM.recommendationsState.collectAsStateWithLifecycle()
 
     // Derived projections: recompute whenever the flow emits, but only
     // NOTIFY their readers when the projected value actually changes. The
@@ -226,7 +230,7 @@ fun WearsicApp(
             // Recommendations ("Made for you") — taste-ranked, server-side.
             composable(Screen.MadeForYou.route) {
                 RecommendationsScreen(
-                    recommendationsState = libraryVM.recommendationsState.value,
+                    recommendationsState = recommendationsState,
                     onRefresh = {
                         libraryVM.refreshRecommendations()
                     },

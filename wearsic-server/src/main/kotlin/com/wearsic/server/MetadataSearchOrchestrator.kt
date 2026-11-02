@@ -102,7 +102,7 @@ class MetadataSearchOrchestrator(
          * budget: users should see results fast. Relaxed variants only run
          * while this remains.
          */
-        private const val SEARCH_FIRST_PAGE_BUDGET_MS = 7_000L
+        private const val SEARCH_FIRST_PAGE_BUDGET_MS = 5_500L
 
         /**
          * How long a built search pool is reused before re-fetching. Paging
@@ -601,6 +601,10 @@ class MetadataSearchOrchestrator(
                 when {
                     rArtist == qArtist -> score += 2
                     tokenOverlap(rArtist, qArtist) -> score += 1
+                    // A different artist can never be "the same track" —
+                    // even with an exact title and an album name. A cover
+                    // or mis-tagged row must not hijack the resolution.
+                    else -> continue
                 }
             }
             // A row without an album name cannot resolve anything — do not

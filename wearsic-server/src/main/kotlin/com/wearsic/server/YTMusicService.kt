@@ -156,6 +156,9 @@ class YTMusicService(
                     if (out.none { it.videoId == t.videoId }) out.add(t)
                     if (out.size >= limit) break
                 }
+                // Don't chase empty continuation shelves: a miss that spans
+                // several pages is serial round trips with nothing gained.
+                if (page.isEmpty() && out.isNotEmpty()) break
                 // Next page? YTM appends a continuation token when the shelf
                 // holds more rows than the first response carried.
                 val token = findContinuationToken(raw)

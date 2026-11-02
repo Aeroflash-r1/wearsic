@@ -58,6 +58,16 @@ class AlbumResolveTest {
     }
 
     @Test
+    fun `bestAlbumRow rejects an exact title by a different artist even with an album`() {
+        val rows = listOf(
+            row("g1", "Imagine", "John Lennon", album = "Imagine"),
+        )
+        // The query artist (Ariana Grande) is not the row's artist: the row
+        // must never win, no matter how exact the title and album are.
+        assertNull(orch().bestAlbumRow(rows, "Imagine", "Ariana Grande"))
+    }
+
+    @Test
     fun `bestAlbumRow returns null on no match`() {
         val rows = listOf(row("fff", "Something Else", "Someone", album = "X"))
         assertNull(orch().bestAlbumRow(rows, "Totally Different", "Artist"))

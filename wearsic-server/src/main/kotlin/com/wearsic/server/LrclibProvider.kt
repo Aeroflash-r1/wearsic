@@ -5,6 +5,7 @@ import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -40,12 +41,15 @@ class LrclibProvider(
             append((query.durationMs / 1000L).toString())
         }
         val resp = try {
-            client.get(url)
+            // Hard deadline: a stalled provider must never hold the route
+            // past its own timeout (the shared client's socket timeout is
+            // far longer than a lyrics lookup should ever take).
+            withTimeoutOrNull(timeoutMs) { client.get(url) }
         } catch (cancel: CancellationException) {
             throw cancel
         } catch (_: Exception) {
             return LyricsFetchResult.NotAvailable
-        }
+        } ?: return LyricsFetchResult.NotAvailable
         if (resp.status != HttpStatusCode.OK) return LyricsFetchResult.NotAvailable
         val body = try {
             resp.bodyAsText()

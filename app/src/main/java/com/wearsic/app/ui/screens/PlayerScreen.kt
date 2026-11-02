@@ -417,8 +417,12 @@ private fun NowPlayingPage(
         val viewportHeight = maxHeight
         val viewportPx = with(LocalDensity.current) { viewportHeight.toPx() }
         // Reveal threshold: 30% of a viewport scrolled up counts as "the
-        // lyrics are visible" — enough to start fetching and syncing.
-        val engaged = scrollState.value > viewportPx * 0.30f
+        // lyrics are visible" — enough to start fetching and syncing. Also
+        // engaged when the sheet is fully scrolled: a SHORT lyric set (a
+        // few lines) may never reach 30% of the viewport, and it must still
+        // fetch and highlight.
+        val engaged = scrollState.value > viewportPx * 0.30f ||
+            (scrollState.maxValue > 0 && scrollState.value >= scrollState.maxValue - 1f)
         val synced = lyricsState.mode == LyricsMode.Synced && lyricsState.lines.isNotEmpty()
         val density = LocalDensity.current
 
@@ -439,6 +443,7 @@ private fun NowPlayingPage(
         var lastEmittedPos by remember(track.id) { mutableLongStateOf(Long.MIN_VALUE) }
         var anchorPos by remember(track.id) { mutableLongStateOf(0L) }
         var anchorAtMs by remember(track.id) { mutableLongStateOf(0L) }
+        var prevPlaying by remember(track.id) { mutableStateOf(false) }
 
         LaunchedEffect(engaged, track.id, synced) {
             if (!engaged || !synced) {
@@ -453,6 +458,15 @@ private fun NowPlayingPage(
                     anchorPos = emitted
                     anchorAtMs = now
                 }
+                // Resume: the anchor is stale after a pause (no new emissions
+                // happened while stopped). Re-anchor on the false→true edge so
+                // the highlight does not jump ahead for a tick or two.
+                if (currentIsPlaying && !prevPlaying) {
+                    anchorPos = emitted
+                    anchorAtMs = now
+                }
+                prevPlaying = currentIsPlaying
+
                 val pos = if (currentIsPlaying) anchorPos + (now - anchorAtMs) else emitted
                 val idx = lyricsState.lines
                     .indexOfLast { it.timeMs != null && it.timeMs <= pos }

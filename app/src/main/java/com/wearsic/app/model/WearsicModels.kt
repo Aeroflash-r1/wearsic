@@ -18,6 +18,32 @@ data class Album(
     val thumbnailUrl: String? = null
 )
 
+/** How lyrics are presented: timed lines, plain text, or nothing. */
+enum class LyricsMode { Synced, Plain, Unavailable }
+
+data class LyricLine(
+    val timeMs: Long? = null,
+    val text: String = "",
+)
+
+data class Lyrics(
+    val mode: LyricsMode = LyricsMode.Unavailable,
+    val source: String? = null,
+    val lines: List<LyricLine> = emptyList(),
+    val plainText: String? = null,
+) {
+    /**
+     * Index of the line being sung at [positionMs], or -1 before the first
+     * timed line (or for non-synced lyrics).
+     */
+    fun activeIndexFor(positionMs: Long): Int =
+        if (mode == LyricsMode.Synced && lines.isNotEmpty()) {
+            lines.indexOfLast { it.timeMs != null && it.timeMs <= positionMs }.coerceAtLeast(0)
+        } else {
+            -1
+        }
+}
+
 data class Playlist(
     val id: String = "",
     val name: String = "",

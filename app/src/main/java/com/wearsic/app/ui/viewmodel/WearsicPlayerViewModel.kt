@@ -43,6 +43,7 @@ class WearsicPlayerViewModel(
     val libraryViewModel: LibraryViewModel
     val downloadsViewModel: DownloadsViewModel
     val settingsViewModel: SettingsViewModel
+    val lyricsViewModel: LyricsViewModel
 
     // Legacy properties for backward compatibility
     val uiState: StateFlow<PlaybackUiState> get() = playbackViewModel.uiState
@@ -60,6 +61,7 @@ class WearsicPlayerViewModel(
     val playlistDetailState: StateFlow<LibraryViewModel.PlaylistDetailUiState> get() = libraryViewModel.playlistDetailState
     val albumsState: StateFlow<LibraryViewModel.AlbumsUiState> get() = libraryViewModel.albumsState
     val artistsState: StateFlow<LibraryViewModel.ArtistsUiState> get() = libraryViewModel.artistsState
+    val lyricsState: StateFlow<LyricsViewModel.LyricsUiState> get() = lyricsViewModel.state
     val storageStats: StateFlow<DownloadsViewModel.StorageStats> get() = downloadsViewModel.storageStats
     val radioState: StateFlow<LibraryViewModel.RadioState> get() = libraryViewModel.radioState
     val sleepRemainingMs: StateFlow<Long> get() = _sleepRemainingMs
@@ -92,6 +94,7 @@ class WearsicPlayerViewModel(
         libraryViewModel = LibraryViewModel(application)
         downloadsViewModel = DownloadsViewModel(application)
         settingsViewModel = SettingsViewModel(application)
+        lyricsViewModel = LyricsViewModel(application)
 
         // Sync auto-cache limit to download manager
         viewModelScope.launch {

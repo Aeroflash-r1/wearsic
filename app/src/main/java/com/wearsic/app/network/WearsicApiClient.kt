@@ -1,6 +1,7 @@
 package com.wearsic.app.network
 
 import com.wearsic.app.network.model.AlbumDto
+import com.wearsic.app.network.model.LyricsResponseDto
 import com.wearsic.app.network.model.PlaylistDto
 import com.wearsic.app.network.model.PlaylistWithTracksDto
 import com.wearsic.app.network.model.ReadyResponseDto
@@ -51,6 +52,17 @@ interface WearsicApiClient {
         title: String,
         artist: String,
     ): Result<AlbumDto?>
+    /**
+     * `/api/lyrics` — synced (LRC-shaped) or plain lyrics for a track.
+     * Unavailable is a normal, non-error result.
+     */
+    suspend fun getLyrics(
+        baseUrl: String,
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+    ): Result<LyricsResponseDto>
     suspend fun getPlaylistByUrl(baseUrl: String, url: String): Result<PlaylistWithTracksDto>
 
     // Server-side playlists

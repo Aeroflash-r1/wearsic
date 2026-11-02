@@ -3,6 +3,9 @@ package com.wearsic.app.network.model
 import com.wearsic.app.model.Track
 import com.wearsic.app.model.Playlist
 import com.wearsic.app.model.Album
+import com.wearsic.app.model.LyricLine
+import com.wearsic.app.model.Lyrics
+import com.wearsic.app.model.LyricsMode
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
@@ -146,6 +149,31 @@ data class AlbumDto(
 data class AlbumResolveDto(
     val album: AlbumDto? = null
 )
+
+@Serializable
+data class LyricsLineDto(
+    val timeMs: Long? = null,
+    val text: String = "",
+)
+
+@Serializable
+data class LyricsResponseDto(
+    val mode: String = "unavailable",
+    val source: String? = null,
+    val lines: List<LyricsLineDto> = emptyList(),
+    val plainText: String? = null,
+) {
+    fun toDomainLyrics(): Lyrics = Lyrics(
+        mode = when (mode) {
+            "synced" -> LyricsMode.Synced
+            "plain" -> LyricsMode.Plain
+            else -> LyricsMode.Unavailable
+        },
+        source = source,
+        lines = lines.map { LyricLine(timeMs = it.timeMs, text = it.text) },
+        plainText = plainText,
+    )
+}
 
 @Serializable
 data class PlaylistDto(

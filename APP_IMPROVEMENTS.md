@@ -46,6 +46,18 @@ of v1.9.39.
   top match. Nothing found = no navigation, never a wrong album. The disc's
   ring-drag scrub is unaffected — a scrub consumes the gesture, a tap opens
   the album.
+- **Scroll-up synced lyrics.** Dragging up on the Now Playing screen reveals
+  a lyrics sheet beneath the player (the player stays one viewport tall; the
+  page scrolls like pulling up a liner sheet). Synced LRC lines highlight the
+  active line — dimmed previous/upcoming rows, animated alpha/weight/size,
+  and smooth auto-centering of the current line — synced against the actual
+  Media3 playback position via lightweight interpolation between the
+  position tracker's ticks. Plain lyrics, loading, error+retry, unavailable,
+  and no-track states are all designed. Lyrics fetch only on first reveal
+  (once per track, server-cached), and the sync loop runs only while the
+  sheet is visible — no playback interference, no second player, no extra
+  network. Server: modular provider adapter (LRCLIB), LRC parser, bounded
+  cache, `/api/lyrics`.
 - **Player — hue-matched "aurora" glow.** A soft radial tint from the artwork
   accent sits behind the disc so the scrim reads as depth instead of a flat
   black void.

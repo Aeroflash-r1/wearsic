@@ -1,6 +1,18 @@
 package com.wearsic.app.ui.screens
 
 import android.graphics.drawable.BitmapDrawable
+import android.os.SystemClock
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.wear.compose.material3.CircularProgressIndicator
+import com.wearsic.app.model.LyricsMode
+import com.wearsic.app.ui.theme.LocalWearsicAccent
+import com.wearsic.app.ui.viewmodel.LyricsViewModel
+import kotlin.math.roundToInt
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -103,6 +115,7 @@ import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -164,6 +177,12 @@ fun PlayerScreen(
      * tap (a plain artwork disc) without touching the ring-drag scrub.
      */
     onOpenAlbum: ((Track) -> Unit)? = null,
+    /** Lyrics sheet state (scroll-up reveal on the Now Playing page). */
+    lyricsState: LyricsViewModel.LyricsUiState = LyricsViewModel.LyricsUiState(),
+    /** Fired the first time the sheet is revealed for a track. */
+    onRequestLyrics: () -> Unit = {},
+    /** Retry after a failed load / unavailable state. */
+    onRetryLyrics: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val track = playbackState.currentTrack
@@ -286,7 +305,10 @@ fun PlayerScreen(
                             colors = artworkColors,
                             active = pagerState.currentPage == 0,
                             rotateArtwork = rotateArtwork,
-                            onOpenAlbum = onOpenAlbum
+                            onOpenAlbum = onOpenAlbum,
+                            lyricsState = lyricsState,
+                            onRequestLyrics = onRequestLyrics,
+                            onRetryLyrics = onRetryLyrics
                         )
                         else -> ActionsPage(
                             hasTrack = hasTrack,
@@ -346,8 +368,16 @@ fun PlayerScreen(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Page 0 — Now Playing: artwork disc, metadata, transport (never scrolls)
+// Page 0 — Now Playing: artwork disc, metadata, transport, and the
+// scroll-up lyrics view. The whole page scrolls vertically: the player
+// occupies exactly one viewport, and dragging up reveals the lyric sheet
+// beneath it (like pulling up a liner sheet).
 // ─────────────────────────────────────────────────────────────────────────
+
+private val LYRICS_LINE_HEIGHT = 48.dp
+private val LYRICS_LINE_GAP = 2.dp
+private val LYRICS_TOP_PAD = 80.dp
+private val LYRICS_BOTTOM_PAD = 200.dp
 
 @Composable
 private fun NowPlayingPage(
@@ -368,7 +398,10 @@ private fun NowPlayingPage(
     colors: ArtworkColors,
     active: Boolean,
     rotateArtwork: Boolean = true,
-    onOpenAlbum: ((Track) -> Unit)? = null
+    onOpenAlbum: ((Track) -> Unit)? = null,
+    lyricsState: LyricsViewModel.LyricsUiState = LyricsViewModel.LyricsUiState(),
+    onRequestLyrics: () -> Unit = {},
+    onRetryLyrics: () -> Unit = {},
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         // Short viewports (a clipped scrim, or a smaller round face) get a
@@ -377,112 +410,355 @@ private fun NowPlayingPage(
         val discSize: Dp = (maxWidth * 0.36f).coerceIn(if (compact) 56.dp else 64.dp, if (compact) 72.dp else 92.dp)
         val playSize: Dp = if (compact) 48.dp else (maxWidth * 0.26f).coerceIn(50.dp, 60.dp)
 
+        val scrollState = rememberScrollState()
+        val viewportHeight = maxHeight
+        val viewportPx = with(LocalDensity.current) { viewportHeight.toPx() }
+        // Reveal threshold: 30% of a viewport scrolled up counts as "the
+        // lyrics are visible" — enough to start fetching and syncing.
+        val engaged = scrollState.value > viewportPx * 0.30f
+        val synced = lyricsState.mode == LyricsMode.Synced && lyricsState.lines.isNotEmpty()
+        val density = LocalDensity.current
+
+        // Fetch once per track when the sheet is first revealed (the
+        // ViewModel dedupes; the server caches).
+        LaunchedEffect(engaged, track.id) {
+            if (engaged && hasTrack) onRequestLyrics()
+        }
+
+        // Highlight sync. The playback state emits position every ~2s; this
+        // interpolates between emissions using the wall clock, so the active
+        // line tracks the real Media3 position tightly even between ticks.
+        // Runs only while the sheet is visible; it is pure arithmetic + a
+        // 150ms delay — no network, no playback changes.
+        val currentPosition by rememberUpdatedState(positionMs)
+        val currentIsPlaying by rememberUpdatedState(isPlaying)
+        var activeIndex by remember(track.id) { mutableIntStateOf(-1) }
+        var lastEmittedPos by remember(track.id) { mutableLongStateOf(Long.MIN_VALUE) }
+        var anchorPos by remember(track.id) { mutableLongStateOf(0L) }
+        var anchorAtMs by remember(track.id) { mutableLongStateOf(0L) }
+
+        LaunchedEffect(engaged, track.id, synced) {
+            if (!engaged || !synced) {
+                activeIndex = -1
+                return@LaunchedEffect
+            }
+            while (isActive) {
+                val emitted = currentPosition
+                val now = SystemClock.elapsedRealtime()
+                if (emitted != lastEmittedPos) {
+                    lastEmittedPos = emitted
+                    anchorPos = emitted
+                    anchorAtMs = now
+                }
+                val pos = if (currentIsPlaying) anchorPos + (now - anchorAtMs) else emitted
+                val idx = lyricsState.lines
+                    .indexOfLast { it.timeMs != null && it.timeMs <= pos }
+                    .coerceAtLeast(0)
+                if (idx != activeIndex) activeIndex = idx
+                delay(150)
+            }
+        }
+
+        // Smoothly centre the active line while the sheet is engaged.
+        val linePitchPx = with(density) { (LYRICS_LINE_HEIGHT + LYRICS_LINE_GAP).toPx() }
+        val lineHeightPx = with(density) { LYRICS_LINE_HEIGHT.toPx() }
+        val topPadPx = with(density) { LYRICS_TOP_PAD.toPx() }
+        LaunchedEffect(activeIndex, track.id, engaged, synced) {
+            if (engaged && synced && activeIndex >= 0 && scrollState.maxValue > 0) {
+                val target = (topPadPx + activeIndex * linePitchPx + lineHeightPx / 2f - viewportPx / 2f)
+                    .coerceIn(0f, scrollState.maxValue.toFloat())
+                if (kotlin.math.abs(target - scrollState.value) > lineHeightPx * 0.5f) {
+                    scrollState.animateScrollTo(target.roundToInt(), tween(320, easing = FastOutSlowInEasing))
+                }
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = WearsicDimens.ScreenPaddingH),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .verticalScroll(scrollState),
         ) {
-            // Weighted top space keeps the artwork slightly above centre —
-            // the composition reads as a disc with text beneath it.
-            Spacer(modifier = Modifier.weight(0.7f))
-
-            key(track.id) {
-            ArtworkDisc(
-                artworkUrl = track.artworkUrl,
-                hasTrack = hasTrack,
-                progress = progress,
-                colors = colors,
-                size = discSize,
-                rotateArtwork = rotateArtwork,
-                onClick = onOpenAlbum?.let { { it(track) } },
-                // Drag the disc along its ring to scrub: angular position
-                // maps to the track duration (top = 0, clockwise). Falls
-                // back to the transport buttons when duration is unknown.
-                modifier = Modifier
-                    .wearsicEntrance(fromScale = 0.90f, riseDp = 10f)
-                    .pointerInput(hasTrack, track.id, durationMs) {
-                        if (!hasTrack || durationMs <= 0L) return@pointerInput
-                        detectDragGestures(
-                            onDragStart = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) },
-                            onDrag = { change, _ ->
-                                change.consume()
-                                val sizePx = size.width.toFloat()
-                                val cx = sizePx / 2f
-                                val cy = size.height.toFloat() / 2f
-                                val dx = change.position.x - cx
-                                val dy = change.position.y - cy
-                                val rad = kotlin.math.atan2(dy, dx)
-                                // -90° (up) = 0: clockwise fraction.
-                                val frac = ((rad * 180f / kotlin.math.PI.toFloat()) + 90f + 360f) % 360f / 360f
-                                onSeekTo((durationMs * frac).toLong().coerceIn(0L, durationMs))
-                            }
-                        )
-                    }
-            )
-            }
-
-            Spacer(modifier = Modifier.height(if (compact) 4.dp else 8.dp))
-
-            // Single line, always. A long title used to wrap to two lines,
-            // which pushed the artist line down and clipped at the curved
-            // edge; now the full name slides sideways instead.
-            WearsicMarqueeText(
-                text = if (hasTrack) track.title else "Nothing playing",
-                color = Color.White,
-                fontSize = if (compact) 14.sp else 15.sp,
-                lineHeight = if (compact) 16.sp else 18.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = (-0.2).sp,
+            // ── Player block: exactly one viewport tall ───────────────────
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .wearsicEntrance(delayMillis = 50, fromScale = 0.98f, riseDp = 6f)
-            )
+                    .height(viewportHeight)
+                    .padding(horizontal = WearsicDimens.ScreenPaddingH),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Spacer(modifier = Modifier.weight(0.7f))
 
-            // One line: artist · elapsed/total. The time segment is dropped
-            // when the server reported no duration — "Artist · 1:04 / --:--"
-            // read as noise — and a blank artist never leaves a dangling "·".
-            val subtitle = when {
-                !hasTrack -> "Pick a song from Library"
-                else -> listOf(
-                    track.artist.trim(),
-                    if (durationMs > 0L) "${formatTime(positionMs)} / ${formatTime(durationMs)}" else ""
-                ).filter { it.isNotBlank() }.joinToString(" · ")
+                key(track.id) {
+                ArtworkDisc(
+                    artworkUrl = track.artworkUrl,
+                    hasTrack = hasTrack,
+                    progress = progress,
+                    colors = colors,
+                    size = discSize,
+                    rotateArtwork = rotateArtwork,
+                    onClick = onOpenAlbum?.let { { it(track) } },
+                    // Drag the disc along its ring to scrub: angular position
+                    // maps to the track duration (top = 0, clockwise). Falls
+                    // back to the transport buttons when duration is unknown.
+                    modifier = Modifier
+                        .wearsicEntrance(fromScale = 0.90f, riseDp = 10f)
+                        .pointerInput(hasTrack, track.id, durationMs) {
+                            if (!hasTrack || durationMs <= 0L) return@pointerInput
+                            detectDragGestures(
+                                onDragStart = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val sizePx = size.width.toFloat()
+                                    val cx = sizePx / 2f
+                                    val cy = size.height.toFloat() / 2f
+                                    val dx = change.position.x - cx
+                                    val dy = change.position.y - cy
+                                    val rad = kotlin.math.atan2(dy, dx)
+                                    // -90° (up) = 0: clockwise fraction.
+                                    val frac = ((rad * 180f / kotlin.math.PI.toFloat()) + 90f + 360f) % 360f / 360f
+                                    onSeekTo((durationMs * frac).toLong().coerceIn(0L, durationMs))
+                                }
+                            )
+                        }
+                )
+                }
+
+                Spacer(modifier = Modifier.height(if (compact) 4.dp else 8.dp))
+
+                // Single line, always. A long title used to wrap to two lines,
+                // which pushed the artist line down and clipped at the curved
+                // edge; now the full name slides sideways instead.
+                WearsicMarqueeText(
+                    text = if (hasTrack) track.title else "Nothing playing",
+                    color = Color.White,
+                    fontSize = if (compact) 14.sp else 15.sp,
+                    lineHeight = if (compact) 16.sp else 18.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.2).sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .wearsicEntrance(delayMillis = 50, fromScale = 0.98f, riseDp = 6f)
+                )
+
+                // One line: artist · elapsed/total. The time segment is dropped
+                // when the server reported no duration — "Artist · 1:04 / --:--"
+                // read as noise — and a blank artist never leaves a dangling "·".
+                val subtitle = when {
+                    !hasTrack -> "Pick a song from Library"
+                    else -> listOf(
+                        track.artist.trim(),
+                        if (durationMs > 0L) "${formatTime(positionMs)} / ${formatTime(durationMs)}" else ""
+                    ).filter { it.isNotBlank() }.joinToString(" · ")
+                }
+
+                Text(
+                    text = subtitle,
+                    color = Color.White.copy(alpha = 0.70f),
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .padding(top = 3.dp)
+                        .wearsicEntrance(delayMillis = 90, fromScale = 0.98f, riseDp = 6f)
+                )
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                TransportRow(
+                    isPlaying = isPlaying,
+                    isBuffering = isBuffering,
+                    progress = progress,
+                    playSize = playSize,
+                    onTogglePlayPause = onTogglePlayPause,
+                    onSkipPrevious = onSkipPrevious,
+                    onSkipNext = onSkipNext,
+                    colors = colors,
+                    enabled = hasTrack
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Pull-up affordance; fades once the sheet is engaged.
+                androidx.compose.animation.AnimatedVisibility(visible = !engaged) {
+                    Text(
+                        text = "↑ Lyrics",
+                        color = Color.White.copy(alpha = 0.32f),
+                        fontSize = 10.sp,
+                        letterSpacing = 1.2.sp,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(2.dp))
             }
 
-            Text(
-                text = subtitle,
-                color = Color.White.copy(alpha = 0.70f),
-                fontSize = 11.sp,
-                lineHeight = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .padding(top = 3.dp)
-                    .wearsicEntrance(delayMillis = 90, fromScale = 0.98f, riseDp = 6f)
+            // ── Lyrics sheet (revealed by scrolling up) ───────────────────
+            LyricsSheet(
+                lyricsState = lyricsState,
+                activeIndex = activeIndex,
+                hasTrack = hasTrack,
+                onRetry = onRetryLyrics,
+                modifier = Modifier.padding(horizontal = WearsicDimens.ScreenPaddingH),
             )
 
-            Spacer(modifier = Modifier.weight(1f))
-
-            TransportRow(
-                isPlaying = isPlaying,
-                isBuffering = isBuffering,
-                progress = progress,
-                playSize = playSize,
-                onTogglePlayPause = onTogglePlayPause,
-                onSkipPrevious = onSkipPrevious,
-                onSkipNext = onSkipNext,
-                colors = colors,
-                enabled = hasTrack
-            )
-
-            // Room for the overlaid page indicator in the safe area.
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(LYRICS_BOTTOM_PAD))
         }
     }
 }
 
+@Composable
+private fun LyricsSheet(
+    lyricsState: LyricsViewModel.LyricsUiState,
+    activeIndex: Int,
+    hasTrack: Boolean,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = "Lyrics",
+            color = Color.White.copy(alpha = 0.9f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.5.sp,
+            modifier = Modifier.padding(top = 16.dp, bottom = 14.dp),
+        )
+
+        when {
+            !hasTrack -> {
+                LyricsPlaceholder("No song playing", isError = false, onRetry = null)
+            }
+            lyricsState.isLoading -> {
+                LyricsLoading()
+            }
+            lyricsState.errorMessage != null -> {
+                LyricsPlaceholder(
+                    lyricsState.errorMessage ?: "Could not load lyrics",
+                    isError = true,
+                    onRetry = onRetry,
+                )
+            }
+            lyricsState.mode == LyricsMode.Unavailable -> {
+                LyricsPlaceholder("No lyrics found for this song", isError = false, onRetry = onRetry)
+            }
+            lyricsState.mode == LyricsMode.Plain -> {
+                lyricsState.lines.forEach { line ->
+                    Text(
+                        text = line.text,
+                        color = Color.White.copy(alpha = 0.62f),
+                        fontSize = 14.sp,
+                        lineHeight = 22.sp,
+                        modifier = Modifier.padding(bottom = 10.dp),
+                    )
+                }
+                LyricsSourceTag(lyricsState.source)
+            }
+            else -> {
+                // Synced rows: highlight the active line, dim the rest.
+                lyricsState.lines.forEachIndexed { index, line ->
+                    SyncedLyricLine(text = line.text, active = index == activeIndex)
+                }
+                LyricsSourceTag(lyricsState.source)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncedLyricLine(text: String, active: Boolean) {
+    val alpha by animateFloatAsState(if (active) 1f else 0.38f, tween(260), label = "lyricAlpha")
+    val fontSize by animateFloatAsState(if (active) 17f else 14f, tween(260), label = "lyricSize")
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(LYRICS_LINE_HEIGHT),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = Color.White.copy(alpha = alpha),
+            fontSize = fontSize.sp,
+            fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Normal,
+            lineHeight = 20.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun LyricsLoading() {
+    Box(
+        modifier = Modifier.fillMaxWidth().height(160.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(modifier = Modifier.size(28.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "Loading lyrics…",
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LyricsPlaceholder(message: String, isError: Boolean, onRetry: (() -> Unit)?) {
+    Box(
+        modifier = Modifier.fillMaxWidth().height(170.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector = if (isError) Icons.Rounded.Warning else Icons.Rounded.MusicNote,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.45f),
+                modifier = Modifier.size(30.dp),
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = message,
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+            )
+            if (onRetry != null) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .wearsicClickable(onClick = onRetry)
+                        .padding(horizontal = 18.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = "Retry",
+                        color = LocalWearsicAccent.current,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LyricsSourceTag(source: String?) {
+    if (source != null) {
+        Text(
+            text = "via $source",
+            color = Color.White.copy(alpha = 0.3f),
+            fontSize = 10.sp,
+            modifier = Modifier.padding(top = 6.dp, bottom = 12.dp),
+        )
+    }
+}
 /**
  * The album art as a circular focal point, wrapped by the playback progress
  * ring and a soft radial accent tint. One draw pass for ring + tint; the

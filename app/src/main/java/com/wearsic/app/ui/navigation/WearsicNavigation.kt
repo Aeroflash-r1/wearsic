@@ -119,6 +119,7 @@ fun WearsicApp(
     // composition would render the initial empty shelf forever, because it
     // never recomposes when the flow emits.
     val recommendationsState by libraryVM.recommendationsState.collectAsStateWithLifecycle()
+    val lyricsState by playerViewModel.lyricsState.collectAsStateWithLifecycle()
 
     // Derived projections: recompute whenever the flow emits, but only
     // NOTIFY their readers when the projected value actually changes. The
@@ -128,6 +129,12 @@ fun WearsicApp(
     // no-op emissions an hour into zero recompositions.
     val stablePlaybackState by remember {
         derivedStateOf { playbackStateHolder.value.copy(currentPositionMs = 0L) }
+    }
+
+    // Lyric results belong to one track; drop them the moment the track
+    // changes so the next reveal starts clean (loading -> fetch).
+    LaunchedEffect(playbackStateHolder.value.currentTrack.id) {
+        playerViewModel.lyricsViewModel.invalidateIfStale(playbackStateHolder.value.currentTrack.id)
     }
 
     val currentTrackDownload by remember {
@@ -335,6 +342,15 @@ fun WearsicApp(
                                 )
                             }
                         }
+                    },
+                    // Scroll-up lyrics sheet: on-demand fetch (once per track),
+                    // retry from error/unavailable states.
+                    lyricsState = lyricsState,
+                    onRequestLyrics = {
+                        playerViewModel.lyricsViewModel.ensureLyrics(playbackStateHolder.value.currentTrack)
+                    },
+                    onRetryLyrics = {
+                        playerViewModel.lyricsViewModel.retry(playbackStateHolder.value.currentTrack)
                     }
                 )
             }

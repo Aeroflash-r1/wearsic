@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.Context
 import com.wearsic.app.R
 import com.wearsic.app.network.model.AlbumDto
+import com.wearsic.app.network.model.LyricsResponseDto
 import com.wearsic.app.network.model.PlaylistDto
 import com.wearsic.app.network.model.PlaylistWithTracksDto
 import com.wearsic.app.network.model.ReadyResponseDto
@@ -205,6 +206,17 @@ class WearsicMockApiClient(private val context: Context) : WearsicApiClient {
     ): Result<AlbumDto?> {
         delay(300)
         return Result.success(null)
+    }
+
+    override suspend fun getLyrics(
+        baseUrl: String,
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+    ): Result<LyricsResponseDto> {
+        delay(300)
+        return Result.success(LyricsResponseDto())
     }
 
     override suspend fun getPlaylistByUrl(baseUrl: String, url: String): Result<PlaylistWithTracksDto> {

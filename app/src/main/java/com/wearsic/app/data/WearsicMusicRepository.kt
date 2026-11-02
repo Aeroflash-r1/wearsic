@@ -3,6 +3,7 @@ package com.wearsic.app.data
 import android.content.Context
 import com.wearsic.app.model.Album
 import com.wearsic.app.model.DnsError
+import com.wearsic.app.model.Lyrics
 import com.wearsic.app.model.EmptyInputError
 import com.wearsic.app.model.HostUnreachableError
 import com.wearsic.app.model.HttpError
@@ -245,6 +246,13 @@ class WearsicMusicRepository(
         val currentUrl = getServerUrl()
         return httpApiClient.resolveTrackAlbum(currentUrl, track.id, track.title, track.artist)
             .map { it?.toDomainAlbum() }
+    }
+
+    /** Lyrics for a track (synced or plain); unavailable is not an error. */
+    suspend fun fetchLyrics(track: Track): Result<Lyrics> {
+        val currentUrl = getServerUrl()
+        return httpApiClient.getLyrics(currentUrl, track.id, track.title, track.artist, track.durationMs)
+            .map { it.toDomainLyrics() }
     }
 
     /**

@@ -465,7 +465,7 @@ private fun NowPlayingPage(
     onOpenAlbum: ((Track) -> Unit)? = null,
     onOpenLyrics: () -> Unit = {},
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().testTag("nowplaying_page_root")) {
         val compact = maxHeight < 236.dp
         // Slightly smaller discs: the lyrics pill now lives in the mid-band
         // below the subtitle, and the whole fixed stack must leave the two
@@ -1093,7 +1093,7 @@ private fun ActionsPage(
     val scope = rememberCoroutineScope()
     ScalingLazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize().wearsicRotaryScroll(listState, enabled = active),
+        modifier = Modifier.fillMaxSize().testTag("actions_page_root").wearsicRotaryScroll(listState, enabled = active),
         contentPadding = wearsicListContentPadding(PaddingValues(bottom = 44.dp)),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)

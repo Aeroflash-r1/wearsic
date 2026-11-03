@@ -461,7 +461,11 @@ private fun NowPlayingPage(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compact = maxHeight < 236.dp
-        val discSize: Dp = (maxWidth * 0.36f).coerceIn(if (compact) 56.dp else 64.dp, if (compact) 72.dp else 92.dp)
+        // Slightly smaller discs: the lyrics pill now lives in the mid-band
+        // below the subtitle, and the whole fixed stack must leave the two
+        // spacer weights alive on the tightest faces — borrowing a little
+        // disc diameter is the cheapest guarantee that NOTHING clips.
+        val discSize: Dp = (maxWidth * 0.34f).coerceIn(if (compact) 52.dp else 64.dp, if (compact) 64.dp else 80.dp)
         val playSize: Dp = if (compact) 48.dp else (maxWidth * 0.26f).coerceIn(50.dp, 60.dp)
 
         // ── Player block (full viewport; no outer scroll) ────────────────
@@ -542,8 +546,8 @@ private fun NowPlayingPage(
             WearsicMarqueeText(
                 text = if (hasTrack) track.title else "Nothing playing",
                 color = Color.White,
-                fontSize = if (compact) 14.sp else 15.sp,
-                lineHeight = if (compact) 16.sp else 18.sp,
+                fontSize = if (compact) 13.sp else 15.sp,
+                lineHeight = if (compact) 15.sp else 18.sp,
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = (-0.2).sp,
                 modifier = Modifier
@@ -575,6 +579,30 @@ private fun NowPlayingPage(
                     .wearsicEntrance(delayMillis = 90, fromScale = 0.98f, riseDp = 6f)
             )
 
+            // The GUARANTEED path into lyrics: a plain tap, placed in the
+            // readable mid-band — v1.9.41's bottom-edge pinning left the pill
+            // clipped beneath the round screen's masked zone on compact
+            // faces. Pull-up remains as a gesture; this button removes any
+            // skill requirement.
+            Spacer(modifier = Modifier.height(if (compact) 4.dp else 6.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.White.copy(alpha = 0.07f))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(50))
+                    .wearsicClickable(onClick = onOpenLyrics)
+                    .padding(horizontal = 12.dp, vertical = 3.dp)
+                    .testTag("lyrics_open_button"),
+            ) {
+                Text(
+                    text = "↑ Lyrics",
+                    color = Color.White.copy(alpha = 0.66f),
+                    fontSize = 10.sp,
+                    letterSpacing = 1.1.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
             Spacer(modifier = Modifier.weight(1f))
 
             TransportRow(
@@ -589,30 +617,7 @@ private fun NowPlayingPage(
                 enabled = hasTrack
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // The GUARANTEED path into lyrics: a plain tap. Pull-up remains
-            // as a gesture, but no gesture skill is required to reach the
-            // lyrics page any more.
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.White.copy(alpha = 0.07f))
-                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(50))
-                    .wearsicClickable(onClick = onOpenLyrics)
-                    .padding(horizontal = 14.dp, vertical = 5.dp)
-                    .testTag("lyrics_open_button"),
-            ) {
-                Text(
-                    text = "↑ Lyrics",
-                    color = Color.White.copy(alpha = 0.62f),
-                    fontSize = 11.sp,
-                    letterSpacing = 1.2.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(if (compact) 10.dp else 12.dp))
         }
     }
 }
@@ -795,15 +800,17 @@ internal fun LyricsFullscreen(
                                 .height(with(density) { halfBodyPx.toDp() })
                         )
 
+                        val bodyHeight = with(density) { bodyPx.toDp() }
                         when {
                             lyricsState.isLoading -> {
-                                LyricsLoading()
+                                LyricsLoading(bodyHeight)
                             }
                             lyricsState.errorMessage != null -> {
                                 LyricsPlaceholder(
                                     lyricsState.errorMessage ?: "Could not load lyrics",
                                     isError = true,
                                     onRetry = onRetry,
+                                    bodyHeight = bodyHeight,
                                 )
                             }
                             lyricsState.mode == com.wearsic.app.model.LyricsMode.Unavailable -> {
@@ -811,6 +818,7 @@ internal fun LyricsFullscreen(
                                     "No lyrics found for this song",
                                     isError = false,
                                     onRetry = onRetry,
+                                    bodyHeight = bodyHeight,
                                 )
                             }
                             lyricsState.mode == com.wearsic.app.model.LyricsMode.Plain -> {
@@ -875,9 +883,9 @@ private fun SyncedLyricLine(text: String, active: Boolean, activeColor: Color) {
 }
 
 @Composable
-private fun LyricsLoading() {
+private fun LyricsLoading(bodyHeight: Dp) {
     Box(
-        modifier = Modifier.fillMaxWidth().height(160.dp),
+        modifier = Modifier.fillMaxWidth().height(bodyHeight),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -893,9 +901,9 @@ private fun LyricsLoading() {
 }
 
 @Composable
-private fun LyricsPlaceholder(message: String, isError: Boolean, onRetry: (() -> Unit)?) {
+private fun LyricsPlaceholder(message: String, isError: Boolean, onRetry: (() -> Unit)?, bodyHeight: Dp) {
     Box(
-        modifier = Modifier.fillMaxWidth().height(170.dp),
+        modifier = Modifier.fillMaxWidth().height(bodyHeight),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {

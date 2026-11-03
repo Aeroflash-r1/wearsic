@@ -567,6 +567,22 @@ fun WearsicMarqueeText(
     gapDp: Int = 48,
     velocityDp: Int = 26
 ) {
+    // Short texts never overflow a watch face — rendering them through
+    // basicMarquee still keeps an infinite animation clock alive for as
+    // long as the text is on screen (a real heat source on a 300mAh
+    // battery). Gate it: static centered text unless it can actually
+    // overflow (≈18+ chars on a 454px round face).
+    val shouldMarquee = text.length > 18
+    val textModifier = if (shouldMarquee) {
+        modifier.basicMarquee(
+            iterations = Int.MAX_VALUE,
+            initialDelayMillis = startDelayMillis,
+            spacing = MarqueeSpacing(gapDp.dp),
+            velocity = velocityDp.dp
+        )
+    } else {
+        modifier
+    }
     Text(
         text = text,
         color = color,
@@ -577,15 +593,7 @@ fun WearsicMarqueeText(
         maxLines = 1,
         softWrap = false,
         textAlign = TextAlign.Center,
-        modifier = modifier.basicMarquee(
-            // Long titles loop; short ones never overflow so this never runs.
-            iterations = Int.MAX_VALUE,
-            initialDelayMillis = startDelayMillis,
-            // One gap between the end of the title and its restart, so the
-            // loop reads as "…full name | full name…" rather than a jump cut.
-            spacing = MarqueeSpacing(gapDp.dp),
-            velocity = velocityDp.dp
-        )
+        modifier = textModifier
     )
 }
 

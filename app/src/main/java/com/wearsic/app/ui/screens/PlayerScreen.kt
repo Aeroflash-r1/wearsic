@@ -8,6 +8,7 @@ import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.wear.compose.material3.CircularProgressIndicator
 import com.wearsic.app.model.LyricsMode
@@ -243,6 +244,12 @@ fun PlayerScreen(
             snapshotFlow { pagerState.currentPage }.collect { pageIndex = it }
         }
 
+        // Bezel on Now Playing flips pages. Accumulated raw rotary deltas
+        // cross a threshold per 45°-worth of rotation; direction follows the
+        // rotation. Deterministic: every notch does something visible, never
+        // a dead crown.
+        var rotaryFlipAccum by remember { mutableFloatStateOf(0f) }
+
         // Natural screen-open: a soft zoom + fade across ~220ms. Runs once
         // per entry, layer-only (no recomposition), so it reads as a smooth,
         // reliable push into the player.
@@ -318,6 +325,29 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(contentPadding)
+                    .onRotaryScrollEvent { event ->
+                        if (lyricsMode) {
+                            // Lyrics screen owns its own rotary scroll.
+                            false
+                        } else {
+                            rotaryFlipAccum += event.verticalScrollPixels
+                            // ~ one crown notch per flip (empirical 454px
+                            // face; deltas per notch ≈ 40-60px).
+                            val notch = 70f
+                            var flipped = false
+                            while (rotaryFlipAccum >= notch) {
+                                rotaryFlipAccum -= notch
+                                scope.launch { pagerState.scrollToPage((pageIndex + 1) % 2) }
+                                flipped = true
+                            }
+                            while (rotaryFlipAccum <= -notch) {
+                                rotaryFlipAccum += notch
+                                scope.launch { pagerState.scrollToPage((pageIndex + 1) % 2) }
+                                flipped = true
+                            }
+                            flipped || rotaryFlipAccum != 0f
+                        }
+                    }
             ) {
                 HorizontalPager(
                     state = pagerState,
@@ -584,41 +614,40 @@ private fun NowPlayingPage(
                 ).filter { it.isNotBlank() }.joinToString(" · ")
             }
 
-            Text(
-                text = subtitle,
-                color = Color.White.copy(alpha = 0.70f),
-                fontSize = 11.sp,
-                lineHeight = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
+            // The only lyrics affordance on Now Playing: a small, text-only
+            // "Lyrics" label sitting right after the time line — no pill, no
+            // bubble, no border. Pull-up still works too.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .padding(top = 3.dp)
+                    .fillMaxWidth()
                     .wearsicEntrance(delayMillis = 90, fromScale = 0.98f, riseDp = 6f)
-            )
-
-            // The GUARANTEED path into lyrics: a plain tap, placed in the
-            // readable mid-band — v1.9.41's bottom-edge pinning left the pill
-            // clipped beneath the round screen's masked zone on compact
-            // faces. Pull-up remains as a gesture; this button removes any
-            // skill requirement.
-            Spacer(modifier = Modifier.height(if (compact) 4.dp else 6.dp))
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.White.copy(alpha = 0.07f))
-                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(50))
-                    .wearsicClickable(onClick = onOpenLyrics)
-                    .padding(horizontal = 12.dp, vertical = 3.dp)
-                    .testTag("lyrics_open_button"),
             ) {
                 Text(
-                    text = "↑ Lyrics",
-                    color = Color.White.copy(alpha = 0.66f),
-                    fontSize = 10.sp,
-                    letterSpacing = 1.1.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    text = subtitle,
+                    color = Color.White.copy(alpha = 0.70f),
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(top = 3.dp),
                 )
+                if (hasTrack) {
+                    Text(
+                        text = "Lyrics",
+                        color = if (colors.fromArtwork) colors.accent else Color.White.copy(alpha = 0.75f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.4.sp,
+                        modifier = Modifier
+                            .padding(start = 8.dp, top = 3.dp, end = 2.dp)
+                            .wearsicClickable(onClick = onOpenLyrics)
+                            .testTag("lyrics_open_button"),
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.weight(1f))
@@ -737,14 +766,10 @@ internal fun LyricsFullscreen(
                     )
                 }
             }
-            lyricsState.source?.let {
-                Text(
-                    text = "via $it",
-                    color = Color.White.copy(alpha = 0.32f),
-                    fontSize = 9.sp,
-                    modifier = Modifier.padding(start = 16.dp, bottom = 2.dp),
-                )
-            }
+            // No source attribution line: on a 454px round face it pushed
+            // into the body and read as an edge-cut "lyrics by …" label.
+            // The "Lyrics" title + track context above are all the header
+            // needs.
 
             // The lyrics body — a BoxWithConstraints so centre math uses the
             // REAL body height, not the whole screen.
@@ -765,10 +790,15 @@ internal fun LyricsFullscreen(
                     val target = lyricsCenterScroll(activeIndex, bodyPx, pitchPx, linePx)
                         .coerceIn(0, scrollState.maxValue)
                     if (kotlin.math.abs(target - scrollState.value) > pitchPx * 0.55f) {
-                        scrollState.animateScrollTo(
-                            target,
-                            tween(340, easing = FastOutSlowInEasing),
-                        )
+                        // Defensive: a racing manual scroll/disposal must
+                        // never crash out of the scroll math (real-device
+                        // reports of a crash while scrolling during load).
+                        runCatching {
+                            scrollState.animateScrollTo(
+                                target,
+                                tween(340, easing = FastOutSlowInEasing),
+                            )
+                        }
                     }
                 }
 

@@ -812,15 +812,14 @@ internal fun LyricsFullscreen(
                             .fillMaxSize()
                             .verticalScroll(scrollState),
                     ) {
-                        Spacer(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(with(density) { halfBodyPx.toDp() })
-                        )
-
                         val bodyHeight = with(density) { bodyPx.toDp() }
                         when {
                             lyricsState.isLoading -> {
+                                // Loading/placeholder fill the WHOLE body —
+                                // no half-body top pad (that pad belongs to
+                                // line modes only; stacking it here made the
+                                // content 1.5× the viewport and pinned the
+                                // text at the bottom edge).
                                 LyricsLoading(bodyHeight)
                             }
                             lyricsState.errorMessage != null -> {
@@ -854,6 +853,11 @@ internal fun LyricsFullscreen(
                                 }
                             }
                             else -> {
+                                Spacer(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(with(density) { halfBodyPx.toDp() })
+                                )
                                 lyricsState.lines.forEachIndexed { index, line ->
                                     SyncedLyricLine(
                                         text = line.text,

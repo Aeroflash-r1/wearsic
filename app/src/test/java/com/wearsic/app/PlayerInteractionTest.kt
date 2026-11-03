@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToString
 import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track

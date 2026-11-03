@@ -369,7 +369,13 @@ fun PlayerScreen(
                         if (pagerState.currentPage == 0) "Show player actions" else "Show now playing"
                 }
                 .wearsicClickable {
-                    scope.launch { pagerState.animateScrollToPage(1 - pagerState.currentPage) }
+                    scope.launch {
+                        // targetPage = the destination of any in-flight
+                        // settle, so a fast double-tap mid-slide still flips
+                        // pages in the direction the taps intend instead of
+                        // bouncing on the stale settled page.
+                        pagerState.animateScrollToPage((pagerState.targetPage + 1) % 2)
+                    }
                 }
                 .testTag("player_page_switch"),
             verticalArrangement = Arrangement.spacedBy(5.dp),

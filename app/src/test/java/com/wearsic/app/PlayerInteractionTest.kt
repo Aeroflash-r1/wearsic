@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -58,6 +59,15 @@ class PlayerInteractionTest {
         composeTestRule.onNodeWithTag("player_page_switch").performClick()
         composeTestRule.onNodeWithTag("player_favorite_button").assertExists()
         composeTestRule.onNodeWithTag("player_page_switch").performClick()
+        // The return flip disposes page 1 and REcomposes page 0 from scratch
+        // in the same frame batch; don't race that recomposition — wait for
+        // the transport nodes to (re)materialize before asserting.
+        composeTestRule.waitUntil(timeoutMillis = 3_000) {
+            composeTestRule
+                .onAllNodesWithTag("player_play_pause_button")
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
         composeTestRule.onNodeWithTag("player_play_pause_button").assertExists()
     }
 

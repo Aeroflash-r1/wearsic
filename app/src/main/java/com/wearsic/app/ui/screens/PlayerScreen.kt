@@ -6,6 +6,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.wear.compose.material3.CircularProgressIndicator
@@ -231,6 +232,17 @@ fun PlayerScreen(
 
         val pagerState = rememberPagerState(pageCount = { 2 })
 
+        // The page dots flip THROUGH THIS MIRROR, not through the pager's
+        // own currentPage/targetPage reads: those can lag the real scroll
+        // position (Robolectric and certain devices report a settled page
+        // as current while the offset is elsewhere), which made a flip
+        // compute "already there" and no-op. pageIndex is the single source
+        // of truth, kept in sync with the pager by snapshotFlow.
+        var pageIndex by remember { mutableIntStateOf(0) }
+        LaunchedEffect(pagerState) {
+            snapshotFlow { pagerState.currentPage }.collect { pageIndex = it }
+        }
+
         // Natural screen-open: a soft zoom + fade across ~220ms. Runs once
         // per entry, layer-only (no recomposition), so it reads as a smooth,
         // reliable push into the player.
@@ -366,15 +378,15 @@ fun PlayerScreen(
                 .widthIn(min = WearsicDimens.TouchTarget)
                 .semantics {
                     contentDescription =
-                        if (pagerState.currentPage == 0) "Show player actions" else "Show now playing"
+                        if (pageIndex == 0) "Show player actions" else "Show now playing"
                 }
                 .wearsicClickable {
                     scope.launch {
-                        // targetPage = the destination of any in-flight
-                        // settle, so a fast double-tap mid-slide still flips
-                        // pages in the direction the taps intend instead of
-                        // bouncing on the stale settled page.
-                        pagerState.animateScrollToPage((pagerState.targetPage + 1) % 2)
+                        // Flip from the MIRROR (see pageIndex above): the
+                        // pager's own reads can lag the settled page and
+                        // make this a no-op. scrollToPage snaps instantly —
+                        // deterministic, and a crisp toggle on a watch.
+                        pagerState.scrollToPage((pageIndex + 1) % 2)
                     }
                 }
                 .testTag("player_page_switch"),
@@ -382,7 +394,7 @@ fun PlayerScreen(
             horizontalAlignment = Alignment.End
         ) {
             repeat(2) { index ->
-                val active = pagerState.currentPage == index
+                val active = pageIndex == index
                 Box(
                     modifier = Modifier
                         .padding(end = 3.dp)

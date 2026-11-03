@@ -10,8 +10,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.printToString
+import androidx.compose.ui.semantics.SemanticsProperties
 import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.components.WearsicSongRow
@@ -92,64 +91,26 @@ class PlayerInteractionTest {
             val fav = count("player_favorite_button")
             val np = count("nowplaying_page_root")
             val ac = count("actions_page_root")
-            val ly = count("lyrics_screen")
-            val pill = count("lyrics_open_button")
             val dots = count("player_page_switch")
-            println(
-                "PAGEDIAG $step: playPause=$pp favorite=$fav nowplayingRoot=$np " +
-                    "actionsRoot=$ac lyrics=$ly pill=$pill dots=$dots"
-            )
+            val cd = try {
+                composeTestRule.onNodeWithTag("player_page_switch")
+                    .fetchSemanticsNode().config[SemanticsProperties.ContentDescription].joinToString()
+            } catch (e: Exception) { "n/a" }
+            println("PAGEDIAG $step: playPause=$pp favorite=$fav nowplayingRoot=$np actionsRoot=$ac dots=$dots cd=[$cd]")
         }
 
-        // Deterministic clock: no implicit advancement, every pump explicit.
-        composeTestRule.mainClock.autoAdvance = false
-        composeTestRule.waitForIdle()
         diag("t0 composed")
-
         composeTestRule.onNodeWithTag("player_page_switch").performClick()
-        composeTestRule.mainClock.advanceTimeBy(300)
-        composeTestRule.waitForIdle()
-        diag("click1 +300ms")
-        composeTestRule.mainClock.advanceTimeBy(1_000)
-        composeTestRule.waitForIdle()
-        diag("click1 +1300ms")
-        composeTestRule.mainClock.advanceTimeBy(3_000)
-        composeTestRule.waitForIdle()
-        diag("click1 +4300ms (settled?)")
-
-        composeTestRule.onNodeWithTag("player_page_switch").performClick()
-        composeTestRule.mainClock.advanceTimeBy(300)
-        composeTestRule.waitForIdle()
-        diag("click2 +300ms")
-        composeTestRule.mainClock.advanceTimeBy(1_000)
-        composeTestRule.waitForIdle()
-        diag("click2 +1300ms")
-        composeTestRule.mainClock.advanceTimeBy(3_000)
-        composeTestRule.waitForIdle()
-        diag("click2 +4300ms")
-        composeTestRule.mainClock.advanceTimeBy(10_000)
-        composeTestRule.waitForIdle()
-        diag("click2 +14300ms")
-
-        // Third interaction: does a further tap unstick it?
-        composeTestRule.onNodeWithTag("player_page_switch").performClick()
-        composeTestRule.mainClock.advanceTimeBy(2_000)
-        composeTestRule.waitForIdle()
-        diag("click3 +2000ms")
-
-        // What does the pager think? The dots' contentDescription encodes it
-        // and is visible in both tree dumps below.
-        println("PAGEDIAG merged tree:")
-        println(composeTestRule.onRoot(false).printToString())
-        println("PAGEDIAG unmerged tree:")
-        println(composeTestRule.onRoot(true).printToString())
-
-        composeTestRule.onAllNodesWithTag("player_play_pause_button", useUnmergedTree = true)
-            .fetchSemanticsNodes()
-            .isNotEmpty()
-        if (count("player_play_pause_button") == 0) {
-            throw AssertionError("PAGEDIAG: transport never returned (see PAGEDIAG lines + trees above)")
+        composeTestRule.waitUntil(timeoutMillis = 3_000) {
+            count("actions_page_root") == 1
         }
+        diag("after click1 (actions visible)")
+        composeTestRule.onNodeWithTag("player_page_switch").performClick()
+        composeTestRule.waitUntil(timeoutMillis = 3_000) {
+            count("nowplaying_page_root") == 1
+        }
+        diag("after click2 (nowplaying visible)")
+        composeTestRule.onNodeWithTag("player_play_pause_button").assertExists()
     }
 
     @Test

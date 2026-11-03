@@ -15,8 +15,13 @@ import kotlin.test.assertTrue
  */
 class AlbumResolveTest {
 
-    private fun row(videoId: String, title: String, artist: String, album: String? = null) =
-        YtmTrack(videoId = videoId, title = title, artist = artist, album = album)
+    private fun row(
+        videoId: String,
+        title: String,
+        artist: String,
+        album: String? = null,
+        durationMs: Long? = null,
+    ) = YtmTrack(videoId = videoId, title = title, artist = artist, album = album, durationMs = durationMs)
 
     private fun album(id: String, name: String, uploader: String) =
         AlbumDto(id = id, name = name, uploader = uploader)
@@ -73,6 +78,24 @@ class AlbumResolveTest {
         assertNull(orch().bestAlbumRow(rows, "Totally Different", "Artist"))
     }
 
+    @Test
+    fun `bestAlbumRow rejects a duration-mismatched impersonator`() {
+        // Same title + artist, but the row is a sped-up/8D remix — length
+        // gives it away once the caller supplies its known duration.
+        val rows = listOf(
+            row("h1", "Enter Sandman", "Metallica", album = "Metallica", durationMs = 121_000),
+        )
+        assertNull(orch().bestAlbumRow(rows, "Enter Sandman", "Metallica", durationMs = 331_000))
+    }
+
+    @Test
+    fun `bestAlbumRow accepts a duration-matching row`() {
+        val rows = listOf(
+            row("h2", "Enter Sandman", "Metallica", album = "Metallica", durationMs = 331_000),
+        )
+        assertEquals("h2", orch().bestAlbumRow(rows, "Enter Sandman", "Metallica", durationMs = 334_000)?.videoId)
+    }
+
     // ---------------- bestAlbumMatch ----------------
 
     @Test
@@ -98,6 +121,32 @@ class AlbumResolveTest {
     @Test
     fun `bestAlbumMatch returns null on empty album list`() {
         assertNull(orch().bestAlbumMatch("Nevermind", emptyList(), "Nirvana"))
+    }
+
+    @Test
+    fun `bestAlbumMatch strips the - Topic suffix from uploaders`() {
+        val albums = listOf(
+            album("https://playlist/x", "Nevermind", "Nirvana - Topic"),
+        )
+        assertEquals("https://playlist/x", orch().bestAlbumMatch("Nevermind", albums, "Nirvana")?.id)
+    }
+
+    @Test
+    fun `bestAlbumMatch rejects a different album by the same artist`() {
+        // A "Greatest Hits" compilation by the same artist must not stand in
+        // for the song's actual album.
+        val albums = listOf(
+            album("https://playlist/gh", "Greatest Hits", "Nirvana"),
+        )
+        assertNull(orch().bestAlbumMatch("Nevermind", albums, "Nirvana"))
+    }
+
+    @Test
+    fun `bestAlbumMatch accepts a remastered name variant of the query album`() {
+        val albums = listOf(
+            album("https://playlist/rm", "Nevermind (Remastered)", "Nirvana"),
+        )
+        assertEquals("https://playlist/rm", orch().bestAlbumMatch("Nevermind", albums, "Nirvana")?.id)
     }
 
     // ---------------- resolveAlbum (two-step, offline) ----------------

@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -175,6 +176,16 @@ fun QueueScreen(
         }
     }
 
+    // LIVE views consumed by the root drag gesture below. The gesture lambda
+    // is created once; without these it captures a stale queue/key map, and
+    // keyed pointerInput(...) restarts on every playback emission — killing
+    // grabs mid-drag (the "sticks after a few rows" bug). Reads through these
+    // delegates always see the latest values, and the gesture key never
+    // changes during a drag.
+    val liveQueue by rememberUpdatedState(queue)
+    val liveIndexByKey by rememberUpdatedState(queueIndexByKey)
+    val liveCurrentIndex by rememberUpdatedState(currentIndex)
+
     var dragIndex by remember { mutableStateOf<Int?>(null) }
     // Viewport-space centre of the lifted row at the moment it lifted.
     var dragStartCentrePx by remember { mutableFloatStateOf(0f) }
@@ -196,13 +207,13 @@ fun QueueScreen(
     // live: the pointer-input coroutine holds lambdas from the composition
     // that started the gesture.
     fun dropTargetFor(from: Int, centrePx: Float): Int {
-        val last = queue.lastIndex
+        val last = liveQueue.lastIndex
         if (last < 1) return from
         var best = from
         var bestDistance = Float.MAX_VALUE
         for (item in listState.layoutInfo.visibleItemsInfo) {
             val key = item.key as? String ?: continue
-            val queueIndex = queueIndexByKey[key] ?: continue
+            val queueIndex = liveIndexByKey[key] ?: continue
             val distance = kotlin.math.abs(item.offset + item.size / 2f - centrePx)
             if (distance < bestDistance) {
                 bestDistance = distance
@@ -302,7 +313,9 @@ fun QueueScreen(
         // by track, so for one frame the lifted index would otherwise point at
         // a different song than the one under the finger.
         resetDrag()
-        if (to != from && to in queue.indices) onMoveItem(from, to)
+        if (to != from && from in liveQueue.indices && to in 1..liveQueue.lastIndex) {
+            onMoveItem(from, to)
+        }
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
@@ -320,12 +333,14 @@ fun QueueScreen(
         }
     }
 
-    // Auto-scroll loop: runs only while a row is lifted. Each frame it
-    // applies the current speed (0 = idle) and re-evaluates the drop slot
-    // under the moving list.
+    // Auto-scroll loop: runs only while a row is lifted. One dispatch per
+    // FRAME, paced by withFrameNanos — the pacing suspension is MANDATORY:
+    // a bare `continue` on idle spins the coroutine non-stop at 100% CPU and
+    // wedges every gesture on the screen (the v1.9.41 freeze/crash).
     LaunchedEffect(dragIndex) {
         if (dragIndex == null) return@LaunchedEffect
         while (isActive) {
+            withFrameNanos { }
             val speed = autoScrollPxPerFrame
             if (speed == 0f) continue
             val consumed = listState.dispatchRawDelta(speed)
@@ -352,7 +367,7 @@ fun QueueScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(queue.size, rowKeys, currentIndex) {
+                .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                         val startPos = down.position
@@ -380,12 +395,18 @@ fun QueueScreen(
                             startPos.y >= it.offset && startPos.y <= it.offset + it.size
                         }
                         val key = row?.key as? String
-                        val idx = key?.let { queueIndexByKey[it] }
-                        if (idx == null || idx == currentIndex) {
+                        val idx = key?.let { liveIndexByKey[it] }
+                        if (idx == null || idx == liveCurrentIndex) {
                             // Header / toggles / now-playing card: not draggable.
                             return@awaitEachGesture
                         }
 
+                        if (listState.isScrollInProgress) {
+                            // Momentum from a pre-hold swipe may still be
+                            // moving the list; grabbing mid-momentum fight the
+                            // animation and both lose. Release cleanly instead.
+                            return@awaitEachGesture
+                        }
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         dragStartCentrePx = row!!.offset + row.size / 2f
                         dragStepPx = (row.size + rowSpacingPx).toFloat()

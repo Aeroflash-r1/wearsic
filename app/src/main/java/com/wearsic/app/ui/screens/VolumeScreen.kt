@@ -27,14 +27,11 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -42,7 +39,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -77,7 +73,7 @@ import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.rememberSystemVolumeState
-import com.wearsic.app.ui.util.rotaryVolumeStep
+import com.wearsic.app.ui.util.wearsicRotaryScroll
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import kotlin.math.roundToInt
@@ -109,7 +105,6 @@ fun VolumeScreen(
     val context = LocalContext.current
     val volume = rememberSystemVolumeState()
     val haptic = LocalHapticFeedback.current
-    val focusRequester = remember { FocusRequester() }
     val listState = rememberScalingLazyListState()
 
     // The playback state reports the real Bluetooth product name when one is
@@ -118,15 +113,6 @@ fun VolumeScreen(
     val isHeadphonesActive = currentOutputDevice.isNotBlank() &&
         !currentOutputDevice.equals("Watch Speaker", ignoreCase = true)
     val activeDeviceLabel = if (isHeadphonesActive) currentOutputDevice else "Watch Speaker"
-
-    // Crown focus: needed once for onRotaryScrollEvent to receive events.
-    LaunchedEffect(Unit) {
-        try {
-            focusRequester.requestFocus()
-        } catch (_: Exception) {
-            // No focusable window yet — buttons remain fully usable.
-        }
-    }
 
     ScreenScaffold(
         scrollState = listState,
@@ -139,18 +125,7 @@ fun VolumeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .wearsicEntrance()
-                .focusRequester(focusRequester)
-                .onRotaryScrollEvent { event ->
-                    val step = rotaryVolumeStep(event.verticalScrollPixels)
-                    if (step != 0 && volume.isAvailable) {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        volume.step(step)
-                        true
-                    } else {
-                        false
-                    }
-                }
-                .focusable(),
+                .wearsicRotaryScroll(listState),
             contentPadding = wearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -205,18 +180,6 @@ fun VolumeScreen(
                         size = 40.dp,
                         iconSize = 20.dp,
                         testTag = "volume_increase_button"
-                    )
-                }
-            }
-
-            if (volume.isAvailable) {
-                item {
-                    Text(
-                        text = "Turn the crown to adjust",
-                        color = WearsicTextMuted,
-                        fontSize = 10.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }

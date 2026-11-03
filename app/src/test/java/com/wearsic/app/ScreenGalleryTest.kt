@@ -15,7 +15,11 @@ import com.wearsic.app.model.Playlist
 import com.wearsic.app.model.Track
 import com.wearsic.app.network.model.ConnectionTestState
 import com.wearsic.app.network.model.ServerHealthDto
+import com.wearsic.app.model.LyricLine
+import com.wearsic.app.model.LyricsMode
 import com.wearsic.app.ui.components.WearsicTrackActionSheet
+import com.wearsic.app.ui.screens.LyricsFullscreen
+import com.wearsic.app.ui.viewmodel.LyricsViewModel
 import com.wearsic.app.ui.screens.AlbumsScreen
 import com.wearsic.app.ui.screens.ArtistsScreen
 import com.wearsic.app.ui.screens.DownloadsScreen
@@ -327,6 +331,58 @@ class ScreenGalleryTest {
                 latencyMs = 38,
                 checkedAtMillis = 0L
             )
+        )
+    }
+
+    // ── Lyrics (fullscreen lock page) ───────────────────────────────────────
+
+    private val lyricLines = listOf(
+        "Look at the stars", "Look how they shine for you",
+        "And everything you do", "Yeah, they were all yellow",
+        "I came along", "I wrote a song for you",
+        "And all the things you do", "And it was called Yellow"
+    ).mapIndexed { i, text -> LyricLine(timeMs = i * 4200L, text = text) }
+
+    @Test
+    fun lyrics_synced_activeLineCentered() = shoot("19-lyrics-synced") {
+        // activeIndex 3 of 8: the highlighted row must render (visually
+        // verifiable) dead-center of the round face.
+        LyricsFullscreen(
+            track = tracks[3],
+            lyricsState = LyricsViewModel.LyricsUiState(
+                trackId = tracks[3].id,
+                mode = LyricsMode.Synced,
+                source = "LRCLIB",
+                lines = lyricLines,
+            ),
+            activeIndex = 3,
+            scrollState = androidx.compose.foundation.rememberScrollState(),
+            colors = com.wearsic.app.ui.util.ArtworkColors.Default,
+            onExit = {}, onRetry = {},
+        )
+    }
+
+    @Test
+    fun lyrics_unavailable() = shoot("20-lyrics-unavailable") {
+        LyricsFullscreen(
+            track = tracks[1],
+            lyricsState = LyricsViewModel.LyricsUiState(trackId = tracks[1].id, mode = LyricsMode.Unavailable),
+            activeIndex = -1,
+            scrollState = androidx.compose.foundation.rememberScrollState(),
+            colors = com.wearsic.app.ui.util.ArtworkColors.Default,
+            onExit = {}, onRetry = {},
+        )
+    }
+
+    @Test
+    fun lyrics_loading() = shoot("21-lyrics-loading") {
+        LyricsFullscreen(
+            track = tracks[2],
+            lyricsState = LyricsViewModel.LyricsUiState(trackId = tracks[2].id, isLoading = true),
+            activeIndex = -1,
+            scrollState = androidx.compose.foundation.rememberScrollState(),
+            colors = com.wearsic.app.ui.util.ArtworkColors.Default,
+            onExit = {}, onRetry = {},
         )
     }
 

@@ -545,7 +545,12 @@ class MetadataSearchOrchestrator(
      * opening none. Intent is explicit — the caller must not conflate "no
      * album" with "try harder on the client".
      */
-    suspend fun resolveAlbum(videoId: String, title: String, artist: String): AlbumDto? {
+    suspend fun resolveAlbum(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long = 0L,
+    ): AlbumDto? {
         if (!YoutubeGateway.VIDEO_ID_RE.matches(videoId)) return null
         val now = System.currentTimeMillis()
         albumResolveCache.get(videoId)?.let { if (it.expiresAt > now) return it.album }
@@ -554,10 +559,11 @@ class MetadataSearchOrchestrator(
             val row = bestAlbumRow(
                 metadata.searchSongs(
                     listOf(title.trim(), artist.trim()).filter { it.isNotEmpty() }.joinToString(" "),
-                    10,
+                    8,
                 ),
                 title,
                 artist,
+                durationMs,
             ) ?: return@runCatching null
             val albumName = row.album?.takeIf { it.isNotBlank() } ?: return@runCatching null
             bestAlbumMatch(albumName, youtube.searchAlbums(albumName), artist)
@@ -582,6 +588,7 @@ class MetadataSearchOrchestrator(
         rows: List<YtmTrack>,
         title: String,
         artist: String,
+        durationMs: Long = 0L,
     ): YtmTrack? {
         val qTitle = normalizeTrackText(title)
         val qArtist = normalizeTrackText(artist)
@@ -606,6 +613,15 @@ class MetadataSearchOrchestrator(
                     // or mis-tagged row must not hijack the resolution.
                     else -> continue
                 }
+            }
+            // Duration is the strongest impersonation guard: covers and
+            // sped-up/8D remixes keep the same title AND often the same
+            // artist spelling, but their LENGTH gives them away. ±(10s or
+            // 12%) tolerance absorbs versioning jitter; everything else is
+            // not this recording.
+            if (durationMs > 0L && row.durationMs != null && row.durationMs > 0L) {
+                val tolerance = maxOf(10_000L, durationMs / 8L)
+                if (Math.abs(row.durationMs - durationMs) > tolerance) continue
             }
             // A row without an album name cannot resolve anything — do not
             // let it win over a weaker-but-present candidate.
@@ -636,12 +652,30 @@ class MetadataSearchOrchestrator(
         val ranked = rankAlbums(albumName, albums)
         val qArtist = normalizeTrackText(artist)
         if (qArtist.isNotBlank()) {
-            return ranked.firstOrNull {
-                val uploader = normalizeTrackText(it.uploader)
-                uploader == qArtist || tokenOverlap(uploader, qArtist)
+            return ranked.firstOrNull { candidate ->
+                val uploader = normalizedUploader(candidate.uploader)
+                (uploader == qArtist || tokenOverlap(uploader, qArtist)) &&
+                    // Same artist is not enough: e.g. a "Greatest Hits" would
+                    // otherwise win over the song's actual album. The album
+                    // NAME must overlap the query (token majority either way).
+                    (tokenOverlap(normalizeTrackText(candidate.name), normalizeTrackText(albumName)) ||
+                        tokenOverlap(normalizeTrackText(albumName), normalizeTrackText(candidate.name)))
             }
         }
         return ranked.firstOrNull()
+    }
+
+    /**
+     * Uploader normalization for artist comparison: lowercase/trim like any
+     * text, then drop a trailing "topic" token — YouTube's auto-generated
+     * artist channels upload as "<artist> - Topic" and that suffix must not
+     * read as a different artist.
+     */
+    private fun normalizedUploader(uploaders: String): String {
+        val n = normalizeTrackText(uploaders)
+        val toks = n.split(' ').filter { it.isNotEmpty() }
+        val trimmed = toks.dropLastWhile { it == "topic" }
+        return if (trimmed.isEmpty()) n else trimmed.joinToString(" ")
     }
 
     private fun normalizeTrackText(s: String?): String =

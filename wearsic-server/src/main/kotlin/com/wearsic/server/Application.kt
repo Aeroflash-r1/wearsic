@@ -777,7 +777,8 @@ fun Application.module(
                 }
                 val title = call.request.queryParameters["t"].orEmpty().trim()
                 val artist = call.request.queryParameters["a"].orEmpty().trim()
-                call.respond(AlbumResolveResponse(searchOrchestrator.resolveAlbum(videoId, title, artist)))
+                val durationMs = call.request.queryParameters["d"]?.toLongOrNull() ?: 0L
+                call.respond(AlbumResolveResponse(searchOrchestrator.resolveAlbum(videoId, title, artist, durationMs)))
             }
 
             // Synced/plain lyrics for the player's scroll-up lyrics view. The

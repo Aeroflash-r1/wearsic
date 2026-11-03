@@ -33,6 +33,11 @@ import kotlinx.coroutines.withContext
  */
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
+    private companion object {
+        /** Network failures flip the UI offline only after this much silence. */
+        const val OFFLINE_GRACE_MS = 30_000L
+    }
+
     /**
      * Share the process-wide graph that WearsicApp's warm-up thread already
      * built. Constructing fresh repositories here would redo that work on the
@@ -79,17 +84,61 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     // ============================================================================
 
     /**
-     * True while the last server round-trip succeeded. Network-shaped failures
-     * (timeout, DNS, unreachable host) flip it to false so the UI can switch
-     * to an offline-friendly surface. Optimistic by default — it only turns
-     * false on a real network error, never on data/validation errors.
+     * True while the server is considered up. HYSTERESIS on purpose: watch
+     * Wi-Fi power-save makes single round-trips time out all the time, so a
+     * one-miss "offline→online→offline" flip-flop (what v1.9.41 did) is
+     * exactly the inconsistent state the user sees on the home screen:
+     *
+     *   · a SUCCESS flips to online IMMEDIATELY;
+     *   · a network-shaped FAILURE only flips to offline when the last
+     *     success is older than [OFFLINE_GRACE_MS] (30 s) — transient blips
+     *     are invisible, a genuinely down server shows within half a minute.
      */
     private val _serverReachable = MutableStateFlow(true)
     val serverReachable: StateFlow<Boolean> = _serverReachable.asStateFlow()
 
+    /** A network failure marks offline only after this long without success. */
+    private var lastServerSuccessAt = 0L
+    private var everSucceeded = false
+
+    /** One health-confirmation ping at a time (a search burst must not spam). */
+    private val confirmPingGate = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private fun reportServerResult(result: Result<*>) {
         val e = result.exceptionOrNull()
-        _serverReachable.value = e == null || !isNetworkFailure(e)
+        if (e == null || !isNetworkFailure(e)) {
+            lastServerSuccessAt = System.currentTimeMillis()
+            everSucceeded = true
+            if (!_serverReachable.value) _serverReachable.value = true
+            return
+        }
+        val stale = everSucceeded &&
+            (System.currentTimeMillis() - lastServerSuccessAt) > OFFLINE_GRACE_MS
+        if (stale && _serverReachable.value && confirmPingGate.compareAndSet(false, true)) {
+            // One slow failure alone proves nothing: a search may legitimately
+            // run long on a HEALTHY server. Before the UI announces offline,
+            // confirm with a quick health ping; if it answers (or fails with
+            // anything network-plausible-but-alive), the server stays online.
+            viewModelScope.launch {
+                try {
+                    val ping = musicRepository.probeServerHealth(
+                        musicRepository.serverUrlFlow.first()
+                    )
+                    val pingError = ping.exceptionOrNull()
+                    if (pingError != null && isNetworkFailure(pingError)) {
+                        _serverReachable.value = false
+                    } else {
+                        // Reachable after all — refresh the success clock so
+                        // the next miss starts its grace window fresh.
+                        lastServerSuccessAt = System.currentTimeMillis()
+                    }
+                } catch (_: Exception) {
+                    // Probe transport hiccup — keep the current online state.
+                } finally {
+                    confirmPingGate.set(false)
+                }
+            }
+        }
     }
 
     private fun isNetworkFailure(e: Throwable): Boolean = when (e) {
@@ -354,8 +403,57 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      * the album catalog with the best query available — the track's real
      * album name when present, else title + artist — and take the top
      * match. Null means "no album could be found"; we never fabricate one.
+     *
+     * The result is CACHED per track id and PRE-WARMED as a track starts
+     * (see [prewarmAlbum]) — a disc tap then answers instantly instead of
+     * waiting a server round-trip. Misses are cached too, so a track that
+     * has no album does not retry forever.
      */
+    private val albumByTrackId = java.util.concurrent.ConcurrentHashMap<String, Album?>()
+    private val albumInFlight = java.util.Collections.newSetFromMap(
+        java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    )
+    private val albumWaiters = java.util.concurrent.ConcurrentHashMap<String, MutableList<(Album?) -> Unit>>()
+
+    /** Warm the disc-tap resolution in the background as a track starts. */
+    fun prewarmAlbum(track: Track) {
+        startAlbumResolve(track) { /* result lands in the cache */ }
+    }
+
     fun openAlbumForTrack(track: Track, onResult: (Album?) -> Unit) {
+        if (track.id.isBlank()) {
+            onResult(null)
+            return
+        }
+        if (albumByTrackId.containsKey(track.id)) {
+            onResult(albumByTrackId[track.id])
+            return
+        }
+        val waiters = albumWaiters.getOrPut(track.id) { java.util.concurrent.CopyOnWriteArrayList() }
+        // Completed while this waiter was being attached?
+        if (albumByTrackId.containsKey(track.id)) {
+            waiters.remove(onResult)
+            onResult(albumByTrackId[track.id])
+            return
+        }
+        if (waiters.size < 4) waiters.add(onResult)
+        startAlbumResolve(track) { album ->
+            // Answers every pending tap exactly once; no cache hit = false.
+            albumWaiters.remove(track.id)?.forEach { w -> w(album) }
+        }
+    }
+
+    private fun startAlbumResolve(track: Track, onDone: (Album?) -> Unit) {
+        val id = track.id
+        if (id.isBlank()) {
+            onDone(null)
+            return
+        }
+        if (albumByTrackId.containsKey(id)) {
+            onDone(albumByTrackId[id])
+            return
+        }
+        if (!albumInFlight.add(id)) return // already resolving; waiters catch the result
         viewModelScope.launch {
             var album: Album? = null
             musicRepository.resolveTrackAlbum(track).onSuccess { album = it }
@@ -387,7 +485,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
             }
-            onResult(album)
+            albumByTrackId[id] = album
+            albumInFlight.remove(id)
+            onDone(album)
         }
     }
 
@@ -524,7 +624,15 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             _searchState.update { it.copy(query = query, isSearching = true, errorMessage = null) }
-            val result = musicRepository.searchMusic(query)
+            var result = musicRepository.searchMusic(query)
+            // A search computes its WHOLE page before answering, so a run past
+            // one client timeout window does not mean the server failed — it
+            // was still working. ONE silent retry keeps genuinely slow
+            // searches working instead of reading "Search failed"; a real
+            // outage surfaces after the second attempt.
+            if (result.exceptionOrNull() is TimeoutError) {
+                result = musicRepository.searchMusic(query)
+            }
             reportServerResult(result)
             result.onSuccess { tracks ->
                 _searchState.update {

@@ -287,6 +287,12 @@ fun WearsicApp(
 
             // 3. Player Screen (Connected to real Media3 Playback + Offline awareness)
             composable(Screen.Player.route) {
+                // Pre-warm the disc-tap album resolve the moment this track
+                // becomes the current one — the tap then answers from cache
+                // instantly instead of waiting a server round-trip.
+                LaunchedEffect(playbackStateHolder.value.currentTrack.id) {
+                    libraryVM.prewarmAlbum(playbackStateHolder.value.currentTrack)
+                }
                 PlayerScreen(
                     // Read here (destination scope) so position ticks recompose
                     // only the player, not the host above it.

@@ -51,6 +51,7 @@ interface WearsicApiClient {
         videoId: String,
         title: String,
         artist: String,
+        durationMs: Long? = null,
     ): Result<AlbumDto?>
     /**
      * `/api/lyrics` — synced (LRC-shaped) or plain lyrics for a track.

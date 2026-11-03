@@ -80,8 +80,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -151,7 +151,7 @@ import kotlinx.coroutines.withContext
  * Motion is deliberate and finite: a track change plays one short entrance
  * (art scales up, text rises, staggered), the play/pause glyph pops in on
  * every change, and nothing animates while you simply listen. The rotary
- * bezel scrubs seek on the Now Playing page.
+ * bezel is UNUSED on Now Playing (the crown stays with lists).
  */
 @Composable
 fun PlayerScreen(
@@ -245,35 +245,50 @@ fun PlayerScreen(
             label = "playerOpen"
         )
 
-        // Touch-bezel / crown control. On Now Playing the bezel SCRUBS the
-        // track (the progress ring and time visibly move); on Actions it
-        // slides back to Now Playing. Small rotations accumulate; a firm
-        // turn past the threshold performs one step.
-        var rotaryCumulative by remember { mutableStateOf(0f) }
-        val rotaryAccumulator = { event: androidx.compose.ui.input.rotary.RotaryScrollEvent ->
-            val d = event.verticalScrollPixels
-            if (d == 0f) {
-                false
-            } else {
-                if ((rotaryCumulative > 0f && d < 0f) || (rotaryCumulative < 0f && d > 0f)) {
-                    rotaryCumulative = 0f
+
+        // ── LYRICS (hoisted) ─────────────────────────────────────────────
+        // The fullscreen sheets must cover the WHOLE display — including the
+        // content padding the pages live in — so its state lives HERE, above
+        // the pager; the sheet itself renders as the last child of this Box,
+        // covering the page dots while open.
+        var lyricsMode by remember(track.id) { mutableStateOf(false) }
+        val lyricsScrollState = rememberScrollState()
+        val currentPos by rememberUpdatedState(playbackState.currentPositionMs)
+        val currentPlaying by rememberUpdatedState(playbackState.isPlaying)
+        var lyricsActiveIndex by remember(track.id) { mutableIntStateOf(-1) }
+        var lyricAnchorPos by remember(track.id) { mutableLongStateOf(0L) }
+        var lyricAnchorAtMs by remember(track.id) { mutableLongStateOf(0L) }
+        var lyricLastEmitted by remember(track.id) { mutableLongStateOf(Long.MIN_VALUE) }
+        var lyricPrevPlaying by remember(track.id) { mutableStateOf(false) }
+        val lyricLinesSynced = lyricsState.mode == LyricsMode.Synced &&
+            lyricsState.lines.isNotEmpty()
+        LaunchedEffect(lyricsMode, track.id, lyricLinesSynced) {
+            if (!lyricsMode || !lyricLinesSynced) {
+                lyricsActiveIndex = -1
+                return@LaunchedEffect
+            }
+            // Position is emitted only every ~1-2s; interpolate between
+            // samples with the wall clock. Every emission (seek, pause,
+            // play) re-anchors, so drift can never accumulate. While paused
+            // the highlight simply follows the last emitted position.
+            while (isActive) {
+                val emitted = currentPos
+                val now = SystemClock.elapsedRealtime()
+                if (emitted != lyricLastEmitted) {
+                    lyricLastEmitted = emitted
+                    lyricAnchorPos = emitted
+                    lyricAnchorAtMs = now
                 }
-                rotaryCumulative += d
-                if (kotlin.math.abs(rotaryCumulative) < 90f) {
-                    false
-                } else {
-                    rotaryCumulative = 0f
-                    val direction = if (d > 0f) 1 else -1
-                    if (pagerState.currentPage == 0 && hasTrack && playbackState.durationMs > 0L) {
-                        // Scrub: ±10s per firm step, clamped to the track.
-                        val target = (playbackState.currentPositionMs + direction * 10_000L)
-                            .coerceIn(0L, playbackState.durationMs)
-                        onSeekTo(target)
-                    } else if (pagerState.currentPage == 1) {
-                        scope.launch { pagerState.animateScrollToPage(0) }
-                    }
-                    true
+                if (currentPlaying && !lyricPrevPlaying) {
+                    lyricAnchorPos = emitted
+                    lyricAnchorAtMs = now
                 }
+                lyricPrevPlaying = currentPlaying
+                val pos = if (currentPlaying) lyricAnchorPos + (now - lyricAnchorAtMs) else emitted
+                val idx = lyricsState.lines
+                    .indexOfLast { it.timeMs != null && it.timeMs <= pos }.coerceAtLeast(0)
+                if (idx != lyricsActiveIndex) lyricsActiveIndex = idx
+                delay(150)
             }
         }
 
@@ -291,7 +306,6 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(contentPadding)
-                    .onRotaryScrollEvent(rotaryAccumulator)
             ) {
                 HorizontalPager(
                     state = pagerState,
@@ -317,9 +331,7 @@ fun PlayerScreen(
                             active = pagerState.currentPage == 0,
                             rotateArtwork = rotateArtwork,
                             onOpenAlbum = onOpenAlbum,
-                            lyricsState = lyricsState,
-                            onRequestLyrics = onRequestLyrics,
-                            onRetryLyrics = onRetryLyrics
+                            onOpenLyrics = { if (hasTrack) lyricsMode = true }
                         )
                         else -> ActionsPage(
                             hasTrack = hasTrack,
@@ -346,8 +358,9 @@ fun PlayerScreen(
         // scaffold's inset so they follow the display's curved boundary. The
         // 48dp touch target spans inward from the edge while the dots
         // themselves align to the outer edge (End), so they sit right on the
-        // bezel instead of floating mid-screen.
-        Column(
+        // bezel instead of floating mid-screen. They vanish while the lyrics
+        // sheet is over the screen.
+        if (!lyricsMode) Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .widthIn(min = WearsicDimens.TouchTarget)
@@ -375,21 +388,54 @@ fun PlayerScreen(
                 )
             }
         }
+
+        // LYRICS — THE LAST CHILD: drawn OVER the pager AND the page dots,
+        // edge-to-edge with no content padding, so it reads as a true
+        // fullscreen page, not a boxed card in the middle.
+        if (lyricsMode && hasTrack) {
+            LaunchedEffect(track.id) { onRequestLyrics() }
+            LyricsFullscreen(
+                track = track,
+                lyricsState = lyricsState,
+                activeIndex = lyricsActiveIndex,
+                scrollState = lyricsScrollState,
+                colors = artworkColors,
+                onExit = { lyricsMode = false },
+                onRetry = onRetryLyrics,
+            )
+        }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
 // Page 0 — Now Playing: artwork disc, metadata, transport — and a pull-up
-// lyrics view that LOCKS into a fullscreen sheet (opaque artwork-tinted
-// backdrop, back button, rotary scroll, precise active-line centering).
+// lyrics view that LOCKS into a TRULY fullscreen page. The sheet is rendered
+// as the LAST child of PlayerScreen's root Box, so it covers the pager, the
+// page dots AND the scaffold's content padding edge-to-edge.
 // ─────────────────────────────────────────────────────────────────────────
 
-private const val LYRICS_UP_DRAG_PX = 90f
-private const val LYRICS_EXIT_DRAG_PX = 60f
-private val LYRICS_LINE_HEIGHT = 48.dp
-private val LYRICS_LINE_GAP = 2.dp
-private val LYRICS_TOP_PAD = 110.dp
-private val LYRICS_BOTTOM_PAD = 170.dp
+/** Upward travel (px) that opens the lyrics sheet. */
+private const val LYRICS_UP_DRAG_PX = 120f
+/** Downward travel (px) near the top of the sheet that returns to the player. */
+private const val LYRICS_EXIT_DRAG_PX = 70f
+
+/**
+ * Uniform lyric-row metrics. Rows are uniform ON PURPOSE: with a top pad of
+ * exactly half the viewport, line i's centre sits at payload offset
+ * `i * pitch + h/2`, so the exact auto-center scroll target is just
+ * `i * pitch` — derivable, testable and steady (no drifting guesses).
+ */
+internal val LYRICS_ROW_HEIGHT = 32.dp
+internal val LYRICS_ROW_GAP = 6.dp
+
+/**
+ * Exact auto-center scroll target for the active lyric line. With half the
+ * body viewport as top/bottom padding, the active line i centers at
+ * target = i * pitch + rowHeight/2 — derived arithmetic, no drifting guesses.
+ * Exposed `internal` so unit tests pin the geometry.
+ */
+internal fun lyricsCenterScroll(activeIndex: Int, bodyPx: Float, pitchPx: Float, linePx: Float): Int =
+    (bodyPx / 2f + activeIndex * pitchPx + linePx / 2f - bodyPx / 2f).roundToInt()
 
 @Composable
 private fun NowPlayingPage(
@@ -411,76 +457,12 @@ private fun NowPlayingPage(
     active: Boolean,
     rotateArtwork: Boolean = true,
     onOpenAlbum: ((Track) -> Unit)? = null,
-    lyricsState: LyricsViewModel.LyricsUiState = LyricsViewModel.LyricsUiState(),
-    onRequestLyrics: () -> Unit = {},
-    onRetryLyrics: () -> Unit = {},
+    onOpenLyrics: () -> Unit = {},
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val compact = maxHeight < 236.dp
         val discSize: Dp = (maxWidth * 0.36f).coerceIn(if (compact) 56.dp else 64.dp, if (compact) 72.dp else 92.dp)
         val playSize: Dp = if (compact) 48.dp else (maxWidth * 0.26f).coerceIn(50.dp, 60.dp)
-
-        // ── Lyrics lock state ─────────────────────────────────────────────
-        // Once pulled up, the sheet is FULLSCREEN (locked). Exit via the
-        // Now Playing button or a pull-down at the top of the lyrics.
-        var lyricsMode by remember(track.id) { mutableStateOf(false) }
-        var lyricsScrollState = rememberScrollState()
-
-        // Highlight sync — runs only while the sheet is visible. Interpolates
-        // between the playback state's ~2s position emissions using the wall
-        // clock, re-anchoring on every sample/seek and on pause→resume.
-        val currentPosition by rememberUpdatedState(positionMs)
-        val currentIsPlaying by rememberUpdatedState(isPlaying)
-        var activeIndex by remember(track.id) { mutableIntStateOf(-1) }
-        var lastEmittedPos by remember(track.id) { mutableLongStateOf(Long.MIN_VALUE) }
-        var anchorPos by remember(track.id) { mutableLongStateOf(0L) }
-        var anchorAtMs by remember(track.id) { mutableLongStateOf(0L) }
-        var prevPlaying by remember(track.id) { mutableStateOf(false) }
-        val synced = lyricsState.mode == LyricsMode.Synced && lyricsState.lines.isNotEmpty()
-
-        LaunchedEffect(lyricsMode, track.id, synced) {
-            if (!lyricsMode || !synced) {
-                activeIndex = -1
-                return@LaunchedEffect
-            }
-            while (isActive) {
-                val emitted = currentPosition
-                val now = SystemClock.elapsedRealtime()
-                if (emitted != lastEmittedPos) {
-                    lastEmittedPos = emitted
-                    anchorPos = emitted
-                    anchorAtMs = now
-                }
-                if (currentIsPlaying && !prevPlaying) {
-                    anchorPos = emitted
-                    anchorAtMs = now
-                }
-                prevPlaying = currentIsPlaying
-
-                val pos = if (currentIsPlaying) anchorPos + (now - anchorAtMs) else emitted
-                val idx = lyricsState.lines
-                    .indexOfLast { it.timeMs != null && it.timeMs <= pos }
-                    .coerceAtLeast(0)
-                if (idx != activeIndex) activeIndex = idx
-                delay(150)
-            }
-        }
-
-        if (lyricsMode && hasTrack) {
-            // Fetch once per track when the sheet is first opened.
-            LaunchedEffect(track.id) { onRequestLyrics() }
-
-            LyricsFullscreen(
-                track = track,
-                lyricsState = lyricsState,
-                activeIndex = activeIndex,
-                scrollState = lyricsScrollState,
-                colors = colors,
-                onExit = { lyricsMode = false },
-                onRetry = onRetryLyrics,
-            )
-            return@BoxWithConstraints
-        }
 
         // ── Player block (full viewport; no outer scroll) ────────────────
         Column(
@@ -488,24 +470,28 @@ private fun NowPlayingPage(
                 .fillMaxSize()
                 .padding(horizontal = WearsicDimens.ScreenPaddingH)
                 .pointerInput(hasTrack, track.id) {
-                    // Pull UP to lock into lyrics. Only unconsumed vertical
-                    // movement counts (the disc's ring-scrub consumes its own
-                    // drags), and the deadline is generous so a quick flick on
-                    // the disc never opens the sheet.
+                    // Pull UP to lock into lyrics. Runs on the INITIAL (tunnel)
+                    // pass so it sees drags BEFORE the disc's ring-scrub
+                    // consumes them — opening lyrics works everywhere on this
+                    // page, disc included. The accumulator only counts upward
+                    // travel, so a circular ring-scrub (up-and-down in
+                    // alternation) resets instead of drifting to a threshold.
                     awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                         var total = 0f
+                        var last = down.position.y
                         while (true) {
-                            val e = awaitPointerEvent()
+                            val e = awaitPointerEvent(PointerEventPass.Initial)
                             val c = e.changes.firstOrNull { it.id == down.id } ?: break
                             if (!c.pressed) break
-                            if (!c.isConsumed) {
-                                total += c.positionChange().y
-                                if (total < -LYRICS_UP_DRAG_PX) {
-                                    c.consume()
-                                    lyricsMode = true
-                                    break
-                                }
+                            val dy = c.position.y - last
+                            last = c.position.y
+                            total = if (dy < 0f) total + dy else 0f
+                            if (total < -LYRICS_UP_DRAG_PX) {
+                                c.consume()
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onOpenLyrics()
+                                break
                             }
                         }
                     }
@@ -524,8 +510,7 @@ private fun NowPlayingPage(
                 rotateArtwork = rotateArtwork,
                 onClick = onOpenAlbum?.let { { it(track) } },
                 // Drag the disc along its ring to scrub: angular position
-                // maps to the track duration (top = 0, clockwise). Falls
-                // back to the transport buttons when duration is unknown.
+                // maps to the track duration (top = 0, clockwise).
                 modifier = Modifier
                     .wearsicEntrance(fromScale = 0.90f, riseDp = 10f)
                     .pointerInput(hasTrack, track.id, durationMs) {
@@ -604,16 +589,28 @@ private fun NowPlayingPage(
                 enabled = hasTrack
             )
 
-            Spacer(modifier = Modifier.height(22.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // Pull-up affordance.
-            Text(
-                text = "↑ Lyrics",
-                color = Color.White.copy(alpha = 0.32f),
-                fontSize = 10.sp,
-                letterSpacing = 1.2.sp,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
+            // The GUARANTEED path into lyrics: a plain tap. Pull-up remains
+            // as a gesture, but no gesture skill is required to reach the
+            // lyrics page any more.
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.White.copy(alpha = 0.07f))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(50))
+                    .wearsicClickable(onClick = onOpenLyrics)
+                    .padding(horizontal = 14.dp, vertical = 5.dp)
+                    .testTag("lyrics_open_button"),
+            ) {
+                Text(
+                    text = "↑ Lyrics",
+                    color = Color.White.copy(alpha = 0.62f),
+                    fontSize = 11.sp,
+                    letterSpacing = 1.2.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
 
             Spacer(modifier = Modifier.height(2.dp))
         }
@@ -621,12 +618,15 @@ private fun NowPlayingPage(
 }
 
 /**
- * Fullscreen, LOCKED lyrics sheet. Opaque artwork-tinted backdrop (the
- * artwork's dark hue, not translucent black), a Now Playing/back button,
- * rotary scrolling, and precise auto-centering of the active line.
+ * THE fullscreen lyrics page. Uniform rows make the active line's centering
+ * exact: top/bottom pads are half the body viewport, so line i centers at
+ * scroll target `i * pitch` — precise on every screen. Manual scrolling
+ * (touch, bezel) always wins: auto-centering pauses while any scroll is in
+ * progress, and resumes when the list settles. This composable is internal
+ * so the Roborazzi gallery can render the real page.
  */
 @Composable
-private fun LyricsFullscreen(
+internal fun LyricsFullscreen(
     track: Track,
     lyricsState: LyricsViewModel.LyricsUiState,
     activeIndex: Int,
@@ -636,175 +636,214 @@ private fun LyricsFullscreen(
     onRetry: () -> Unit,
 ) {
     val backdrop = if (colors.fromArtwork) {
-        lerp(colors.backdrop, colors.accentStrong, 0.18f)
+        lerp(colors.backdrop, colors.accentStrong, 0.12f)
     } else {
         colors.backdrop
     }
     val activeColor = if (colors.fromArtwork) {
-        lerp(colors.accent, Color.White, 0.12f)
+        lerp(colors.accent, Color.White, 0.10f)
     } else {
         Color.White
     }
-
+    val synced = lyricsState.mode == com.wearsic.app.model.LyricsMode.Synced &&
+        lyricsState.lines.isNotEmpty()
     val density = LocalDensity.current
-    val linePitchPx = with(density) { (LYRICS_LINE_HEIGHT + LYRICS_LINE_GAP).toPx() }
-    val lineHeightPx = with(density) { LYRICS_LINE_HEIGHT.toPx() }
-    val topPadPx = with(density) { LYRICS_TOP_PAD.toPx() }
+    val pitchPx = with(density) { (LYRICS_ROW_HEIGHT + LYRICS_ROW_GAP).toPx() }
+    val linePx = with(density) { LYRICS_ROW_HEIGHT.toPx() }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val viewportPx = with(density) { maxHeight.toPx() }
-
-        // Centre the active line, but only while the sheet is open and synced.
-        LaunchedEffect(activeIndex, track.id, lyricsState.mode) {
-            val synced = lyricsState.mode == LyricsMode.Synced && lyricsState.lines.isNotEmpty()
-            if (synced && activeIndex >= 0 && scrollState.maxValue > 0) {
-                val target = (topPadPx + activeIndex * linePitchPx + lineHeightPx / 2f - viewportPx / 2f)
-                    .coerceIn(0f, scrollState.maxValue.toFloat())
-                if (kotlin.math.abs(target - scrollState.value) > lineHeightPx * 0.5f) {
-                    scrollState.animateScrollTo(target.roundToInt(), tween(320, easing = FastOutSlowInEasing))
-                }
-            }
-        }
-
-        // Opaque artwork-tinted backdrop.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(backdrop),
-        )
-
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(backdrop)
+            .testTag("lyrics_screen"),
+    ) {
         // Soft accent glow from the top edge.
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        listOf(colors.accent.copy(alpha = 0.16f), Color.Transparent),
+                        listOf(colors.accent.copy(alpha = 0.14f), Color.Transparent),
                     )
-                ),
+                )
         )
 
-        // Exit affordance (Now Playing), top-right, inside the safe area.
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 10.dp, end = 12.dp)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.10f))
-                .border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape)
-                .wearsicClickable(onClick = onExit),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.KeyboardArrowDown,
-                contentDescription = "Back to Now Playing",
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(22.dp),
-            )
-        }
-
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
-            Text(
-                text = "Lyrics",
-                color = if (colors.fromArtwork) colors.accent else Color.White.copy(alpha = 0.9f),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 0.5.sp,
-                modifier = Modifier.padding(top = 16.dp, bottom = 6.dp),
-            )
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Compact header: song context + the exit affordance, both small
+            // enough to stay inside the round face's readable mid-band.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 10.dp, top = 24.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Lyrics",
+                        color = if (colors.fromArtwork) colors.accent else Color.White.copy(alpha = 0.9f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.6.sp,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = "${track.title} · ${track.artist}",
+                        color = Color.White.copy(alpha = 0.45f),
+                        fontSize = 9.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // Exit affordance: a small, bare chevron — no bubble, no
+                // border (the translucent circle read as UI noise on the
+                // full-white lyrics canvas). The 30dp invisible touch target
+                // keeps the tap reliable on a sweaty wrist.
+                Box(
+                    modifier = Modifier
+                        .padding(start = 2.dp)
+                        .size(30.dp)
+                        .wearsicClickable(onClick = onExit)
+                        .testTag("lyrics_back_button"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = "Back to Now Playing",
+                        tint = Color.White.copy(alpha = 0.65f),
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
             lyricsState.source?.let {
                 Text(
                     text = "via $it",
-                    color = Color.White.copy(alpha = 0.35f),
-                    fontSize = 10.sp,
-                    modifier = Modifier.padding(bottom = 6.dp),
+                    color = Color.White.copy(alpha = 0.32f),
+                    fontSize = 9.sp,
+                    modifier = Modifier.padding(start = 16.dp, bottom = 2.dp),
                 )
             }
 
-            // The lyrics body: its own scroll (rotary + auto-centering),
-            // pull-down at the top exits back to the player.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .onRotaryScrollEvent {
-                        val d = it.verticalScrollPixels
-                        if (d == 0f) false else {
-                            scrollState.dispatchRawDelta(d)
-                            true
-                        }
+            // The lyrics body — a BoxWithConstraints so centre math uses the
+            // REAL body height, not the whole screen.
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val bodyPx = with(density) { maxHeight.toPx() }
+                val halfBodyPx = bodyPx / 2f
+
+                // Auto-center the active line. Event-triggered, not polled:
+                // it runs on each active-line change and once when the body's
+                // max scroll becomes known. Manual scroll always wins — an
+                // in-progress scroll skips the correction and the NEXT line
+                // change re-centres.
+                LaunchedEffect(activeIndex, synced, track.id, scrollState.maxValue) {
+                    if (!synced || activeIndex < 0 || scrollState.maxValue <= 0) {
+                        return@LaunchedEffect
                     }
-                    .pointerInput(track.id) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            var total = 0f
-                            while (true) {
-                                val e = awaitPointerEvent()
-                                val c = e.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!c.pressed) break
-                                if (!c.isConsumed) {
-                                    total += c.positionChange().y
-                                    // Only near the top: a pull-down there
-                                    // returns to the player.
-                                    if (total > LYRICS_EXIT_DRAG_PX && scrollState.value <= 24f) {
+                    if (scrollState.isScrollInProgress) return@LaunchedEffect
+                    val target = lyricsCenterScroll(activeIndex, bodyPx, pitchPx, linePx)
+                        .coerceIn(0, scrollState.maxValue)
+                    if (kotlin.math.abs(target - scrollState.value) > pitchPx * 0.55f) {
+                        scrollState.animateScrollTo(
+                            target,
+                            tween(340, easing = FastOutSlowInEasing),
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onRotaryScrollEvent { event ->
+                            val d = event.verticalScrollPixels
+                            if (d == 0f) false else {
+                                scrollState.dispatchRawDelta(d)
+                                true
+                            }
+                        }
+                        .pointerInput(track.id) {
+                            // Pull DOWN near the very top of the lyrics →
+                            // back to the player. Tunnel pass + own
+                            // consumption makes this deterministic even
+                            // while the scrollable is listening.
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                var total = 0f
+                                var last = down.position.y
+                                while (true) {
+                                    val e = awaitPointerEvent(PointerEventPass.Initial)
+                                    val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!c.pressed) break
+                                    val dy = c.position.y - last
+                                    last = c.position.y
+                                    total = if (dy > 0f) total + dy else 0f
+                                    if (total > LYRICS_EXIT_DRAG_PX && scrollState.value <= 8f) {
                                         c.consume()
                                         onExit()
                                         break
                                     }
                                 }
                             }
-                        }
-                    },
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scrollState),
+                        },
                 ) {
-                    Spacer(modifier = Modifier.height(LYRICS_TOP_PAD))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(scrollState),
+                    ) {
+                        Spacer(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(with(density) { halfBodyPx.toDp() })
+                        )
 
-                    when {
-                        lyricsState.isLoading -> {
-                            LyricsLoading()
-                        }
-                        lyricsState.errorMessage != null -> {
-                            LyricsPlaceholder(
-                                lyricsState.errorMessage ?: "Could not load lyrics",
-                                isError = true,
-                                onRetry = onRetry,
-                            )
-                        }
-                        lyricsState.mode == LyricsMode.Unavailable -> {
-                            LyricsPlaceholder(
-                                "No lyrics found for this song",
-                                isError = false,
-                                onRetry = onRetry,
-                            )
-                        }
-                        lyricsState.mode == LyricsMode.Plain -> {
-                            lyricsState.lines.forEach { line ->
-                                Text(
-                                    text = line.text,
-                                    color = Color.White.copy(alpha = 0.66f),
-                                    fontSize = 14.sp,
-                                    lineHeight = 22.sp,
-                                    modifier = Modifier.padding(bottom = 10.dp),
+                        when {
+                            lyricsState.isLoading -> {
+                                LyricsLoading()
+                            }
+                            lyricsState.errorMessage != null -> {
+                                LyricsPlaceholder(
+                                    lyricsState.errorMessage ?: "Could not load lyrics",
+                                    isError = true,
+                                    onRetry = onRetry,
                                 )
                             }
-                        }
-                        else -> {
-                            lyricsState.lines.forEachIndexed { index, line ->
-                                SyncedLyricLine(
-                                    text = line.text,
-                                    active = index == activeIndex,
-                                    activeColor = activeColor,
+                            lyricsState.mode == com.wearsic.app.model.LyricsMode.Unavailable -> {
+                                LyricsPlaceholder(
+                                    "No lyrics found for this song",
+                                    isError = false,
+                                    onRetry = onRetry,
                                 )
                             }
+                            lyricsState.mode == com.wearsic.app.model.LyricsMode.Plain -> {
+                                lyricsState.lines.forEach { line ->
+                                    Text(
+                                        text = line.text,
+                                        color = Color.White.copy(alpha = 0.66f),
+                                        fontSize = 12.sp,
+                                        lineHeight = 17.sp,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 8.dp),
+                                    )
+                                }
+                            }
+                            else -> {
+                                lyricsState.lines.forEachIndexed { index, line ->
+                                    SyncedLyricLine(
+                                        text = line.text,
+                                        active = index == activeIndex,
+                                        activeColor = activeColor,
+                                    )
+                                }
+                            }
                         }
+
+                        Spacer(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(with(density) { halfBodyPx.toDp() })
+                        )
                     }
-
-                    Spacer(modifier = Modifier.height(LYRICS_BOTTOM_PAD))
                 }
             }
         }
@@ -813,20 +852,21 @@ private fun LyricsFullscreen(
 
 @Composable
 private fun SyncedLyricLine(text: String, active: Boolean, activeColor: Color) {
-    val alpha by animateFloatAsState(if (active) 1f else 0.38f, tween(260), label = "lyricAlpha")
-    val fontSize by animateFloatAsState(if (active) 17f else 14f, tween(260), label = "lyricSize")
+    // Static colours computed from state — no per-line animators, so a line
+    // change never animates the whole column frame-by-frame (watch GPUs).
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(LYRICS_LINE_HEIGHT),
+            .height(LYRICS_ROW_HEIGHT)
+            .then(if (active) Modifier.testTag("lyrics_active_line") else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
-            color = if (active) activeColor else Color.White.copy(alpha = alpha),
-            fontSize = fontSize.sp,
+            color = if (active) activeColor else Color.White.copy(alpha = 0.40f),
+            fontSize = (if (active) 14 else 12).sp,
             fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Normal,
-            lineHeight = 20.sp,
+            lineHeight = if (active) 16.sp else 15.sp,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
@@ -892,6 +932,7 @@ private fun LyricsPlaceholder(message: String, isError: Boolean, onRetry: (() ->
         }
     }
 }
+
 @Composable
 private fun ArtworkDisc(
     artworkUrl: String?,

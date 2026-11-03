@@ -244,8 +244,9 @@ class WearsicMusicRepository(
      */
     suspend fun resolveTrackAlbum(track: Track): Result<Album?> {
         val currentUrl = getServerUrl()
-        return httpApiClient.resolveTrackAlbum(currentUrl, track.id, track.title, track.artist)
-            .map { it?.toDomainAlbum() }
+        return httpApiClient.resolveTrackAlbum(
+            currentUrl, track.id, track.title, track.artist, track.durationMs,
+        ).map { it?.toDomainAlbum() }
     }
 
     /** Lyrics for a track (synced or plain); unavailable is not an error. */

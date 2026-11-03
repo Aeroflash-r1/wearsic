@@ -203,6 +203,7 @@ class WearsicMockApiClient(private val context: Context) : WearsicApiClient {
         videoId: String,
         title: String,
         artist: String,
+        durationMs: Long?,
     ): Result<AlbumDto?> {
         delay(300)
         return Result.success(null)

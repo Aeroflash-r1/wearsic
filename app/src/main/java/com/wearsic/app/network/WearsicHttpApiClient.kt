@@ -57,6 +57,21 @@ class WearsicHttpApiClient(
         .callTimeout(120, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * Patient client for search endpoints. A search produces its page in one
+     * pass: NO bytes flow until the whole page is ready (worst case ~22s of
+     * multi-query searching, plus relay latency on remote links), so the
+     * shared 30s read timeout killed "slightly slower" searches with a
+     * phantom timeout while the server was still working. These budgets sit
+     * comfortably above the server's own search budgets without letting a
+     * hard stall hang the screen forever.
+     */
+    private val searchClient: OkHttpClient = client.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .callTimeout(50, TimeUnit.SECONDS)
+        .build()
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -196,7 +211,7 @@ class WearsicHttpApiClient(
                 .get()
                 .build()
 
-            runInterruptible { client.newCall(request).execute() }.use { response ->
+            runInterruptible { searchClient.newCall(request).execute() }.use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         HttpError(searchUrl, response.code, "Server error: HTTP ${response.code}")
@@ -623,7 +638,7 @@ class WearsicHttpApiClient(
                     .get()
                     .build()
 
-                runInterruptible { client.newCall(request).execute() }.use { response ->
+                runInterruptible { searchClient.newCall(request).execute() }.use { response ->
                     if (!response.isSuccessful) {
                         return@use Result.failure(
                             HttpError("$sanitizedUrl/api/search/albums", response.code, "Server error: HTTP ${response.code}")
@@ -648,6 +663,7 @@ class WearsicHttpApiClient(
         videoId: String,
         title: String,
         artist: String,
+        durationMs: Long?,
     ): Result<AlbumDto?> =
         withContext(Dispatchers.IO) {
             val urlValidation = validateBaseUrl(baseUrl)
@@ -664,6 +680,7 @@ class WearsicHttpApiClient(
                     add("v=" + URLEncoder.encode(videoId, "UTF-8"))
                     if (title.isNotBlank()) add("t=" + URLEncoder.encode(title, "UTF-8"))
                     if (artist.isNotBlank()) add("a=" + URLEncoder.encode(artist, "UTF-8"))
+                    if (durationMs != null && durationMs > 0L) add("d=$durationMs")
                 }.joinToString("&")
                 val request = Request.Builder()
                     .url("$sanitizedUrl/api/albums/resolve?$params")

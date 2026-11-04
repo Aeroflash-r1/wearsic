@@ -185,7 +185,7 @@ fun PlaylistDetailScreen(
                 }
             }
 
-            itemsIndexed(detailState.tracks, key = { _, track -> track.id }) { index, track ->
+            itemsIndexed(detailState.tracks.distinctBy { it.id }, key = { _, track -> track.id }) { index, track ->
                 WearsicLibraryTrackRow(
                     track = track,
                     onPlay = { onPlayTrack(detailState.tracks, index) },

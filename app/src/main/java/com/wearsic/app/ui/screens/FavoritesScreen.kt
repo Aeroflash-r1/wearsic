@@ -148,7 +148,7 @@ fun FavoritesScreen(
 
             // Keyed by track id so rows keep their identity (and lazy state)
             // when the list reorders after a favorite is removed.
-            itemsIndexed(favoritesState.tracks, key = { _, track -> track.id }) { index, track ->
+            itemsIndexed(favoritesState.tracks.distinctBy { it.id }, key = { _, track -> track.id }) { index, track ->
                 WearsicLibraryTrackRow(
                     track = track,
                     onPlay = { onPlayTrack(favoritesState.tracks, index) },

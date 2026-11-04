@@ -23,6 +23,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -81,11 +82,15 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -100,6 +105,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
+import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.rememberPagerState
@@ -250,6 +257,14 @@ fun PlayerScreen(
         // a dead crown.
         var rotaryFlipAccum by remember { mutableFloatStateOf(0f) }
 
+        // The crown needs ONE owner at a time, reached by bubbling outward
+        // from whatever node holds focus: page 0 without lyrics → THIS
+        // wrapper (flips pages); page 1 → the actions list's framework
+        // rotary handler; lyrics open → the lyrics' framework handler.
+        // Without an owner a notch only fired the system's touch-bezel tick
+        // and nothing moved.
+        val playerRotaryFocus = remember { FocusRequester() }
+
         // Natural screen-open: a soft zoom + fade across ~220ms. Runs once
         // per entry, layer-only (no recomposition), so it reads as a smooth,
         // reliable push into the player.
@@ -271,6 +286,23 @@ fun PlayerScreen(
         // the pager; the sheet itself renders as the last child of this Box,
         // covering the page dots while open.
         var lyricsMode by remember(track.id) { mutableStateOf(false) }
+
+        // Crown focus hop: claim the bezel whenever the wrapper is the
+        // active owner — entering the player (pageIndex 0), flipping back
+        // from Actions, and closing the lyrics sheet. The lyrics' internal
+        // state machine owns the crown while open.
+        LaunchedEffect(pageIndex, lyricsMode) {
+            if (pageIndex == 0 && !lyricsMode) {
+                repeat(5) {
+                    if (runCatching { playerRotaryFocus.requestFocus() }
+                            .getOrNull() == true
+                    ) {
+                        return@LaunchedEffect
+                    }
+                    delay(40)
+                }
+            }
+        }
         val lyricsScrollState = rememberScrollState()
         val currentPos by rememberUpdatedState(playbackState.currentPositionMs)
         val currentPlaying by rememberUpdatedState(playbackState.isPlaying)
@@ -307,7 +339,10 @@ fun PlayerScreen(
                 val idx = lyricsState.lines
                     .indexOfLast { it.timeMs != null && it.timeMs <= pos }.coerceAtLeast(0)
                 if (idx != lyricsActiveIndex) lyricsActiveIndex = idx
-                delay(150)
+                // Fast cadence while playing (a line can be as short as a
+                // second); paused playback only re-anchors on emission, so
+                // the poll can coast — idle/heat win.
+                delay(if (currentPlaying) 150L else 600L)
             }
         }
 
@@ -348,6 +383,12 @@ fun PlayerScreen(
                             flipped || rotaryFlipAccum != 0f
                         }
                     }
+                    // Handler must sit OUTSIDE the focus target (modifiers
+                    // left of focusRequester/focusable): a notch propagates
+                    // OUTWARD from the focus owner, so an inner handler is
+                    // never reached, an outer one always is.
+                    .focusRequester(playerRotaryFocus)
+                    .focusable()
             ) {
                 HorizontalPager(
                     state = pagerState,
@@ -467,23 +508,8 @@ private const val LYRICS_UP_DRAG_PX = 120f
 /** Downward travel (px) near the top of the sheet that returns to the player. */
 private const val LYRICS_EXIT_DRAG_PX = 70f
 
-/**
- * Uniform lyric-row metrics. Rows are uniform ON PURPOSE: with a top pad of
- * exactly half the viewport, line i's centre sits at payload offset
- * `i * pitch + h/2`, so the exact auto-center scroll target is just
- * `i * pitch` — derivable, testable and steady (no drifting guesses).
- */
-internal val LYRICS_ROW_HEIGHT = 32.dp
+/** Vertical gap between lyric rows (rows are natural-height, padding-based). */
 internal val LYRICS_ROW_GAP = 6.dp
-
-/**
- * Exact auto-center scroll target for the active lyric line. With half the
- * body viewport as top/bottom padding, the active line i centers at
- * target = i * pitch + rowHeight/2 — derived arithmetic, no drifting guesses.
- * Exposed `internal` so unit tests pin the geometry.
- */
-internal fun lyricsCenterScroll(activeIndex: Int, bodyPx: Float, pitchPx: Float, linePx: Float): Int =
-    (bodyPx / 2f + activeIndex * pitchPx + linePx / 2f - bodyPx / 2f).roundToInt()
 
 @Composable
 private fun NowPlayingPage(
@@ -700,8 +726,20 @@ internal fun LyricsFullscreen(
     val synced = lyricsState.mode == com.wearsic.app.model.LyricsMode.Synced &&
         lyricsState.lines.isNotEmpty()
     val density = LocalDensity.current
-    val pitchPx = with(density) { (LYRICS_ROW_HEIGHT + LYRICS_ROW_GAP).toPx() }
-    val linePx = with(density) { LYRICS_ROW_HEIGHT.toPx() }
+
+    // Framework rotary owns the crown while the lyrics are open: the notch
+    // scrolls this body (with framework haptics) exactly like a built-in
+    // app. It takes focus from the page-flip wrapper on open; the wrapper's
+    // LaunchedEffect(lyricsMode) hands it back on close.
+    val lyricsRotaryFocus = remember { FocusRequester() }
+    LaunchedEffect(lyricsRotaryFocus) {
+        repeat(5) {
+            if (runCatching { lyricsRotaryFocus.requestFocus() }.getOrNull() == true) {
+                return@LaunchedEffect
+            }
+            delay(40)
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -721,12 +759,16 @@ internal fun LyricsFullscreen(
         )
 
         Column(modifier = Modifier.fillMaxSize()) {
-            // Compact header: song context + the exit affordance, both small
-            // enough to stay inside the round face's readable mid-band.
+            // Compact header: song context + the exit affordance. Horizontal
+            // padding sized for the ROUND face — at this height the circular
+            // mask leaves ~66px on each side, so 16dp of start padding put
+            // the header text INTO the black corner (live device: "Lyrics"
+            // at x=34 with the chord starting at x=66). 40dp keeps both
+            // header text and the exit chevron inside the circle.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 10.dp, top = 24.dp, bottom = 2.dp),
+                    .padding(start = 40.dp, end = 40.dp, top = 26.dp, bottom = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -740,8 +782,8 @@ internal fun LyricsFullscreen(
                     )
                     Text(
                         text = "${track.title} · ${track.artist}",
-                        color = Color.White.copy(alpha = 0.45f),
-                        fontSize = 9.sp,
+                        color = Color.White.copy(alpha = 0.55f),
+                        fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -777,41 +819,54 @@ internal fun LyricsFullscreen(
                 val bodyPx = with(density) { maxHeight.toPx() }
                 val halfBodyPx = bodyPx / 2f
 
-                // Auto-center the active line. Event-triggered, not polled:
-                // it runs on each active-line change and once when the body's
-                // max scroll becomes known. Manual scroll always wins — an
-                // in-progress scroll skips the correction and the NEXT line
-                // change re-centres.
-                LaunchedEffect(activeIndex, synced, track.id, scrollState.maxValue) {
-                    if (!synced || activeIndex < 0 || scrollState.maxValue <= 0) {
+                // Viewport-center Y of the ACTIVE row, reported by its
+                // onGloballyPositioned on every layout (only the active row
+                // carries the observer; equal-value writes are free).
+                var activeRowCenterY by remember { mutableFloatStateOf(Float.NaN) }
+
+                // Auto-center the active line, MEASURED, not pitch-math'd:
+                // row heights vary with wrapping (active lines grow), so the
+                // old uniform-pitch arithmetic drifted. Event-triggered —
+                // runs only on active-line change. Manual scroll always
+                // wins; the NEXT line change re-centres.
+                LaunchedEffect(activeIndex, synced, track.id) {
+                    if (!synced || activeIndex < 0) {
                         return@LaunchedEffect
                     }
                     if (scrollState.isScrollInProgress) return@LaunchedEffect
-                    val target = lyricsCenterScroll(activeIndex, bodyPx, pitchPx, linePx)
-                        .coerceIn(0, scrollState.maxValue)
-                    if (kotlin.math.abs(target - scrollState.value) > pitchPx * 0.55f) {
-                        // Defensive: a racing manual scroll/disposal must
-                        // never crash out of the scroll math (real-device
-                        // reports of a crash while scrolling during load).
-                        runCatching {
-                            scrollState.animateScrollTo(
-                                target,
-                                tween(340, easing = FastOutSlowInEasing),
-                            )
-                        }
+                    withFrameNanos { } // let the (possibly new) active row lay out
+                    val rowY = activeRowCenterY
+                    if (rowY.isNaN()) return@LaunchedEffect
+                    val delta = rowY - halfBodyPx
+                    // A few px are layout noise, never drift.
+                    if (kotlin.math.abs(delta) < 8f) return@LaunchedEffect
+                    // Defensive: a racing manual scroll/disposal must never
+                    // crash out of the scroll math (real-device reports of a
+                    // crash while scrolling during load).
+                    runCatching {
+                        scrollState.animateScrollTo(
+                            (scrollState.value + delta).roundToInt()
+                                .coerceIn(0, scrollState.maxValue),
+                            tween(340, easing = FastOutSlowInEasing),
+                        )
                     }
                 }
 
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .onRotaryScrollEvent { event ->
-                            val d = event.verticalScrollPixels
-                            if (d == 0f) false else {
-                                scrollState.dispatchRawDelta(d)
-                                true
-                            }
-                        }
+                        .padding(horizontal = 38.dp)
+                        // Notches scroll this ScrollState through the
+                        // framework's rotary handler (routing + haptics
+                        // included) — replaces the hand-rolled
+                        // onRotaryScrollEvent dispatcher that intermittently
+                        // left the crown dead ("haptic tick, no scroll").
+                        .rotaryScrollable(
+                            behavior = RotaryScrollableDefaults.behavior(
+                                scrollableState = scrollState,
+                            ),
+                            focusRequester = lyricsRotaryFocus,
+                        )
                         .pointerInput(track.id) {
                             // Pull DOWN near the very top of the lyrics →
                             // back to the player. Tunnel pass + own
@@ -872,9 +927,9 @@ internal fun LyricsFullscreen(
                                 lyricsState.lines.forEach { line ->
                                     Text(
                                         text = line.text,
-                                        color = Color.White.copy(alpha = 0.66f),
-                                        fontSize = 12.sp,
-                                        lineHeight = 17.sp,
+                                        color = Color.White.copy(alpha = 0.80f),
+                                        fontSize = 13.sp,
+                                        lineHeight = 18.sp,
                                         textAlign = TextAlign.Center,
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -893,6 +948,17 @@ internal fun LyricsFullscreen(
                                         text = line.text,
                                         active = index == activeIndex,
                                         activeColor = activeColor,
+                                        modifier = if (index == activeIndex) {
+                                            Modifier.onGloballyPositioned { c ->
+                                                // Placement is per-frame during
+                                                // scroll; equal-value writes are
+                                                // free, so this is nothing.
+                                                activeRowCenterY =
+                                                    c.boundsInRoot().center.y
+                                            }
+                                        } else {
+                                            Modifier
+                                        },
                                     )
                                 }
                             }
@@ -911,23 +977,31 @@ internal fun LyricsFullscreen(
 }
 
 @Composable
-private fun SyncedLyricLine(text: String, active: Boolean, activeColor: Color) {
-    // Static colours computed from state — no per-line animators, so a line
-    // change never animates the whole column frame-by-frame (watch GPUs).
+private fun SyncedLyricLine(
+    text: String,
+    active: Boolean,
+    activeColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    // NATURAL heights: the old fixed 32dp row assumed a uniform pitch
+    // (it fed the centering math) and clipped wrapped lines mid-glyph on
+    // the round face. Padding-driven spacing keeps a stable gap while the
+    // text sizes the row. Static colours — no per-line animators, so a
+    // line change never animates the whole column frame-by-frame.
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .height(LYRICS_ROW_HEIGHT)
+            .padding(vertical = LYRICS_ROW_GAP / 2)
             .then(if (active) Modifier.testTag("lyrics_active_line") else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
-            color = if (active) activeColor else Color.White.copy(alpha = 0.40f),
-            fontSize = (if (active) 14 else 12).sp,
+            color = if (active) activeColor else Color.White.copy(alpha = 0.55f),
+            fontSize = (if (active) 16 else 13).sp,
             fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Normal,
-            lineHeight = if (active) 16.sp else 15.sp,
-            maxLines = 2,
+            lineHeight = if (active) 19.sp else 15.5.sp,
+            maxLines = if (active) 3 else 2,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
         )

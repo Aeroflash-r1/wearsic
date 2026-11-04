@@ -408,12 +408,25 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      * (see [prewarmAlbum]) — a disc tap then answers instantly instead of
      * waiting a server round-trip. Misses are cached too, so a track that
      * has no album does not retry forever.
+     *
+     * ConcurrentHashMap REJECTS null values — caching a miss as a bare
+     * null crashed the app (13 recorded release NPEs on 1.9.42, all
+     * ConcurrentHashMap.putVal, right after a track started playing).
+     * Misses are wrapped in Optional.empty() instead.
      */
-    private val albumByTrackId = java.util.concurrent.ConcurrentHashMap<String, Album?>()
+    private val albumByTrackId =
+        java.util.concurrent.ConcurrentHashMap<String, java.util.Optional<Album>>()
     private val albumInFlight = java.util.Collections.newSetFromMap(
         java.util.concurrent.ConcurrentHashMap<String, Boolean>()
     )
     private val albumWaiters = java.util.concurrent.ConcurrentHashMap<String, MutableList<(Album?) -> Unit>>()
+
+    private fun cachedAlbum(id: String): Album? = albumByTrackId[id]?.orElse(null)
+
+    private fun cacheAlbum(id: String, album: Album?) {
+        albumByTrackId[id] =
+            if (album == null) java.util.Optional.empty() else java.util.Optional.of(album)
+    }
 
     /** Warm the disc-tap resolution in the background as a track starts. */
     fun prewarmAlbum(track: Track) {
@@ -426,14 +439,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         if (albumByTrackId.containsKey(track.id)) {
-            onResult(albumByTrackId[track.id])
+            onResult(cachedAlbum(track.id))
             return
         }
         val waiters = albumWaiters.getOrPut(track.id) { java.util.concurrent.CopyOnWriteArrayList() }
         // Completed while this waiter was being attached?
         if (albumByTrackId.containsKey(track.id)) {
             waiters.remove(onResult)
-            onResult(albumByTrackId[track.id])
+            onResult(cachedAlbum(track.id))
             return
         }
         if (waiters.size < 4) waiters.add(onResult)
@@ -450,7 +463,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         if (albumByTrackId.containsKey(id)) {
-            onDone(albumByTrackId[id])
+            onDone(cachedAlbum(id))
             return
         }
         if (!albumInFlight.add(id)) return // already resolving; waiters catch the result
@@ -485,7 +498,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
             }
-            albumByTrackId[id] = album
+            cacheAlbum(id, album)
             albumInFlight.remove(id)
             onDone(album)
         }

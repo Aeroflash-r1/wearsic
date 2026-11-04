@@ -113,7 +113,7 @@ fun ArtistsScreen(
 
             val group = selected
             if (group != null) {
-                itemsIndexed(group.songs, key = { _, song -> song.id }) { index, song ->
+                itemsIndexed(group.songs.distinctBy { it.id }, key = { _, song -> song.id }) { index, song ->
                     WearsicLibraryTrackRow(
                         track = song,
                         onPlay = { onPlayArtistSongs(group, index) }

@@ -164,7 +164,8 @@ val robolectricOnlyClasses = listOf(
   "com.wearsic.app.RecentPlaybackIdentityTest",
   "com.wearsic.app.RelaunchWithDataTest",
   "com.wearsic.app.ScreenGalleryTest",
-  "com.wearsic.app.SearchResultsRenderTest"
+  "com.wearsic.app.SearchResultsRenderTest",
+  "com.wearsic.app.util.LyricsCenteringTest"
 )
 
 tasks.withType<Test>().configureEach {

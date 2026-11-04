@@ -103,7 +103,7 @@ fun RecommendationsScreen(
                     }
                 }
                 else -> {
-                    itemsIndexed(recommendationsState.tracks, key = { _, track -> track.id }) { index, track ->
+                    itemsIndexed(recommendationsState.tracks.distinctBy { it.id }, key = { _, track -> track.id }) { index, track ->
                         WearsicSongRow(
                             title = track.title,
                             artist = track.artist,

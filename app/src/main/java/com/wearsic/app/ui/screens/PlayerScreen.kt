@@ -455,6 +455,19 @@ private const val LYRICS_EXIT_DRAG_PX = 70f
 /** Vertical gap between lyric rows (rows are natural-height, padding-based). */
 internal val LYRICS_ROW_GAP = 6.dp
 
+/**
+ * Auto-center scroll target for the active lyric row, computed from the row's
+ * MEASURED center (onGloballyPositioned) instead of uniform-pitch arithmetic.
+ * Pure so unit tests can pin it without a composable: returns the scroll value
+ * that moves [rowCenterY] onto [anchorY], clamped to the scrollable range.
+ */
+internal fun lyricsAutoCenterTarget(
+    currentValue: Int,
+    maxValue: Int,
+    rowCenterY: Float,
+    anchorY: Float,
+): Int = (currentValue + rowCenterY - anchorY).roundToInt().coerceIn(0, maxValue)
+
 @Composable
 private fun NowPlayingPage(
     track: Track,
@@ -782,25 +795,33 @@ internal fun LyricsFullscreen(
                         return@LaunchedEffect
                     }
                     if (scrollState.isScrollInProgress) return@LaunchedEffect
-                    withFrameNanos { } // let the (possibly new) active row lay out
-                    val rowY = activeRowCenterY
+                    // Let the (possibly new) active row lay out and report its
+                    // center; tolerate a frame or two of NaN on cold entry.
+                    var rowY = Float.NaN
+                    repeat(3) {
+                        withFrameNanos { }
+                        rowY = activeRowCenterY
+                        if (!rowY.isNaN()) return@repeat
+                    }
                     if (rowY.isNaN()) return@LaunchedEffect
                     // Park the active row a little BELOW the body midline: on
                     // the round face the header zone above can cover the top
                     // of a tall highlighted row when centered exactly at 50%
                     // (real-device report: "upper part hidden by the lyrics UI
                     // design"). 60% keeps the whole highlight visible.
-                    val anchorY = bodyPx * 0.60f
-                    val delta = rowY - anchorY
-                    // A few px are layout noise, never drift.
-                    if (kotlin.math.abs(delta) < 8f) return@LaunchedEffect
+                    val target = lyricsAutoCenterTarget(
+                        currentValue = scrollState.value,
+                        maxValue = scrollState.maxValue,
+                        rowCenterY = rowY,
+                        anchorY = bodyPx * 0.60f,
+                    )
+                    if (target == scrollState.value) return@LaunchedEffect
                     // Defensive: a racing manual scroll/disposal must never
                     // crash out of the scroll math (real-device reports of a
                     // crash while scrolling during load).
                     runCatching {
                         scrollState.animateScrollTo(
-                            (scrollState.value + delta).roundToInt()
-                                .coerceIn(0, scrollState.maxValue),
+                            target,
                             tween(340, easing = FastOutSlowInEasing),
                         )
                     }

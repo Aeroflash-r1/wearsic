@@ -23,7 +23,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -83,11 +82,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -251,19 +248,11 @@ fun PlayerScreen(
             snapshotFlow { pagerState.currentPage }.collect { pageIndex = it }
         }
 
-        // Bezel on Now Playing flips pages. Accumulated raw rotary deltas
-        // cross a threshold per 45°-worth of rotation; direction follows the
-        // rotation. Deterministic: every notch does something visible, never
-        // a dead crown.
-        var rotaryFlipAccum by remember { mutableFloatStateOf(0f) }
-
-        // The crown needs ONE owner at a time, reached by bubbling outward
-        // from whatever node holds focus: page 0 without lyrics → THIS
-        // wrapper (flips pages); page 1 → the actions list's framework
-        // rotary handler; lyrics open → the lyrics' framework handler.
-        // Without an owner a notch only fired the system's touch-bezel tick
-        // and nothing moved.
-        val playerRotaryFocus = remember { FocusRequester() }
+        // No rotary owner on Now Playing: the bezel should do NOTHING here
+        // (user: "doesn't need touch bezel scroll in nowplaying screen").
+        // The Actions list owns the bezel when page 1 is visible; lyrics own
+        // it while open. Once a node holds focus, rotary events bubble up
+        // from it — with no focus target below, no scroll fires.
 
         // Natural screen-open: a soft zoom + fade across ~220ms. Runs once
         // per entry, layer-only (no recomposition), so it reads as a smooth,
@@ -287,22 +276,6 @@ fun PlayerScreen(
         // covering the page dots while open.
         var lyricsMode by remember(track.id) { mutableStateOf(false) }
 
-        // Crown focus hop: claim the bezel whenever the wrapper is the
-        // active owner — entering the player (pageIndex 0), flipping back
-        // from Actions, and closing the lyrics sheet. The lyrics' internal
-        // state machine owns the crown while open.
-        LaunchedEffect(pageIndex, lyricsMode) {
-            if (pageIndex == 0 && !lyricsMode) {
-                repeat(5) {
-                    if (runCatching { playerRotaryFocus.requestFocus() }
-                            .getOrNull() == true
-                    ) {
-                        return@LaunchedEffect
-                    }
-                    delay(40)
-                }
-            }
-        }
         val lyricsScrollState = rememberScrollState()
         val currentPos by rememberUpdatedState(playbackState.currentPositionMs)
         val currentPlaying by rememberUpdatedState(playbackState.isPlaying)
@@ -360,35 +333,6 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(contentPadding)
-                    .onRotaryScrollEvent { event ->
-                        if (lyricsMode) {
-                            // Lyrics screen owns its own rotary scroll.
-                            false
-                        } else {
-                            rotaryFlipAccum += event.verticalScrollPixels
-                            // ~ one crown notch per flip (empirical 454px
-                            // face; deltas per notch ≈ 40-60px).
-                            val notch = 70f
-                            var flipped = false
-                            while (rotaryFlipAccum >= notch) {
-                                rotaryFlipAccum -= notch
-                                scope.launch { pagerState.scrollToPage((pageIndex + 1) % 2) }
-                                flipped = true
-                            }
-                            while (rotaryFlipAccum <= -notch) {
-                                rotaryFlipAccum += notch
-                                scope.launch { pagerState.scrollToPage((pageIndex + 1) % 2) }
-                                flipped = true
-                            }
-                            flipped || rotaryFlipAccum != 0f
-                        }
-                    }
-                    // Handler must sit OUTSIDE the focus target (modifiers
-                    // left of focusRequester/focusable): a notch propagates
-                    // OUTWARD from the focus owner, so an inner handler is
-                    // never reached, an outer one always is.
-                    .focusRequester(playerRotaryFocus)
-                    .focusable()
             ) {
                 HorizontalPager(
                     state = pagerState,
@@ -640,9 +584,8 @@ private fun NowPlayingPage(
                 ).filter { it.isNotBlank() }.joinToString(" · ")
             }
 
-            // The only lyrics affordance on Now Playing: a small, text-only
-            // "Lyrics" label sitting right after the time line — no pill, no
-            // bubble, no border. Pull-up still works too.
+            // The only lyrics affordance on Now Playing: a small, quiet icon —
+            // no text, no pill, no bubble. Pull-up still works too.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -662,17 +605,22 @@ private fun NowPlayingPage(
                         .padding(top = 3.dp),
                 )
                 if (hasTrack) {
-                    Text(
-                        text = "Lyrics",
-                        color = if (colors.fromArtwork) colors.accent else Color.White.copy(alpha = 0.75f),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 0.4.sp,
+                    Box(
                         modifier = Modifier
-                            .padding(start = 8.dp, top = 3.dp, end = 2.dp)
+                            .size(32.dp)
+                            .padding(start = 2.dp)
                             .wearsicClickable(onClick = onOpenLyrics)
                             .testTag("lyrics_open_button"),
-                    )
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MusicNote,
+                            contentDescription = "Open Lyrics",
+                            tint = if (colors.fromArtwork) colors.accent
+                            else Color.White.copy(alpha = 0.75f),
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             }
 
@@ -696,12 +644,12 @@ private fun NowPlayingPage(
 }
 
 /**
- * THE fullscreen lyrics page. Uniform rows make the active line's centering
- * exact: top/bottom pads are half the body viewport, so line i centers at
- * scroll target `i * pitch` — precise on every screen. Manual scrolling
- * (touch, bezel) always wins: auto-centering pauses while any scroll is in
- * progress, and resumes when the list settles. This composable is internal
- * so the Roborazzi gallery can render the real page.
+ * THE fullscreen lyrics page. The active line is auto-centered by MEASURED
+ * position (onGloballyPositioned) at 60% of the body, so wrapped lines stay
+ * fully visible below the header band. Manual scrolling (touch, bezel)
+ * always wins: auto-centering pauses while any scroll is in progress, and
+ * resumes when the list settles. This composable is internal so the
+ * Roborazzi gallery can render the real page.
  */
 @Composable
 internal fun LyricsFullscreen(
@@ -728,9 +676,9 @@ internal fun LyricsFullscreen(
     val density = LocalDensity.current
 
     // Framework rotary owns the crown while the lyrics are open: the notch
-    // scrolls this body (with framework haptics) exactly like a built-in
-    // app. It takes focus from the page-flip wrapper on open; the wrapper's
-    // LaunchedEffect(lyricsMode) hands it back on close.
+    // scrolls this body (framework routing, old-style haptics) exactly like
+    // a built-in app. Taking focus here also blocks the bezel from reaching
+    // the Actions list behind the sheet.
     val lyricsRotaryFocus = remember { FocusRequester() }
     LaunchedEffect(lyricsRotaryFocus) {
         repeat(5) {
@@ -837,7 +785,13 @@ internal fun LyricsFullscreen(
                     withFrameNanos { } // let the (possibly new) active row lay out
                     val rowY = activeRowCenterY
                     if (rowY.isNaN()) return@LaunchedEffect
-                    val delta = rowY - halfBodyPx
+                    // Park the active row a little BELOW the body midline: on
+                    // the round face the header zone above can cover the top
+                    // of a tall highlighted row when centered exactly at 50%
+                    // (real-device report: "upper part hidden by the lyrics UI
+                    // design"). 60% keeps the whole highlight visible.
+                    val anchorY = bodyPx * 0.60f
+                    val delta = rowY - anchorY
                     // A few px are layout noise, never drift.
                     if (kotlin.math.abs(delta) < 8f) return@LaunchedEffect
                     // Defensive: a racing manual scroll/disposal must never
@@ -862,10 +816,13 @@ internal fun LyricsFullscreen(
                         // onRotaryScrollEvent dispatcher that intermittently
                         // left the crown dead ("haptic tick, no scroll").
                         .rotaryScrollable(
-                            behavior = RotaryScrollableDefaults.behavior(
-                                scrollableState = scrollState,
+                            RotaryScrollableDefaults.behavior(
+                                scrollState,
+                                null,
+                                false,
                             ),
-                            focusRequester = lyricsRotaryFocus,
+                            lyricsRotaryFocus,
+                            true,
                         )
                         .pointerInput(track.id) {
                             // Pull DOWN near the very top of the lyrics →

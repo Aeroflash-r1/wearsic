@@ -5,6 +5,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.ScalingLazyListState
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
@@ -26,12 +27,21 @@ import kotlinx.coroutines.delay
  * laid out yet (cold screen entry) and a single failed attempt used to leave
  * the bezel dead until something else took focus — retry briefly, then stop
  * (never fighting a later explicit focus request).
+ *
+ * REVERSE DIRECTION: the framework default scrolls opposite to the rest of
+ * the app's rotary gestures (real-device report: "works but inverted"). We
+ * align to the previous behavior — [reverseDirection] default true.
+ *
+ * HAPTICS: the framework's built-in rotary haptics feel different from the
+ * old system bezel tick. We disable the framework haptic and keep the
+ * platform's own tick (the old feel).
  */
 @Composable
 fun Modifier.wearsicRotaryScroll(
     listState: ScalingLazyListState,
     focusRequester: FocusRequester = remember { FocusRequester() },
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    reverseDirection: Boolean = true,
 ): Modifier {
     LaunchedEffect(focusRequester, enabled) {
         if (!enabled) return@LaunchedEffect
@@ -43,8 +53,12 @@ fun Modifier.wearsicRotaryScroll(
         }
     }
     return this.rotaryScrollable(
-        RotaryScrollableDefaults.snapBehavior(listState),
+        RotaryScrollableDefaults.snapBehavior(
+            listState,
+            0.dp,
+            false,
+        ),
         focusRequester,
-        enabled,
+        reverseDirection,
     )
 }

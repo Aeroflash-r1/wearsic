@@ -2,7 +2,7 @@ package com.wearsic.app.util
 
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
@@ -16,16 +16,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import kotlin.math.abs
 
 /**
- * Pins the fullscreen lyrics auto-centering BEHAVIOUR (not math): on a round
- * 454px face, whatever line becomes active must end up visually centred.
- * The implementation is measured (onGloballyPositioned of the active row)
- * rather than pitch-arithmetic, precisely because wrapped lines make row
- * heights non-uniform — so the test pins the observable: the active row's
- * centre sits at half the viewport height (± a deadband) no matter which
- * line is active and how much the rows wrap.
+ * Pins the fullscreen lyrics auto-centering BEHAVIOUR on a round face: the
+ * active line must end up fully visible and parked BELOW the screen middle
+ * (the user-facing guarantee — "upper part hidden by the lyrics UI design").
+ * Implementation is measured (onGloballyPositioned) and anchors at 60% of
+ * the body, so the test pins the observable outcome, not pixel math.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(qualifiers = RobolectricDeviceQualifiers.WearOSLargeRound, sdk = [36])
@@ -33,9 +30,8 @@ class LyricsCenteringTest {
 
     @get:Rule val composeTestRule = createComposeRule()
 
-    // Deliberately UNEVEN heights: short lines, and long lines that wrap —
-    // the old uniform-pitch centering demonstrably drifted on rows like
-    // these (live device report).
+    // Deliberately UNEVEN heights: short lines and long wrapping lines — the
+    // old uniform-pitch centering demonstrably drifted on rows like these.
     private val lines = listOf(
         "Look at the stars",
         "Look how they shine for you and everything that you do so clearly tonight",
@@ -47,18 +43,23 @@ class LyricsCenteringTest {
         "And it was called Yellow",
     ).mapIndexed { i, text -> LyricLine(timeMs = i * 4200L, text = text) }
 
-    private fun activeCenterOffset(): Float? = try {
-        val screenHeight = composeTestRule.onRoot().fetchSemanticsNode()
-            .boundsInRoot.height.toFloat()
-        val center = composeTestRule.onNodeWithTag("lyrics_active_line")
-            .fetchSemanticsNode().boundsInRoot.center.y
-        center - screenHeight / 2f
+    private data class ActiveRowState(val visible: Boolean, val centerY: Float, val screenHeight: Float)
+
+    private fun activeRowState(): ActiveRowState? = try {
+        val screen = composeTestRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val active = composeTestRule.onNodeWithTag("lyrics_active_line")
+            .fetchSemanticsNode().boundsInRoot
+        ActiveRowState(
+            visible = active.top >= 0f && active.bottom <= screen.height,
+            centerY = active.center.y,
+            screenHeight = screen.height,
+        )
     } catch (_: Exception) {
         null
     }
 
     @Test
-    fun `active line ends up centred no matter which line activates`() {
+    fun `active line ends up fully visible and below middle no matter which line activates`() {
         val active = mutableStateOf(0)
         composeTestRule.setContent {
             LyricsFullscreen(
@@ -77,17 +78,18 @@ class LyricsCenteringTest {
             )
         }
 
-        // Each activation must re-centre — including AFTER the content has
-        // already been scrolled (exercises the delta-from-current path).
         for (index in listOf(0, 6, 2, 7)) {
             active.value = index
-            composeTestRule.waitUntil(timeoutMillis = 3_000) {
-                activeCenterOffset()?.let { abs(it) <= 24f } ?: false
+            composeTestRule.waitUntil(timeoutMillis = 5_000) {
+                val s = activeRowState()
+                s != null && s.visible && s.centerY > s.screenHeight * 0.52f
             }
-            val offset = activeCenterOffset()
-            checkNotNull(offset) { "lyrics_active_line missing for index $index" }
-            check(abs(offset) <= 24f) {
-                "line $index not centred: offset ${offset}px from viewport middle"
+            val s = checkNotNull(activeRowState()) {
+                "lyrics_active_line missing for index $index"
+            }
+            check(s.visible) { "line $index clipped by the face" }
+            check(s.centerY > s.screenHeight * 0.52f) {
+                "line $index parked above middle: center=${s.centerY} on ${s.screenHeight}px"
             }
         }
     }

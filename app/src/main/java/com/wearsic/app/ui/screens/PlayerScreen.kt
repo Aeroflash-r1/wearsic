@@ -15,10 +15,13 @@ import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.viewmodel.LyricsViewModel
+import java.util.Locale
 import kotlin.math.roundToInt
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.StartOffsetType
+import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -1063,6 +1066,16 @@ private fun SyncedLyricLine(
     }
 }
 
+/**
+ * Lyrics placeholder pulse: alpha floor/ceiling, rise time and full period.
+ * The period is 420 ms up + 760 ms down — deliberately asymmetric so the
+ * three rows read as a wave travelling down the body rather than a blink.
+ */
+private const val SHIMMER_MIN_ALPHA = 0.10f
+private const val SHIMMER_MAX_ALPHA = 0.26f
+private const val SHIMMER_RISE_MS = 420
+private const val SHIMMER_PERIOD_MS = 1180
+
 @Composable
 private fun LyricsLoading(bodyHeight: Dp) {
     val accent = LocalWearsicAccent.current
@@ -1107,33 +1120,51 @@ private fun LyricsLoading(bodyHeight: Dp) {
             // the app's shimmer language (staggered pulse). They promise the
             // layout the user is about to see instead of an abstract spinner
             // alone — the loading state stops reading as "frozen".
+            // Driven by rememberInfiniteTransition, the same pattern as the
+            // search placeholders: a manual animation coroutine here wrote
+            // state every frame FOREVER, Compose never went idle, and
+            // Espresso AppNotIdleException'd ScreenGalleryTest.lyrics_loading
+            // in CI (infinite transitions themselves stay idle-safe — the M3
+            // spinner passed this exact test in v1.9.45).
+            // ONE transition drives all three rows (not one per row), and the
+            // alpha is read in the DRAW phase — the pulse then invalidates a
+            // draw, never a recomposition, so the loading state cannot cost a
+            // frame of composition work per tick.
+            val shimmer = rememberInfiniteTransition(label = "lyricsShimmer")
             val fractions = listOf(0.86f, 1f, 0.72f)
-            val delays = listOf(0L, 170L, 340L)
+            val stagger = listOf(0, 170, 340)
             fractions.forEachIndexed { i, fraction ->
-                var pulse by remember { mutableFloatStateOf(0.12f) }
-                LaunchedEffect(i) {
-                    delay(delays[i])
-                    while (isActive) {
-                        // GSAP-style ease: pulse up fast, fall slow — reads as
-                        // a wave travelling down the rows.
-                        animate(
-                            initialValue = 0.10f,
-                            targetValue = 0.26f,
-                            animationSpec = tween(420, easing = FastOutSlowInEasing),
-                        ) { value, _ -> pulse = value }
-                        animate(
-                            initialValue = 0.26f,
-                            targetValue = 0.10f,
-                            animationSpec = tween(760, easing = FastOutSlowInEasing),
-                        ) { value, _ -> pulse = value }
-                    }
-                }
+                val pulse = shimmer.animateFloat(
+                    initialValue = SHIMMER_MIN_ALPHA,
+                    targetValue = SHIMMER_MAX_ALPHA,
+                    // RepeatMode.Reverse reuses ONE tween in both directions,
+                    // so it can only breathe symmetrically and it silently
+                    // dropped the asymmetry this placeholder is built on:
+                    // rise fast (420 ms), fall slowly (760 ms). Keyframes keeps
+                    // that rhythm inside a single infinite animation (which,
+                    // unlike a hand-rolled animate() loop, stays idle-safe).
+                    animationSpec = infiniteRepeatable(
+                        keyframes {
+                            durationMillis = SHIMMER_PERIOD_MS
+                            SHIMMER_MAX_ALPHA at SHIMMER_RISE_MS using FastOutSlowInEasing
+                            SHIMMER_MIN_ALPHA at SHIMMER_PERIOD_MS
+                        },
+                        // Delay, not the default FastForward: FastForward would
+                        // start each row ALREADY partway through the cycle, so
+                        // the last row would lead and the wave would travel UP
+                        // instead of down the body.
+                        initialStartOffset = StartOffset(stagger[i], StartOffsetType.Delay),
+                    ),
+                    label = "lyricsShimmerPulse$i",
+                )
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(fraction)
                         .height(15.dp)
                         .clip(RoundedCornerShape(7.dp))
-                        .background(Color.White.copy(alpha = pulse)),
+                        .drawBehind {
+                            drawRect(color = Color.White.copy(alpha = pulse.value))
+                        },
                 )
                 if (i < fractions.lastIndex) Spacer(modifier = Modifier.height(9.dp))
             }
@@ -1665,10 +1696,13 @@ private fun formatTime(ms: Long): String {
     val hours = totalSeconds / 3600
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
+    // Locale.US, not the default: `%d` under an Arabic/Persian locale emits
+    // Eastern-Arabic digits, and a clock read-out flipping numeral systems (or
+    // mixing them with the `--:--` placeholder) is a bug, not localisation.
     return if (hours > 0) {
-        String.format("%d:%02d:%02d", hours, minutes, seconds)
+        String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
     } else {
-        String.format("%d:%02d", minutes, seconds)
+        String.format(Locale.US, "%d:%02d", minutes, seconds)
     }
 }
 

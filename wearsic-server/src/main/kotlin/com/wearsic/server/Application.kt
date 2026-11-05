@@ -104,11 +104,21 @@ private fun lanAddress(): String? = runCatching {
  * One compact startup box instead of five scattered lines. Plain text (no
  * ANSI): it lands in wearsic-server.log and is read via `wearsic logs`.
  */
-private fun startupBanner(port: Int, dbPath: String, apiKeySet: Boolean, transcoderReady: Boolean): String {
+private fun startupBanner(
+    port: Int,
+    host: String,
+    dbPath: String,
+    apiKeySet: Boolean,
+    transcoderReady: Boolean,
+): String {
     val title = "wearsic engine ${ServerVersion.VERSION}"
+    // IPv6 literals are bracketed inside a URL; a loopback-only bind has no
+    // LAN address worth advertising.
+    val displayHost = if (host.contains(':')) "[$host]" else host
+    val wildcard = host == "0.0.0.0" || host == "::"
     val rows = buildList {
-        add("address    http://0.0.0.0:$port")
-        lanAddress()?.let { add("LAN        http://$it:$port") }
+        add("address    http://$displayHost:$port")
+        if (wildcard) lanAddress()?.let { add("LAN        http://$it:$port") }
         add("database   ${File(dbPath).name}")
         add("transcoder ${if (transcoderReady) "ready (ffmpeg)" else "unavailable - pkg install ffmpeg"}")
         add("auth       ${if (apiKeySet) "API key required" else "open - no API key (LAN use)"}")
@@ -125,6 +135,11 @@ private fun startupBanner(port: Int, dbPath: String, apiKeySet: Boolean, transco
 
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
+    // Bind address. The default is what a watch on the same LAN/Tailnet needs;
+    // WEARSIC_HOST lets a hardened deployment keep the engine on loopback and
+    // expose it only through a TLS reverse proxy (or a single Tailscale
+    // interface), instead of listening on every interface unconditionally.
+    val host = System.getenv("WEARSIC_HOST")?.trim()?.takeIf { it.isNotEmpty() } ?: "0.0.0.0"
     val dbPath = System.getenv("WEARSIC_DB_PATH") ?: "wearsic.db"
     // Self-healing state (staged engine updates + update.json handoff).
     // WEARSIC_STATE_DIR lets deployments keep it next to the DB by default.
@@ -321,7 +336,7 @@ fun main() {
     val engine = embeddedServer(
         ServerCIO,
         port = port,
-        host = "0.0.0.0",
+        host = host,
         configure = {
             connectionGroupSize = cores.coerceIn(2, 8)
             workerGroupSize = (cores * 2).coerceIn(4, 24)
@@ -343,7 +358,7 @@ fun main() {
         // Startup banner once the app is actually live (connectors bound),
         // so the log opens with one readable box instead of scattered lines.
         environment.monitor.subscribe(ApplicationStarted) {
-            bootLog.info(startupBanner(port, dbPath, apiKey != null, transcoder.available))
+            bootLog.info(startupBanner(port, host, dbPath, apiKey != null, transcoder.available))
             // AOT TRAINING RUN (JDK 25+): boot exactly like production, run
             // nothing, then exit normally so `-XX:AOTMode=record` can flush
             // its configuration at VM exit. Recording only captures code that

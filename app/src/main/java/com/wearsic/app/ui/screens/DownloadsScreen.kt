@@ -77,6 +77,7 @@ import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
+import java.util.Locale
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
@@ -339,7 +340,7 @@ private fun DownloadedTrackItemCard(
     modifier: Modifier = Modifier
 ) {
     val sizeMb = if (entity.fileSizeBytes > 0) {
-        String.format("%.1f MB", entity.fileSizeBytes / (1024.0 * 1024.0))
+        String.format(Locale.US, "%.1f MB", entity.fileSizeBytes / (1024.0 * 1024.0))
     } else {
         "Offline"
     }

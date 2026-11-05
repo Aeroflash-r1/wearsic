@@ -776,8 +776,17 @@ internal fun LyricsFullscreen(
                 // onGloballyPositioned on every layout (only the active row
                 // carries the observer; equal-value writes are free).
                 // ROOT coordinates — the anchor below must share this frame.
+                // EPOCH tags the value with the row index that wrote it: the
+                // auto-center below must anchor the CURRENTLY-active row, and
+                // the previous row's leftover value is NOT NaN (it is simply
+                // last), so timing by NaN alone let every line change anchor
+                // against the PREVIOUS row's stale position — the highlight
+                // drifted lower line after line until it left the visible
+                // band (real-device report), and cold opens could center a
+                // row that was not singing at all.
                 var activeRowCenterY by remember { mutableFloatStateOf(Float.NaN) }
                 var activeRowHeightPx by remember { mutableFloatStateOf(0f) }
+                var activeRowEpoch by remember { mutableIntStateOf(-1) }
 
                 // Root-space Y where the body begins (i.e. directly below the
                 // header). Coordinates only compare correctly within one
@@ -798,55 +807,76 @@ internal fun LyricsFullscreen(
                     if (!synced || activeIndex < 0) {
                         return@LaunchedEffect
                     }
-                    if (scrollState.isScrollInProgress) return@LaunchedEffect
-                    // Let the (possibly new) active row and the body itself
-                    // lay out; tolerate a frame or two of NaN on cold entry —
-                    // the body's root-space top lands with the first layout.
-                    var rowY = Float.NaN
-                    var attempts = 0
-                    while (rowY.isNaN() && attempts < 6) {
-                        withFrameNanos { }
-                        rowY = activeRowCenterY
-                        attempts++
-                    }
-                    if (rowY.isNaN() || bodyTopInRoot <= 0f) return@LaunchedEffect
-                    // Park the active row a little BELOW the body midline: on
-                    // the round face the header zone above can cover the top
-                    // of a tall highlighted row when centered exactly at 50%
-                    // (real-device report: "upper part hidden by the lyrics UI
-                    // design"). 60% keeps the whole highlight visible.
-                    val anchorY = bodyTopInRoot + bodyPx * 0.60f
-                    val centerTarget = lyricsAutoCenterTarget(
-                        currentValue = scrollState.value,
-                        maxValue = scrollState.maxValue,
-                        rowCenterY = rowY,
-                        anchorY = anchorY,
-                    )
-                    // Hard clearance guarantee: the highlight's TOP must land
-                    // below the body's top edge. Centering alone can't do
-                    // that for the tallest (3-line) rows if the body is
-                    // short — re-anchor so the row TOP sits at the clearance
-                    // line instead. (8dp margin below the header band.)
-                    // min(): healthy rows keep the 60% center; an oversize
-                    // row gets pushed DOWN until its top just clears.
-                    val clearanceTop = bodyTopInRoot +
-                        with(density) { 8.dp.toPx() }
-                    val minTopTarget = lyricsAutoCenterTarget(
-                        currentValue = scrollState.value,
-                        maxValue = scrollState.maxValue,
-                        rowCenterY = rowY,
-                        anchorY = clearanceTop + activeRowHeightPx / 2f,
-                    )
-                    val target = minOf(centerTarget, minTopTarget)
-                    if (target == scrollState.value) return@LaunchedEffect
-                    // Defensive: a racing manual scroll/disposal must never
-                    // crash out of the scroll math (real-device reports of a
-                    // crash while scrolling during load).
-                    runCatching {
-                        scrollState.animateScrollTo(
-                            target,
-                            tween(340, easing = FastOutSlowInEasing),
+                    // Two attempts per activation: cold entries sometimes miss
+                    // the first measurement window entirely.
+                    var attempt = 0
+                    while (attempt < 2) {
+                        attempt++
+                        // Let any in-flight scroll finish BEFORE measuring —
+                        // activating mid-animation is normal (fast lines); the
+                        // old one-shot skip meant those activations never
+                        // re-anchored at all. Capped, so a continuous manual
+                        // drag is never fought longer than ~1.5s.
+                        var settleFrames = 0
+                        while (scrollState.isScrollInProgress && settleFrames < 90) {
+                            withFrameNanos { }
+                            settleFrames++
+                        }
+                        // Wait until the CURRENTLY-active row itself reports
+                        // (epoch match), capped at ~12 frames.
+                        var measureFrames = 0
+                        while (activeRowEpoch != activeIndex && measureFrames < 12) {
+                            withFrameNanos { }
+                            measureFrames++
+                        }
+                        val rowY = activeRowCenterY
+                        if (bodyTopInRoot <= 0f || activeRowEpoch != activeIndex || rowY.isNaN()) {
+                            if (attempt == 1) {
+                                delay(300)
+                                continue
+                            }
+                            return@LaunchedEffect
+                        }
+                        // Park the active row a little BELOW the body midline: on
+                        // the round face the header zone above can cover the top
+                        // of a tall highlighted row when centered exactly at 50%
+                        // (real-device report: "upper part hidden by the lyrics UI
+                        // design"). 60% keeps the whole highlight visible.
+                        val anchorY = bodyTopInRoot + bodyPx * 0.60f
+                        val centerTarget = lyricsAutoCenterTarget(
+                            currentValue = scrollState.value,
+                            maxValue = scrollState.maxValue,
+                            rowCenterY = rowY,
+                            anchorY = anchorY,
                         )
+                        // Hard clearance guarantee: the highlight's TOP must land
+                        // below the body's top edge. Centering alone can't do
+                        // that for the tallest (3-line) rows if the body is
+                        // short — re-anchor so the row TOP sits at the clearance
+                        // line instead. (8dp margin below the header band.)
+                        // min(): healthy rows keep the 60% center; an oversize
+                        // row gets pushed DOWN until its top just clears.
+                        val clearanceTop = bodyTopInRoot +
+                            with(density) { 8.dp.toPx() }
+                        val minTopTarget = lyricsAutoCenterTarget(
+                            currentValue = scrollState.value,
+                            maxValue = scrollState.maxValue,
+                            rowCenterY = rowY,
+                            anchorY = clearanceTop + activeRowHeightPx / 2f,
+                        )
+                        val target = minOf(centerTarget, minTopTarget)
+                        if (target != scrollState.value) {
+                            // Defensive: a racing manual scroll/disposal must
+                            // never crash out of the scroll math (real-device
+                            // reports of a crash while scrolling during load).
+                            runCatching {
+                                scrollState.animateScrollTo(
+                                    target,
+                                    tween(340, easing = FastOutSlowInEasing),
+                                )
+                            }
+                        }
+                        return@LaunchedEffect
                     }
                 }
 
@@ -964,6 +994,12 @@ internal fun LyricsFullscreen(
                                                 val b = c.boundsInRoot()
                                                 activeRowCenterY = b.center.y
                                                 activeRowHeightPx = b.height.toFloat()
+                                                // The epoch tells the
+                                                // auto-center THAT THIS ROW's
+                                                // fresh report has landed: with
+                                                // it, anchoring never reads the
+                                                // previous row's stale value.
+                                                activeRowEpoch = index
                                             }
                                         } else {
                                             Modifier

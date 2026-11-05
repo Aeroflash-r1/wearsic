@@ -12,8 +12,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WearsicDownloadEntity::class,
         WearsicRecentTrackEntity::class,
         WearsicFavoriteTrackEntity::class,
+        WearsicLyricsEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class WearsicDatabase : RoomDatabase() {
@@ -23,6 +24,8 @@ abstract class WearsicDatabase : RoomDatabase() {
     abstract fun recentTrackDao(): RecentTrackDao
 
     abstract fun favoriteDao(): FavoriteDao
+
+    abstract fun lyricsDao(): LyricsDao
 
     companion object {
         @Volatile
@@ -77,6 +80,23 @@ abstract class WearsicDatabase : RoomDatabase() {
             }
         }
 
+        // Offline lyrics cache (1.9.45): one row per saved song, lines as JSON.
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS lyrics_cache (" +
+                        "trackId TEXT NOT NULL PRIMARY KEY, " +
+                        "title TEXT NOT NULL, " +
+                        "artist TEXT NOT NULL, " +
+                        "mode TEXT NOT NULL, " +
+                        "source TEXT, " +
+                        "linesJson TEXT NOT NULL, " +
+                        "durationMs INTEGER NOT NULL, " +
+                        "fetchedAt INTEGER NOT NULL)"
+                )
+            }
+        }
+
         fun getInstance(context: Context): WearsicDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -89,6 +109,7 @@ abstract class WearsicDatabase : RoomDatabase() {
                         MIGRATION_2_3,
                         MIGRATION_3_4,
                         MIGRATION_4_5,
+                        MIGRATION_5_6,
                     )
                     // Safety net: a future schema change that ships without a
                     // migration (or a DB created by a package-rename build)

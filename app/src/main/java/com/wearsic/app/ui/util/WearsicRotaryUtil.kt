@@ -2,6 +2,7 @@ package com.wearsic.app.ui.util
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -10,6 +11,14 @@ import androidx.wear.compose.foundation.lazy.ScalingLazyListState
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import kotlinx.coroutines.delay
+
+/**
+ * User's bezel/crown direction preference, provided app-wide from Settings.
+ * `false` = the standard direction every built-in Wear app uses (aligned
+ * with touch scrolling per the framework's reverseDirection contract).
+ * Flippable in Settings because the right feel is wrist-specific.
+ */
+val LocalRotaryDirectionInverted = staticCompositionLocalOf { false }
 
 /**
  * Bezel/crown scrolling for list screens.
@@ -28,20 +37,23 @@ import kotlinx.coroutines.delay
  * the bezel dead until something else took focus — retry briefly, then stop
  * (never fighting a later explicit focus request).
  *
- * REVERSE DIRECTION: the framework default scrolls opposite to the rest of
- * the app's rotary gestures (real-device report: "works but inverted"). We
- * align to the previous behavior — [reverseDirection] default true.
+ * DIRECTION: the framework contract is reverseDirection = the direction of
+ * the backing modifier's touch scroll — for our vertical lists that is the
+ * DEFAULT (false, i.e. notch-down advances through the list exactly like
+ * touch). 1.9.44 shipped this flipped to `true`, which the user calls
+ * "inverted". The default stays touch-aligned; users who prefer the other
+ * way flip "Bezel Scroll" in Settings ([LocalRotaryDirectionInverted]).
  *
- * HAPTICS: the framework's built-in rotary haptics feel different from the
- * old system bezel tick. We disable the framework haptic and keep the
- * platform's own tick (the old feel).
+ * HAPTICS: the framework's rotary haptic handler ticks each notch — that is
+ * the per-step feel of every built-in Wear list. 1.9.44 had it disabled,
+ * which removed all bezel feedback; it stays on.
  */
 @Composable
 fun Modifier.wearsicRotaryScroll(
     listState: ScalingLazyListState,
     focusRequester: FocusRequester = remember { FocusRequester() },
     enabled: Boolean = true,
-    reverseDirection: Boolean = true,
+    reverseDirection: Boolean = LocalRotaryDirectionInverted.current,
 ): Modifier {
     LaunchedEffect(focusRequester, enabled) {
         if (!enabled) return@LaunchedEffect
@@ -56,7 +68,7 @@ fun Modifier.wearsicRotaryScroll(
         RotaryScrollableDefaults.snapBehavior(
             listState,
             0.dp,
-            false,
+            true,
         ),
         focusRequester,
         reverseDirection,

@@ -122,6 +122,7 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.ArtworkColors
+import com.wearsic.app.ui.util.LocalRotaryDirectionInverted
 import com.wearsic.app.ui.util.extractArtworkColors
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -720,42 +721,34 @@ internal fun LyricsFullscreen(
         )
 
         Column(modifier = Modifier.fillMaxSize()) {
-            // Compact header: song context + the exit affordance. Horizontal
-            // padding sized for the ROUND face — at this height the circular
-            // mask leaves ~66px on each side, so 16dp of start padding put
-            // the header text INTO the black corner (live device: "Lyrics"
-            // at x=34 with the chord starting at x=66). 40dp keeps both
-            // header text and the exit chevron inside the circle.
-            Row(
+            // Compact header: "Lyrics" + exit affordance ONLY. The song
+            // name/artist context line was removed — every pixel above the
+            // body is a pixel taken from lyric space, and the player screen
+            // already identifies the track (user request, 1.9.45). The title
+            // is centered over the lyric column (which centers its lines) so
+            // the header reads balanced; the chevron keeps its 30dp touch
+            // target at the trailing edge, still inside the top chord.
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 40.dp, end = 40.dp, top = 26.dp, bottom = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(start = 40.dp, end = 40.dp, top = 18.dp, bottom = 0.dp),
+                contentAlignment = Alignment.Center,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Lyrics",
-                        color = if (colors.fromArtwork) colors.accent else Color.White.copy(alpha = 0.9f),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.6.sp,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = "${track.title} · ${track.artist}",
-                        color = Color.White.copy(alpha = 0.55f),
-                        fontSize = 10.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                Text(
+                    text = "Lyrics",
+                    color = if (colors.fromArtwork) colors.accent else Color.White.copy(alpha = 0.9f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 0.6.sp,
+                    maxLines = 1,
+                )
                 // Exit affordance: a small, bare chevron — no bubble, no
                 // border (the translucent circle read as UI noise on the
                 // full-white lyrics canvas). The 30dp invisible touch target
                 // keeps the tap reliable on a sweaty wrist.
                 Box(
                     modifier = Modifier
-                        .padding(start = 2.dp)
+                        .align(Alignment.CenterEnd)
                         .size(30.dp)
                         .wearsicClickable(onClick = onExit)
                         .testTag("lyrics_back_button"),
@@ -771,8 +764,7 @@ internal fun LyricsFullscreen(
             }
             // No source attribution line: on a 454px round face it pushed
             // into the body and read as an edge-cut "lyrics by …" label.
-            // The "Lyrics" title + track context above are all the header
-            // needs.
+            // The "Lyrics" title is all this header needs.
 
             // The lyrics body — a BoxWithConstraints so centre math uses the
             // REAL body height, not the whole screen.
@@ -783,7 +775,19 @@ internal fun LyricsFullscreen(
                 // Viewport-center Y of the ACTIVE row, reported by its
                 // onGloballyPositioned on every layout (only the active row
                 // carries the observer; equal-value writes are free).
+                // ROOT coordinates — the anchor below must share this frame.
                 var activeRowCenterY by remember { mutableFloatStateOf(Float.NaN) }
+                var activeRowHeightPx by remember { mutableFloatStateOf(0f) }
+
+                // Root-space Y where the body begins (i.e. directly below the
+                // header). Coordinates only compare correctly within one
+                // frame of reference: the first 1.9.44 fix anchored the row
+                // center at 60% of the BODY measured in ROOT coords, which
+                // silently parked tall wrapped lines up under the header
+                // ("lengthy sentence still hidden by the above bar").
+                // Anchoring at bodyTop + 0.60 × bodyHeight in the SAME
+                // root frame fixes the reference mismatch exactly.
+                var bodyTopInRoot by remember { mutableFloatStateOf(0f) }
 
                 // Auto-center the active line, MEASURED, not pitch-math'd:
                 // row heights vary with wrapping (active lines grow), so the
@@ -795,26 +799,45 @@ internal fun LyricsFullscreen(
                         return@LaunchedEffect
                     }
                     if (scrollState.isScrollInProgress) return@LaunchedEffect
-                    // Let the (possibly new) active row lay out and report its
-                    // center; tolerate a frame or two of NaN on cold entry.
+                    // Let the (possibly new) active row and the body itself
+                    // lay out; tolerate a frame or two of NaN on cold entry —
+                    // the body's root-space top lands with the first layout.
                     var rowY = Float.NaN
-                    repeat(3) {
+                    var attempts = 0
+                    while (rowY.isNaN() && attempts < 6) {
                         withFrameNanos { }
                         rowY = activeRowCenterY
-                        if (!rowY.isNaN()) return@repeat
+                        attempts++
                     }
-                    if (rowY.isNaN()) return@LaunchedEffect
+                    if (rowY.isNaN() || bodyTopInRoot <= 0f) return@LaunchedEffect
                     // Park the active row a little BELOW the body midline: on
                     // the round face the header zone above can cover the top
                     // of a tall highlighted row when centered exactly at 50%
                     // (real-device report: "upper part hidden by the lyrics UI
                     // design"). 60% keeps the whole highlight visible.
-                    val target = lyricsAutoCenterTarget(
+                    val anchorY = bodyTopInRoot + bodyPx * 0.60f
+                    val centerTarget = lyricsAutoCenterTarget(
                         currentValue = scrollState.value,
                         maxValue = scrollState.maxValue,
                         rowCenterY = rowY,
-                        anchorY = bodyPx * 0.60f,
+                        anchorY = anchorY,
                     )
+                    // Hard clearance guarantee: the highlight's TOP must land
+                    // below the body's top edge. Centering alone can't do
+                    // that for the tallest (3-line) rows if the body is
+                    // short — re-anchor so the row TOP sits at the clearance
+                    // line instead. (8dp margin below the header band.)
+                    // min(): healthy rows keep the 60% center; an oversize
+                    // row gets pushed DOWN until its top just clears.
+                    val clearanceTop = bodyTopInRoot +
+                        with(density) { 8.dp.toPx() }
+                    val minTopTarget = lyricsAutoCenterTarget(
+                        currentValue = scrollState.value,
+                        maxValue = scrollState.maxValue,
+                        rowCenterY = rowY,
+                        anchorY = clearanceTop + activeRowHeightPx / 2f,
+                    )
+                    val target = minOf(centerTarget, minTopTarget)
                     if (target == scrollState.value) return@LaunchedEffect
                     // Defensive: a racing manual scroll/disposal must never
                     // crash out of the scroll math (real-device reports of a
@@ -831,19 +854,26 @@ internal fun LyricsFullscreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 38.dp)
+                        .onGloballyPositioned { c ->
+                            // Root-space top of the padded body = where the
+                            // lyric content becomes visible below the header.
+                            bodyTopInRoot = c.boundsInRoot().top
+                        }
                         // Notches scroll this ScrollState through the
-                        // framework's rotary handler (routing + haptics
-                        // included) — replaces the hand-rolled
+                        // framework's rotary handler — replaces the hand-rolled
                         // onRotaryScrollEvent dispatcher that intermittently
                         // left the crown dead ("haptic tick, no scroll").
+                        // Haptic step-ticks stay ON (user: feedback was back);
+                        // direction follows the Settings preference, aligned
+                        // with touch scrolling by default.
                         .rotaryScrollable(
                             RotaryScrollableDefaults.behavior(
                                 scrollState,
                                 null,
-                                false,
+                                true,
                             ),
                             lyricsRotaryFocus,
-                            true,
+                            LocalRotaryDirectionInverted.current,
                         )
                         .pointerInput(track.id) {
                             // Pull DOWN near the very top of the lyrics →
@@ -931,8 +961,9 @@ internal fun LyricsFullscreen(
                                                 // Placement is per-frame during
                                                 // scroll; equal-value writes are
                                                 // free, so this is nothing.
-                                                activeRowCenterY =
-                                                    c.boundsInRoot().center.y
+                                                val b = c.boundsInRoot()
+                                                activeRowCenterY = b.center.y
+                                                activeRowHeightPx = b.height.toFloat()
                                             }
                                         } else {
                                             Modifier

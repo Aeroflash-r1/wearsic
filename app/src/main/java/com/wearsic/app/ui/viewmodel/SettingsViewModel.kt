@@ -88,6 +88,34 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val searchSuggestionsEnabled: StateFlow<Boolean> = preferencesRepository.searchSuggestionsEnabledFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
+    /**
+     * Bezel/crown scroll direction. Standard (false) matches every built-in
+     * Wear app; the user can flip it in Settings — the direction is a wrist
+     * preference that cannot be verified over adb.
+     */
+    val rotaryDirectionInverted: StateFlow<Boolean> = preferencesRepository.rotaryDirectionInvertedFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun setRotaryDirectionInverted(inverted: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setRotaryDirectionInverted(inverted)
+        }
+    }
+
+    /**
+     * When lyrics are saved to the on-watch cache: OFF (never — the update
+     * default), WITH_DOWNLOADS (fetch on download completion), ALWAYS (also
+     * on any lyrics-screen open). See WearsicPreferencesRepository consts.
+     */
+    val lyricsDownloadMode: StateFlow<Int> = preferencesRepository.lyricsDownloadModeFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), WearsicPreferencesRepository.DEFAULT_LYRICS_DOWNLOAD_MODE)
+
+    fun setLyricsDownloadMode(mode: Int) {
+        viewModelScope.launch {
+            preferencesRepository.setLyricsDownloadMode(mode)
+        }
+    }
+
     /** Saved server profiles; the active one matches [serverUrl] + [apiKey]. */
     val serverProfiles: StateFlow<List<com.wearsic.app.data.ServerProfile>> =
         preferencesRepository.serverProfilesFlow

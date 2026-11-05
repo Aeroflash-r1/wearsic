@@ -6,6 +6,7 @@ import com.wearsic.app.data.WearsicFavoriteRepository
 import com.wearsic.app.data.WearsicMusicRepository
 import com.wearsic.app.data.WearsicPreferencesRepository
 import com.wearsic.app.data.WearsicRecentRepository
+import com.wearsic.app.data.lyrics.LyricsStore
 import com.wearsic.app.network.WearsicApiClient
 import com.wearsic.app.network.WearsicHttpApiClient
 
@@ -27,4 +28,8 @@ class AppContainer(private val context: Context) {
     // Local-first favorites: Room-backed on the watch, with a best-effort
     // server backup push. Shared process-wide like the other repositories.
     val favoriteRepository by lazy { WearsicFavoriteRepository(context, musicRepository) }
+    // Offline lyrics cache (Room `lyrics_cache`): filled per the "Lyrics
+    // Downloads" setting, read before every network fetch so downloaded
+    // songs show lyrics with no server in reach.
+    val lyricsStore by lazy { LyricsStore(context) }
 }

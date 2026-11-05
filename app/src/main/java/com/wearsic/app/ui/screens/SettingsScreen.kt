@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -119,6 +120,12 @@ fun SettingsScreen(
     onUserAccentSelected: (Int) -> Unit = {},
     rotatingArtworkEnabled: Boolean = true,
     onRotatingArtworkToggled: (Boolean) -> Unit = {},
+    /** Bezel/crown scroll direction (Settings > Bezel Scroll). */
+    rotaryDirectionInverted: Boolean = false,
+    onRotaryDirectionToggled: (Boolean) -> Unit = {},
+    /** When lyrics are cached on the watch (Settings > Lyrics Downloads). */
+    lyricsDownloadMode: Int = com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_OFF,
+    onLyricsDownloadModeChanged: (Int) -> Unit = {},
     searchSuggestionsEnabled: Boolean = true,
     onSearchSuggestionsToggled: (Boolean) -> Unit = {},
     profiles: List<com.wearsic.app.data.ServerProfile> = emptyList(),
@@ -772,6 +779,63 @@ fun SettingsScreen(
                     iconTint = if (searchSuggestionsEnabled) LocalWearsicAccent.current else WearsicTextMuted,
                     onClick = { onSearchSuggestionsToggled(!searchSuggestionsEnabled) },
                     testTag = "settings_search_suggestions"
+                )
+            }
+
+            // Bezel scroll direction — 1.9.44 rolled a forced direction
+            // flip and the wrist disagreed; a feel preference like this can
+            // never be verified over adb, so it is the user's switch.
+            item {
+                SettingsPillItem(
+                    title = "Bezel Scroll: ${if (rotaryDirectionInverted) "Inverted" else "Standard"}",
+                    subtitle = if (rotaryDirectionInverted) {
+                        "Crown scrolls opposite to touch"
+                    } else {
+                        "Crown scrolls like built-in apps"
+                    },
+                    icon = Icons.Rounded.SwapVert,
+                    iconTint = if (rotaryDirectionInverted) LocalWearsicAccent.current else WearsicTextMuted,
+                    onClick = { onRotaryDirectionToggled(!rotaryDirectionInverted) },
+                    testTag = "settings_rotary_direction"
+                )
+            }
+
+            // Offline lyrics (user setting): tap cycles OFF → with downloads
+            // → everywhere. OFF is the update default (never changes existing
+            // behavior); WITH_DOWNLOADS caches a song's lyrics as part of its
+            // download; ALWAYS additionally caches lyrics when the lyrics
+            // screen itself loads them (covers streamed songs too). Cached
+            // lyrics let downloaded songs show them with no server in reach.
+            item {
+                val lyricsModeName = when (lyricsDownloadMode) {
+                    com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_WITH_DOWNLOADS -> "With Songs"
+                    com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_ALWAYS -> "Everywhere"
+                    else -> "Off"
+                }
+                val lyricsModeSubtitle = when (lyricsDownloadMode) {
+                    com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_WITH_DOWNLOADS ->
+                        "Saving lyrics when songs download"
+                    com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_ALWAYS ->
+                        "Saving lyrics as you open them"
+                    else -> "Keep lyrics online-only"
+                }
+                SettingsPillItem(
+                    title = "Lyrics Downloads: $lyricsModeName",
+                    subtitle = lyricsModeSubtitle,
+                    icon = Icons.Rounded.DownloadDone,
+                    iconTint = if (lyricsDownloadMode != com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_OFF)
+                        LocalWearsicAccent.current else WearsicTextMuted,
+                    onClick = {
+                        val next = when (lyricsDownloadMode) {
+                            com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_OFF ->
+                                com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_WITH_DOWNLOADS
+                            com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_WITH_DOWNLOADS ->
+                                com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_ALWAYS
+                            else -> com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_OFF
+                        }
+                        onLyricsDownloadModeChanged(next)
+                    },
+                    testTag = "settings_lyrics_downloads"
                 )
             }
 

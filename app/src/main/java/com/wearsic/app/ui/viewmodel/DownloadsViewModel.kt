@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -27,6 +28,9 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
         ?: com.wearsic.app.di.AppContainer(application)
     private val downloadRepository = container.downloadRepository
     private val downloadManager = WearsicDownloadManager(application.applicationContext, downloadRepository)
+    private val musicRepository = container.musicRepository
+    private val lyricsStore = container.lyricsStore
+    private val preferencesRepository = container.preferencesRepository
 
     val allDownloads: StateFlow<List<WearsicDownloadEntity>> = downloadManager.allDownloadsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -54,6 +58,42 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch(Dispatchers.IO) {
             downloadManager.cleanupInterruptedDownloads()
             downloadManager.flushPendingDeletions()
+        }
+        // Lyrics bundling (the "Lyrics Downloads" setting): every completed
+        // download fetches and caches its lyrics when the setting allows.
+        // Bounded + silent: store hits are skipped, network failures are
+        // swallowed (the lyrics load lazily, with or from cache, next open),
+        // and the rowset is deduped so one song is fetched at most once per
+        // process.
+        viewModelScope.launch(Dispatchers.IO) {
+            val ownedLyrics = java.util.Collections.newSetFromMap(
+                java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+            )
+            var lastMode = com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_OFF
+            downloadManager.allDownloadsFlow.collect { rows ->
+                val mode = preferencesRepository.lyricsDownloadModeFlow.first()
+                // A fresh scan whenever the setting rises (Off → Songs →
+                // Everything) so mid-session flips retroactively cover the
+                // user's already-downloaded music.
+                if (mode > lastMode) ownedLyrics.clear()
+                lastMode = mode
+                if (mode <= com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_OFF) return@collect
+                for (row in rows) {
+                    if (!row.isCompleted()) continue
+                    // The id is claimed BEFORE the attempt: failures are NOT
+                    // retried while the flow re-emits on every progress tick —
+                    // a song whose lyrics never resolve falls back to the
+                    // lazy on-open path once the server can answer.
+                    if (!ownedLyrics.add(row.trackId)) continue
+                    if (lyricsStore.get(row.trackId) != null) continue
+                    runCatching {
+                        val lyrics = musicRepository.fetchLyrics(row.toDomainTrack()).getOrThrow()
+                        if (lyrics.mode != com.wearsic.app.model.LyricsMode.Unavailable) {
+                            lyricsStore.save(row.toDomainTrack(), lyrics)
+                        }
+                    }
+                }
+            }
         }
     }
 

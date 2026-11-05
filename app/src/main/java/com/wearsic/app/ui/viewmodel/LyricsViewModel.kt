@@ -12,6 +12,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -26,6 +27,8 @@ class LyricsViewModel(application: Application) : AndroidViewModel(application) 
     private val container = (application as? com.wearsic.app.WearsicApp)?.container
         ?: AppContainer(application)
     private val musicRepository = container.musicRepository
+    private val lyricsStore = container.lyricsStore
+    private val preferencesRepository = container.preferencesRepository
 
     data class LyricsUiState(
         val trackId: String = "",
@@ -56,6 +59,20 @@ class LyricsViewModel(application: Application) : AndroidViewModel(application) 
         job?.cancel()
         _state.value = LyricsUiState(trackId = id, isLoading = true)
         job = viewModelScope.launch {
+            // OFFLINE-FIRST: a saved lyrics row answers instantly with no
+            // network — this is what makes downloaded songs show lyrics when
+            // the phone server is out of reach. Dead-end results are never
+            // cached (an empty cache here always means "not saved yet").
+            val cached = lyricsStore.get(track.id)
+            if (cached != null) {
+                _state.value = LyricsUiState(
+                    trackId = id,
+                    mode = cached.mode,
+                    source = cached.source,
+                    lines = cached.lines,
+                )
+                return@launch
+            }
             musicRepository.fetchLyrics(track)
                 .onSuccess { lyrics ->
                     _state.value = LyricsUiState(
@@ -64,6 +81,13 @@ class LyricsViewModel(application: Application) : AndroidViewModel(application) 
                         source = lyrics.source,
                         lines = lyrics.lines,
                     )
+                    // "Everywhere" mode additionally caches on open, so a
+                    // song the user streams (and once views the lyrics for)
+                    // keeps them available offline afterwards.
+                    val saveMode = preferencesRepository.lyricsDownloadModeFlow.first()
+                    if (saveMode >= com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_ALWAYS) {
+                        lyricsStore.save(track, lyrics)
+                    }
                 }
                 .onFailure { err ->
                     _state.value = LyricsUiState(

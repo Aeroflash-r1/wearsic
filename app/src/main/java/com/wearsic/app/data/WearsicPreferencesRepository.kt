@@ -63,6 +63,25 @@ class WearsicPreferencesRepository(private val context: Context) {
         val KEY_ROTATING_ARTWORK = booleanPreferencesKey("rotating_artwork_enabled")
         /** Saved server profiles, serialized as a JSON array. */
         val KEY_SERVER_PROFILES = stringPreferencesKey("server_profiles")
+        /**
+         * Bezel/crown scroll direction. `false` (default) keeps the standard
+         * touch-aligned direction used by every built-in Wear app; some
+         * wrists legitimately prefer the opposite, so it is a user setting —
+         * never something to guess in code.
+         */
+        val KEY_ROTARY_INVERTED = booleanPreferencesKey("rotary_direction_inverted")
+        /**
+         * Where lyrics get saved to the on-watch cache
+         * ([WearsicPreferencesRepository.LYRICS_DOWNLOAD_MODES]):
+         * OFF saves nothing (updates never change behavior on their own),
+         * WITH_DOWNLOADS caches lyrics when a song finishes downloading,
+         * ALWAYS additionally caches whenever the lyrics screen loads them.
+         */
+        val KEY_LYRICS_DOWNLOAD_MODE = intPreferencesKey("lyrics_download_mode")
+        const val LYRICS_MODE_OFF = 0
+        const val LYRICS_MODE_WITH_DOWNLOADS = 1
+        const val LYRICS_MODE_ALWAYS = 2
+        const val DEFAULT_LYRICS_DOWNLOAD_MODE = LYRICS_MODE_OFF
         /** No server is preconfigured; users enter their own URL in Settings. */
         const val DEFAULT_SERVER_URL = ""
         const val DEFAULT_OFFLINE_LIMIT = 15
@@ -203,6 +222,33 @@ class WearsicPreferencesRepository(private val context: Context) {
     suspend fun setRotatingArtworkEnabled(enabled: Boolean) {
         editPreferences { preferences ->
             preferences[KEY_ROTATING_ARTWORK] = enabled
+        }
+    }
+
+    val rotaryDirectionInvertedFlow: Flow<Boolean> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_ROTARY_INVERTED] ?: false
+        }
+
+    suspend fun setRotaryDirectionInverted(inverted: Boolean) {
+        editPreferences { preferences ->
+            preferences[KEY_ROTARY_INVERTED] = inverted
+        }
+    }
+
+    val lyricsDownloadModeFlow: Flow<Int> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            val mode = preferences[KEY_LYRICS_DOWNLOAD_MODE]
+                ?: DEFAULT_LYRICS_DOWNLOAD_MODE
+            // A corrupted value never brick the setting — clamp to a valid mode.
+            mode.coerceIn(LYRICS_MODE_OFF, LYRICS_MODE_ALWAYS)
+        }
+
+    suspend fun setLyricsDownloadMode(mode: Int) {
+        editPreferences { preferences ->
+            preferences[KEY_LYRICS_DOWNLOAD_MODE] = mode.coerceIn(LYRICS_MODE_OFF, LYRICS_MODE_ALWAYS)
         }
     }
 

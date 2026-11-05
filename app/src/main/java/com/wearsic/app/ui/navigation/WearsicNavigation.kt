@@ -41,6 +41,7 @@ import com.wearsic.app.ui.screens.SearchScreen
 import com.wearsic.app.ui.screens.ServerDashboardScreen
 import com.wearsic.app.ui.screens.SettingsScreen
 import com.wearsic.app.ui.screens.VolumeScreen
+import com.wearsic.app.ui.util.LocalRotaryDirectionInverted
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.LocalWearsicDynamicAccent
 import com.wearsic.app.ui.theme.WearsicVibrantLavender
@@ -87,6 +88,8 @@ fun WearsicApp(
     val dynamicColorEnabled by settingsVM.dynamicColorEnabled.collectAsStateWithLifecycle()
     val userAccent by settingsVM.userAccent.collectAsStateWithLifecycle()
     val rotatingArtworkEnabled by settingsVM.rotatingArtworkEnabled.collectAsStateWithLifecycle()
+    val rotaryDirectionInverted by settingsVM.rotaryDirectionInverted.collectAsStateWithLifecycle()
+    val lyricsDownloadMode by settingsVM.lyricsDownloadMode.collectAsStateWithLifecycle()
     val searchSuggestionsEnabled by settingsVM.searchSuggestionsEnabled.collectAsStateWithLifecycle()
     val serverProfiles by settingsVM.serverProfiles.collectAsStateWithLifecycle()
     val serverReachable by libraryVM.serverReachable.collectAsStateWithLifecycle()
@@ -178,7 +181,8 @@ fun WearsicApp(
 
     CompositionLocalProvider(
         LocalWearsicAccent provides effectiveAccent,
-        LocalWearsicDynamicAccent provides dynamicColorEnabled
+        LocalWearsicDynamicAccent provides dynamicColorEnabled,
+        LocalRotaryDirectionInverted provides rotaryDirectionInverted
     ) {
         MaterialTheme(colorScheme = wearsicColorSchemeFor(effectiveAccent, dynamicColorEnabled)) {
         AppScaffold(
@@ -413,6 +417,14 @@ fun WearsicApp(
                     rotatingArtworkEnabled = rotatingArtworkEnabled,
                     onRotatingArtworkToggled = { enabled ->
                         settingsVM.setRotatingArtworkEnabled(enabled)
+                    },
+                    rotaryDirectionInverted = rotaryDirectionInverted,
+                    onRotaryDirectionToggled = { inverted ->
+                        settingsVM.setRotaryDirectionInverted(inverted)
+                    },
+                    lyricsDownloadMode = lyricsDownloadMode,
+                    onLyricsDownloadModeChanged = { mode ->
+                        settingsVM.setLyricsDownloadMode(mode)
                     },
                     searchSuggestionsEnabled = searchSuggestionsEnabled,
                     onSearchSuggestionsToggled = { enabled ->

@@ -719,7 +719,19 @@ fun SettingsScreen(
                 )
             }
             item {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Glass card: the swatch grid used to sit bare on the plain
+                // background, which read as UI clutter rather than a control.
+                // The app's standard translucent container (same fill/border
+                // as the pill rows) frames the palette without a chrome feel.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(WearsicDimens.CardRadius))
+                        .background(WearsicGlassFill)
+                        .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
                     WearsicAppColorChoices.chunked(4).forEach { rowColors ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),

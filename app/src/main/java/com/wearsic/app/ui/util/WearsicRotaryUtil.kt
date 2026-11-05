@@ -2,14 +2,15 @@ package com.wearsic.app.ui.util
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.unit.dp
-import androidx.wear.compose.foundation.lazy.ScalingLazyListState
+import androidx.wear.compose.foundation.requestFocusOnHierarchyActive
+import androidx.wear.compose.foundation.rememberActiveFocusRequester
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
+import androidx.wear.compose.foundation.lazy.ScalingLazyListState
 import kotlinx.coroutines.delay
 
 /**
@@ -28,49 +29,56 @@ val LocalRotaryDirectionInverted = staticCompositionLocalOf { false }
  * target, so a notch produced only the system's touch-bezel tick and NO
  * scroll ("works and not working" on the real Galaxy Watch7). The framework
  * owns focus acquisition, event routing and rotary haptics — every notch
- * snaps the list like a built-in Wear app.
+ * scrolls like a built-in Wear app.
  *
- * AUTO-FOCUS: `rotaryScrollable` creates its own focus target but does NOT
- * grab focus by itself; a notch only routes to it while focused. Claim focus
- * on composition. [FocusRequester.requestFocus] throws while the node is not
- * laid out yet (cold screen entry) and a single failed attempt used to leave
- * the bezel dead until something else took focus — retry briefly, then stop
- * (never fighting a later explicit focus request).
+ * FOCUS (the "bezel sometimes stuck" fix): the framework's own
+ * [rememberActiveFocusRequester] + [Modifier.requestFocusOnHierarchyActive]
+ * pair owns focus the way built-in apps do — the coordinator claims focus
+ * whenever the screen hierarchy becomes active (cold entry, screen off/on,
+ * resume after navigation), and a small bounded manual retry covers the
+ * first-frame edge cases the coordinator cannot see.
  *
- * DIRECTION: the framework contract is reverseDirection = the direction of
- * the backing modifier's touch scroll — for our vertical lists that is the
- * DEFAULT (false, i.e. notch-down advances through the list exactly like
- * touch). 1.9.44 shipped this flipped to `true`, which the user calls
- * "inverted". The default stays touch-aligned; users who prefer the other
- * way flip "Bezel Scroll" in Settings ([LocalRotaryDirectionInverted]).
- *
- * HAPTICS: the framework's rotary haptic handler ticks each notch — that is
- * the per-step feel of every built-in Wear list. 1.9.44 had it disabled,
- * which removed all bezel feedback; it stays on.
+ * BEHAVIOR/HAPTICS: continuous [RotaryScrollableDefaults.behavior] with NO
+ * fling — one scroll increment per notch and the framework's per-step
+ * haptic: a SHORT tick each encoder step (the old hand-rolled feel). The
+ * v1.9.45 snap wiring vibrated once per entire item snap, which read as a
+ * long single buzz while jumping (user report). Lyrics text uses the same
+ * combination on its own state.
  */
 @Composable
 fun Modifier.wearsicRotaryScroll(
     listState: ScalingLazyListState,
-    focusRequester: FocusRequester = remember { FocusRequester() },
+    // Framework-recommended focus ownership: claims whenever the hierarchy
+    // is active. Override only with special cases (dialog flows etc.).
+    focusRequester: FocusRequester = rememberActiveFocusRequester(),
     enabled: Boolean = true,
     reverseDirection: Boolean = LocalRotaryDirectionInverted.current,
 ): Modifier {
     LaunchedEffect(focusRequester, enabled) {
         if (!enabled) return@LaunchedEffect
-        repeat(5) {
+        // Fallback retry for the one-frame windows the coordinator misses
+        // (the node may not be attached on the very first composition pass).
+        repeat(4) {
             if (runCatching { focusRequester.requestFocus() }.getOrNull() == true) {
                 return@LaunchedEffect
             }
-            delay(40)
+            delay(60)
         }
     }
-    return this.rotaryScrollable(
-        RotaryScrollableDefaults.snapBehavior(
+    val armed = this.rotaryScrollable(
+        RotaryScrollableDefaults.behavior(
             listState,
-            0.dp,
-            true,
+            null,          // no fling: notch = one measured increment
+            true,          // per-step short tick haptics (old feel)
         ),
         focusRequester,
         reverseDirection,
     )
+    // Arm the hierarchy-active coordinator ONLY while this screen actually
+    // wants the crown: inside the player pager the neighboring page stays in
+    // the composition tree, and an armed coordinator there would claim focus
+    // for an off-screen list (invisible bezel scrolling / focus fights).
+    // Dismissable-nav destinations don't need this guard — each destination
+    // carries its own lifecycle owner, so a covered screen cannot be active.
+    return if (enabled) armed.requestFocusOnHierarchyActive() else armed
 }

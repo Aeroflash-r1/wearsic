@@ -207,6 +207,18 @@ class WearsicMediaService : MediaSessionService() {
         val mediaSourceFactory = DefaultMediaSourceFactory(
             WearsicStreamDataSource.createDataSourceFactory(this)
         )
+            // Streaming error policy: the default gives up after 3 network
+            // failures (3/6/9s backoff) — on a watch whose WiFi dips every
+            // few dozen seconds that read as "audio stuck" mid-song. Eight
+            // attempts with Media3's growing backoff bridges multi-second
+            // stalls; the 90s buffer below keeps playing through the gap
+            // silently. Buffers already cover the loss window; this only
+            // extends how LONG the stream keeps trying.
+            .setLoadErrorHandlingPolicy(
+                androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(
+                    /* retryCount = */ 8,
+                )
+            )
 
         // 3. Buffer policy: an in-memory window only (nothing is written to
         //    disk). These four numbers were the main reason playback felt

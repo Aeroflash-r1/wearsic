@@ -520,7 +520,12 @@ private fun OptionChip(
             )
             .wearsicClickable(pressedScale = 0.94f, onClick = onClick)
             .padding(horizontal = 11.dp, vertical = 7.dp)
-            .testTag(testTag)
+            .testTag(testTag),
+        // The Box is taller than the label (the touch target) — without an
+        // explicit center the label sat glued to the TOP edge, reading as an
+        // off-center number inside the circle (Volume screen, sleep timer +
+        // crossfade chips).
+        contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,

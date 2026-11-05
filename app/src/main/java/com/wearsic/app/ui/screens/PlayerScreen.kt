@@ -10,7 +10,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.wear.compose.material3.CircularProgressIndicator
 import com.wearsic.app.model.LyricsMode
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicGlassBorder
@@ -19,8 +18,13 @@ import com.wearsic.app.ui.viewmodel.LyricsViewModel
 import kotlin.math.roundToInt
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -73,6 +77,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -81,7 +86,6 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -102,6 +106,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.requestFocusOnHierarchyActive
+import androidx.wear.compose.foundation.rememberActiveFocusRequester
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
@@ -690,16 +696,19 @@ internal fun LyricsFullscreen(
     val density = LocalDensity.current
 
     // Framework rotary owns the crown while the lyrics are open: the notch
-    // scrolls this body (framework routing, old-style haptics) exactly like
-    // a built-in app. Taking focus here also blocks the bezel from reaching
-    // the Actions list behind the sheet.
-    val lyricsRotaryFocus = remember { FocusRequester() }
+    // scrolls this body (framework routing, short per-step haptics) exactly
+    // like a built-in app. Taking focus here also blocks the bezel from
+    // reaching the Actions list behind the sheet. The hierarchy-active
+    // coordinator keeps that claim across cold opens and screen off/on —
+    // the "bezel dead sometimes" reports were unclaimed focus after exactly
+    // those transitions.
+    val lyricsRotaryFocus = rememberActiveFocusRequester()
     LaunchedEffect(lyricsRotaryFocus) {
-        repeat(5) {
+        repeat(4) {
             if (runCatching { lyricsRotaryFocus.requestFocus() }.getOrNull() == true) {
                 return@LaunchedEffect
             }
-            delay(40)
+            delay(60)
         }
     }
 
@@ -905,6 +914,7 @@ internal fun LyricsFullscreen(
                             lyricsRotaryFocus,
                             LocalRotaryDirectionInverted.current,
                         )
+                        .requestFocusOnHierarchyActive()
                         .pointerInput(track.id) {
                             // Pull DOWN near the very top of the lyrics →
                             // back to the player. Tunnel pass + own
@@ -1055,18 +1065,78 @@ private fun SyncedLyricLine(
 
 @Composable
 private fun LyricsLoading(bodyHeight: Dp) {
+    val accent = LocalWearsicAccent.current
     Box(
         modifier = Modifier.fillMaxWidth().height(bodyHeight),
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator(modifier = Modifier.size(28.dp))
-            Spacer(modifier = Modifier.height(10.dp))
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp),
+        ) {
+            // Spinning accent arc — hand-drawn instead of the Wear-M3
+            // CircularProgressIndicator: themed color there needs the Brush
+            // colors API; a 2-line arc gives exactly the dynamic-accent look.
+            val spin = rememberInfiniteTransition(label = "lyricsSpin")
+            val angle by spin.animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
+                label = "lyricsSpinAngle",
+            )
+            Box(modifier = Modifier.size(28.dp)) {
+                Canvas(modifier = Modifier.fillMaxSize().rotate(angle)) {
+                    drawArc(
+                        color = accent,
+                        startAngle = 0f,
+                        sweepAngle = 264f,
+                        useCenter = false,
+                        style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round),
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = "Loading lyrics…",
-                color = Color.White.copy(alpha = 0.55f),
+                color = accent,
                 fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
             )
+            Spacer(modifier = Modifier.height(18.dp))
+            // Shimmer placeholder rows: lyric-line-shaped bars breathing with
+            // the app's shimmer language (staggered pulse). They promise the
+            // layout the user is about to see instead of an abstract spinner
+            // alone — the loading state stops reading as "frozen".
+            val fractions = listOf(0.86f, 1f, 0.72f)
+            val delays = listOf(0L, 170L, 340L)
+            fractions.forEachIndexed { i, fraction ->
+                var pulse by remember { mutableFloatStateOf(0.12f) }
+                LaunchedEffect(i) {
+                    delay(delays[i])
+                    while (isActive) {
+                        // GSAP-style ease: pulse up fast, fall slow — reads as
+                        // a wave travelling down the rows.
+                        animate(
+                            initialValue = 0.10f,
+                            targetValue = 0.26f,
+                            animationSpec = tween(420, easing = FastOutSlowInEasing),
+                        ) { value, _ -> pulse = value }
+                        animate(
+                            initialValue = 0.26f,
+                            targetValue = 0.10f,
+                            animationSpec = tween(760, easing = FastOutSlowInEasing),
+                        ) { value, _ -> pulse = value }
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(fraction)
+                        .height(15.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(Color.White.copy(alpha = pulse)),
+                )
+                if (i < fractions.lastIndex) Spacer(modifier = Modifier.height(9.dp))
+            }
         }
     }
 }

@@ -8,6 +8,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.encodeToString
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.ApplicationCall
@@ -67,6 +69,21 @@ private val bootLog = LoggerFactory.getLogger("boot")
 //   (6s > 5s), so a user can never be served their own pre-mutation list.
 private const val CONTENT_CACHE_CONTROL = "private, max-age=300"
 private const val USER_STATE_CACHE_CONTROL = "private, max-age=5"
+private const val CONTENT_CACHE_CONTROL_MAX_AGE_MS = 5 * 60 * 1000L
+
+/**
+ * Route-level TTLs for the metadata reads that hit YouTube through narrow
+ * per-source endpoints and are asked repeatedly (a watch re-opening Radio,
+ * a server shared by a household typing the same query). The values match
+ * the read-path Cache-Control policy: content that "changes slowly" is
+ * never trusted older than the window the watch's own disk cache uses.
+ */
+private const val SUGGESTIONS_TTL_MS = 60_000L
+private const val RELATED_TTL_MS = CONTENT_CACHE_CONTROL_MAX_AGE_MS
+private const val ALBUM_SEARCH_TTL_MS = CONTENT_CACHE_CONTROL_MAX_AGE_MS
+
+/** Token inside the dashboard HTML that the live boot JSON replaces. */
+private const val DASHBOARD_BOOT_TOKEN = "\"__WEARSIC_BOOT__\""
 
 /** Size of the deterministic front-door Range probe body (64 KiB). */
 private const val FRONT_DOOR_PROBE_BYTES = 64 * 1024
@@ -131,6 +148,45 @@ private fun startupBanner(
     }
     sb.append('╰').append("─".repeat(w + 3))
     return sb.toString()
+}
+
+/**
+ * The engine status dashboard, served at `/` (also what a browser that
+ * lands on the engine's address sees). Read once from the jar and cached
+ * for the process lifetime — [DASHBOARD_BOOT_TOKEN] inside it is replaced
+ * per request by the current health/diag snapshot, so a browser paints
+ * real data on FIRST open (and then self-refreshes over /health + /diag).
+ */
+private val dashboardHtml: ByteArray by lazy {
+    val stream = object {}.javaClass.classLoader?.getResourceAsStream("web/index.html")
+        ?: Thread.currentThread().contextClassLoader?.getResourceAsStream("web/index.html")
+    if (stream == null) {
+        bootLog.error(
+            "web/index.html is missing from the engine jar — the status dashboard " +
+                "at '/' is unavailable (rebuild wearsic-server)."
+        )
+        ByteArray(0)
+    } else {
+        stream.use { it.readBytes() }
+    }
+}
+
+/** JSON serializer for the dashboard boot payload (stable field set). */
+private val dashboardJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+
+/**
+ * Builds the boot payload embedded into the dashboard: the CURRENT
+ * health + diag snapshot (so first paint is real data) plus the server
+ * wall clock (so the page's own "checked Ns ago" ages are correct even
+ * before the first refresh). `<` is escaped in the JSON so no
+ * `</script` sequence inside a server-supplied string can break out of
+ * the inline script that receives it.
+ */
+private fun dashboardBootJson(health: HealthResponse, diag: DiagResponse): String {
+    fun safe(raw: String): String = raw.replace("<", "\\u003c")
+    val healthJson = safe(dashboardJson.encodeToString(HealthResponse.serializer(), health))
+    val diagJson = safe(dashboardJson.encodeToString(DiagResponse.serializer(), diag))
+    return """{"health":$healthJson,"diag":$diagJson,"nowMillis":${System.currentTimeMillis()}}"""
 }
 
 fun main() {
@@ -428,7 +484,14 @@ fun Application.module(
     // skips tiny bodies where encoding overhead is not worth it.
     install(Compression) {
         gzip { priority = 1.0 }
-        matchContentType(ContentType.Application.Json)
+        // Conditions are AND-ed, so ALL compressible types must go into ONE
+        // matchContentType(vararg) call — two calls would require a body to
+        // be JSON *and* HTML simultaneously (nothing would ever compress).
+        // The HTML entry is the status dashboard (~a few KB); over a metered
+        // Funnel link gzip is the difference between a sub-second open and a
+        // noticeable one. Audio stays out by construction: /api/stream
+        // answers content types these two never match.
+        matchContentType(ContentType.Application.Json, ContentType.Text.Html)
         minimumSize(512)
     }
 
@@ -467,10 +530,14 @@ fun Application.module(
     }
 
     routing {
-        // /health = LIVENESS ("is the process alive?"). Public, cheap,
-        // secret-free. /ready answers "can it serve music right now?".
-        get("/health") {
-            val extraction = healthMeter?.let {
+        /**
+         * One shared snapshot builder for everything that needs the engine
+         * self-report: /health (the watch + CLI), and the `/` dashboard
+         * (browsers). Before this, only /health assembled it; adding the
+         * dashboard would have duplicated every field wiring — and for sure
+         * they would have drifted apart.
+         */
+        fun buildHealthResponse(): HealthResponse {            val extraction = healthMeter?.let {
                 ExtractionHealthDto(
                     successCount = it.successCount,
                     failureCount = it.failureCount,
@@ -491,19 +558,57 @@ fun Application.module(
                     stagedVersion = snap.stagedVersion,
                     updateAttempt = snap.attemptCount,
                     rollbackReason = snap.rollbackReason,
+                    latestNotes = snap.latestNotes,
                 )
             }
-            call.respond(
-                HealthResponse(
-                    transcoderAvailable = transcoder.available,
-                    extraction = extraction,
-                    canaryHealthy = canary?.lastProbeHealthy,
-                    update = update,
-                    crashCount = crashReporter?.crashCount() ?: 0,
-                    lastCrashAtMillis = crashReporter?.lastCrash()?.atMillis ?: 0,
-                    upstreamRefusals = UpstreamStats.rangeRefusals.get(),
-                    latency = LatencyMetrics.snapshot(),
+            return HealthResponse(
+                transcoderAvailable = transcoder.available,
+                extraction = extraction,
+                canaryHealthy = canary?.lastProbeHealthy,
+                update = update,
+                crashCount = crashReporter?.crashCount() ?: 0,
+                lastCrashAtMillis = crashReporter?.lastCrash()?.atMillis ?: 0,
+                upstreamRefusals = UpstreamStats.rangeRefusals.get(),
+                latency = LatencyMetrics.snapshot(),
+                uptimeMs = java.lang.management.ManagementFactory.getRuntimeMXBean().uptime,
+            )
+        }
+
+        /** /diag snapshot — the percentile + throttle-counters payload. */
+        fun diagSnapshot(): DiagResponse = DiagResponse(
+            latency = LatencyMetrics.snapshot(),
+            upstreamRangeRefusals = UpstreamStats.rangeRefusals.get(),
+            upstreamOpenRangeRefusals = UpstreamStats.openRangeRefusals.get(),
+        )
+
+        // /health = LIVENESS ("is the process alive?"). Public, cheap,
+        // secret-free. /ready answers "can it serve music right now?".
+        get("/health") {
+            call.respond(buildHealthResponse())
+        }
+
+        // The flagship status page: open the engine's address in any
+        // browser and see readiness, extraction health, the update state
+        // and live latency percentiles rendered from the CURRENT snapshot
+        // (embedded once at first paint) that then self-refreshes over
+        // /health + /diag. Public and secret-free like /health, and never
+        // cached — every open must show the engine AS IT IS.
+        get("/") {
+            call.response.header(HttpHeaders.CacheControl, "no-store")
+            val html = dashboardHtml
+            if (html.isEmpty()) {
+                call.respond(
+                    HttpStatusCode.OK,
+                    ErrorResponse("Dashboard unavailable: web/index.html missing from this build"),
                 )
+                return@get
+            }
+            call.respondBytes(
+                html
+                    .toString(Charsets.UTF_8)
+                    .replace(DASHBOARD_BOOT_TOKEN, dashboardBootJson(buildHealthResponse(), diagSnapshot()))
+                    .toByteArray(Charsets.UTF_8),
+                ContentType.Text.Html,
             )
         }
 
@@ -515,13 +620,7 @@ fun Application.module(
         // network. Lives at the routing root on purpose (like /health), so a
         // monitoring probe can read it without the API key.
         get("/diag") {
-            call.respond(
-                DiagResponse(
-                    latency = LatencyMetrics.snapshot(),
-                    upstreamRangeRefusals = UpstreamStats.rangeRefusals.get(),
-                    upstreamOpenRangeRefusals = UpstreamStats.openRangeRefusals.get(),
-                )
-            )
+            call.respond(diagSnapshot())
         }
 
         // /ready = READINESS ("can Wearsic serve music right now?"). The
@@ -682,6 +781,17 @@ fun Application.module(
             val recommendationEngine = RecommendationEngine(gateway)
             val recommendationCache = RecommendationCache()
 
+            // Route-level metadata caches (TtlLoaderCache). These endpoints are
+            // the cheap-to-repeat, upstream-costly-to-recompute reads: a watch
+            // re-opening Radio re-asks the same /related id; typing pauses and
+            // re-resumes re-ask the same suggestions; re-opening an album page
+            // re-asks the same album query. One cached answer saves a live
+            // upstream call AND rides through upstream blips for up to one
+            // window ("the server keeps answering while YouTube gasps").
+            val suggestionsCache = TtlLoaderCache<String, List<String>>(128)
+            val relatedCache = TtlLoaderCache<String, List<TrackDto>>(64)
+            val albumSearchCache = TtlLoaderCache<String, List<AlbumDto>>(64)
+
             get("/stream/{videoId}") {
                 val requestedId = call.parameters["videoId"]!!
                 if (!call.checkRateLimited(streamLimiter, apiKey, "Too many stream requests; slow down and retry shortly")) {
@@ -748,7 +858,15 @@ fun Application.module(
                     return@get
                 }
                 val q = call.request.queryParameters["q"].orEmpty()
-                call.respond(SuggestionsResponse(gateway.suggestions(q)))
+                call.respond(
+                    SuggestionsResponse(
+                        LatencyMetrics.time("suggestions.total") {
+                            suggestionsCache.getOrLoad(q.trim(), SUGGESTIONS_TTL_MS) {
+                                gateway.suggestions(q)
+                            }
+                        }
+                    )
+                )
             }
 
             get("/related/{videoId}") {
@@ -763,7 +881,11 @@ fun Application.module(
                     call.respond(HttpStatusCode.NotFound, ErrorResponse("Could not match '$requestedId' to a playable source"))
                     return@get
                 }
-                val related = gateway.related(realVideoId)
+                val related = LatencyMetrics.time("related.total") {
+                    relatedCache.getOrLoad(realVideoId, RELATED_TTL_MS) {
+                        gateway.related(realVideoId)
+                    }
+                }
                 // Radio plays its top results back-to-back: warm the first few
                 // streams so the hand-off between songs is instant.
                 searchOrchestrator.prefetchVideoIds(related.take(3).map { it.videoId })
@@ -775,7 +897,13 @@ fun Application.module(
                     return@get
                 }
                 val q = call.request.queryParameters["q"].orEmpty()
-                call.respond(gateway.searchAlbums(q))
+                call.respond(
+                    LatencyMetrics.time("albums.search.total") {
+                        albumSearchCache.getOrLoad(q.trim(), ALBUM_SEARCH_TTL_MS) {
+                            gateway.searchAlbums(q)
+                        }
+                    }
+                )
             }
 
             // The watch's player disc: "open the album for this song". The

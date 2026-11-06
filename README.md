@@ -8,7 +8,7 @@
 
 **1. Install the server on your phone (Termux):**
 ```bash
-curl -fsSL https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-v1.9.47.sh -o wearsic-server.sh
+curl -fsSL https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-v1.9.48.sh -o wearsic-server.sh
 chmod +x wearsic-server.sh && ./wearsic-server.sh install
 wearsic start
 ```
@@ -22,7 +22,7 @@ wearsic start
 wearsic url        # shows the LAN address + API key
 ```
 
-**3. Install the watch app** — download `Wearsic-v1.9.47.apk` from the [latest release](https://github.com/Aeroflash-r1/wearsic/releases/latest) and install it on the watch (via `wearsic sideload` with adb, or the Play-style sideload).
+**3. Install the watch app** — download `Wearsic-v1.9.48.apk` from the [latest release](https://github.com/Aeroflash-r1/wearsic/releases/latest) and install it on the watch (via `wearsic sideload` with adb, or the Play-style sideload).
 
 **4. Pair the watch:** open Wearsic on the watch → Settings → enter the URL + key from step 2. All done — search and play.
 
@@ -68,13 +68,15 @@ Wearsic adopts a clean, modular Model-View-ViewModel (MVVM) architecture with st
 - **Settings that cannot eat your keystrokes**: the server URL and API key fields keep their edit local while focused and commit on Done/blur/leaving the screen; an async DataStore round-trip can never reset the text mid-typing, and invalid input is reported inline (never silently written over a working URL).
 - **Server Port setting**: a dedicated "Server Port" pill in Settings edits the port baked into the current server URL (1024–65535) without retyping the whole address — perfect for `wearsic port 9000`-style setups.
 - **Server profiles**: save the current server (URL + API key) as a named profile and switch between them (e.g. Home-LAN ↔ Cloudflare front door) in one tap; delete with confirmation.
+- **Automatic profile failover (app v1.9.48)**: when the active server is CONFIRMED unreachable (the same hysteresis that drives the offline banner, plus a confirming health ping), the app probes every OTHER saved profile in parallel and switches itself to the first healthy one — the same activating action Settings performs, without retyping anything on a 1.4" face. The Library screen then shows a "Switched to <name>" banner (it clears after a grace period so long uptime on the fallback does not read as normal), playback keeps working for all NEW loads, and there is no switch-back churn — restoring your preferred profile is one Settings tap when its server is home again. Failing rounds cool down for five minutes so a dead network is not re-probed on every tap.
 - **Offline surface**: when the server is unreachable the home screen flips to "Offline — showing saved music" and lists your completed downloads for instant playback — the app stays useful with no network.
 - **Queue reorder**: long-press an Up Next row and drag it up or down while the current track keeps playing. The drop slot is the row whose laid-out centre is nearest the lifted row's centre, so it stays accurate where `ScalingLazyColumn` shrinks rows at the curved edges. Reaching into a long queue auto-scrolls, but only after the finger deliberately pushes into an edge band and holds there (~180 ms); the row keeps its full width for the song name.
 - **Play all / Shuffle all**: one tap on Favorites (play all, shuffle) and Downloads (play all, offline library).
 - **Retry pills**: Search and Albums error states offer an inline Retry button for the same query.
 - **Dynamic Accent & Rotating Artwork**: opt-in toggles in Settings — accent that follows the album art, and the player disc's slow rotation (default on).
 - **Sound screen with a live volume dial**: media volume is observed from the system (crown overlay, earbud absolute volume, other apps all stay in sync), the physical crown adjusts it with a haptic tick per step, the dial taps to mute/unmute, and the real Bluetooth device name is shown when one is connected.
-- **Engine Dashboard**: a screen that probes `/health` + `/ready` and renders the server's live self-report — engine version, transcoder, extraction success/failure counters, canary probe, staged updates, crash count and readiness — so problems are diagnosed from the wrist instead of a terminal.
+- **Engine Dashboard**: a screen that probes `/health` + `/ready` and renders the server's live self-report — engine version, uptime, transcoder, extraction success/failure counters, canary probe, staged updates (with the staged release's notes, server ≥ v1.9.48), crash count and readiness — so problems are diagnosed from the wrist instead of a terminal.
+- **Status dashboard for browsers**: the engine also embeds a self-refreshing OLED-dark status page at `GET /` (see the API contract below) so the same self-report is readable from any phone or laptop without a terminal.
 - **Single-line, self-scrolling track title**: a long song name slides sideways instead of wrapping to a second line, so the artist line and transport never get pushed down and nothing clips at the curved edge — and the full name is still reachable.
 - **Recently Played is identity-exact**: recents rows are keyed by the stable track ID, never by title — two different recordings that share a title/artist stay separate rows and always replay their exact recording (regression-covered by `RecentPlaybackIdentityTest`).
 
@@ -104,13 +106,22 @@ Wearsic adopts a clean, modular Model-View-ViewModel (MVVM) architecture with st
 
 This client is fully hardened to support any standard Ktor/OkHttp endpoint following the schema below.
 
+### 0. Engine Status Dashboard (server ≥ v1.9.48)
+- **Route**: `GET /` (any browser; public and secret-free like `/health`)
+- One self-contained OLED-dark page (the watch palette) that paints the engine's
+  CURRENT health + diag snapshot on first open and then self-refreshes over
+  `/health`, `/ready` and `/diag` every 5 s: readiness tiles, extraction health,
+  the update state with the staged release's notes, crash/CDN-refusal counters
+  and live latency percentiles. Served `Cache-Control: no-store`, gzipped when
+  accepted. Mirrored on the wrist by the Engine Dashboard screen.
+
 ### 1. Health Verification
 - **Route**: `GET /health`
 - **Response Model** (self-healing fields are optional and ignored by older clients):
 ```json
 {
   "status": "ok",
-  "version": "1.9.47",
+  "version": "1.9.48",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -174,6 +185,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 - **Shorter commands.** `wearsic /start` ⇔ `wearsic start` (leading slash accepted), and `wearsic shortcuts` installs one-word `ws-start`, `ws-stop`, `ws-status`, `ws-logs`, `ws-health`, `ws-url`, `ws-ip`, `ws-pair`, `ws-update`, `ws-dashboard`, `ws-doctor`, `ws-cf`, `ws-funnel`, `ws-cookies` symlinks (never overwrites existing binaries).
 - **Custom server port**: `wearsic port` prints the configured port; `wearsic port 5861` validates and persists a new port (1024–65535) to `.env`, applied on `wearsic restart`. `url`, `pair`, `status`, `doctor` and the Cloudflare/funnel front doors all follow it.
 - **A live dashboard for the running server.** `wearsic dashboard` shows health, uptime, the LAN address, the Cloudflare front door and tunnel state, the API/stream health and the current engine activity — refreshed **in place** (no scrollback spam), with the same shimmer on active states and Ctrl+C to leave. `wearsic setup` re-runs the whole flow for an existing install (key → engine → health → watch values), with `--update` and `--cloudflare` options. Existing commands (`start`, `stop`, `restart`, `status`, `logs`, `doctor`, `update`, `health`, `url`, `api-key`, `pair`, `cloudflare`) keep their syntax and exit codes.
+- **A status page for browsers, too (server ≥ v1.9.48).** The engine itself serves an embedded, self-refreshing status dashboard at `GET /` — readiness, extraction health, the update state including the staged release's notes, CDN-refusal counters and latency percentiles, with the current snapshot embedded in the very first paint. Covered by `WebDashboardTest` (public HTML route, `no-store`, per-request boot-snapshot embedding), `MetadataRouteCacheTest` (per-key single-flight TTL caches on suggestions/related/album search, failures never cached) and `EngineUpdaterNotesTest` (release-notes preview shaping that travels with staged updates).
 - Covered by `wearsic-server/tests/shimmer-test.sh` (colour blending, frame timing, band direction, 256-colour fallback, `NO_COLOR`, non-TTY, cursor restoration including Ctrl+C, narrow terminals, the stage machine and the CLI/installer core sync), `wearsic-server/tests/cli-shortcuts-test.sh` (slash dispatch, `shortcuts`, `cur_cols` + WINCH re-measure) and `wearsic-server/tests/ui-layout-test.sh` in CI.
 
 ## 🌐 Public Setup (exposing the server beyond your LAN)
@@ -304,7 +316,7 @@ verified exactly like a stable one.
 To install a specific build without touching the CLI at all:
 
 ```bash
-WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.9.47/wearsic-server-termux-v1.9.47.zip \
+WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.9.48/wearsic-server-termux-v1.9.48.zip \
   wearsic update
 ```
 
@@ -328,7 +340,7 @@ keytool -genkeypair -v -keystore my-upload-key.jks -alias upload \
 Then cut a release:
 
 ```bash
-git tag v1.9.47 && git push origin v1.9.47
+git tag v1.9.48 && git push origin v1.9.48
 ```
 
 ### One-button extractor hotfix (when YouTube breaks)

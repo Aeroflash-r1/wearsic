@@ -119,6 +119,13 @@ fun ServerDashboardScreen(
                 item {
                     DashboardCard {
                         ValueRow("Version", health.version.ifBlank { "unknown" })
+                        health.uptimeMs?.takeIf { it > 0 }?.let { up ->
+                            ValueRow(
+                                label = "Uptime",
+                                value = uptimeSummary(up),
+                                valueColor = WearsicTextPrimary
+                            )
+                        }
                         ValueRow(
                             label = "Transcoder",
                             value = if (health.transcoderAvailable) "Ready" else "Not installed",
@@ -145,6 +152,24 @@ fun ServerDashboardScreen(
                                 else -> WearsicTextPrimary
                             }
                         )
+                        // The staged release's notes: an auto-update must not
+                        // be a black box on the wrist either — same preview
+                        // the web dashboard at `/` shows, compacted.
+                        val stagedNotes = health.update
+                            ?.takeIf { it.status == "staged" }
+                            ?.latestNotes?.trim()
+                        if (!stagedNotes.isNullOrBlank()) {
+                            Text(
+                                text = stagedNotes.lineSequence().take(3).joinToString("\n").trim(),
+                                color = wearsicSecondaryText(),
+                                fontSize = 10.sp,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 2.dp)
+                            )
+                        }
                         ValueRow(
                             label = "Crashes",
                             value = crashSummary(health.crashCount, health.lastCrashAtMillis)
@@ -437,6 +462,20 @@ private fun updateSummary(update: ServerUpdateStatusDto?): String {
         "checking" -> "Checking…"
         "idle" -> "Idle"
         else -> update.status
+    }
+}
+
+/** Process uptime ("3d 4h") from /health's `uptimeMs`. */
+private fun uptimeSummary(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val days = totalSeconds / 86_400
+    val hours = (totalSeconds % 86_400) / 3_600
+    val minutes = (totalSeconds % 3_600) / 60
+    return when {
+        days > 0 -> "${days}d ${hours}h"
+        hours > 0 -> "${hours}h ${minutes}m"
+        minutes > 0 -> "${minutes}m"
+        else -> "${totalSeconds}s"
     }
 }
 

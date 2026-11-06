@@ -30,6 +30,8 @@ data class RemoteUpdate(
     val version: String,
     val zipUrl: String,
     val sha256Url: String? = null,
+    /** Trimmed notes preview from the release's GitHub body (null if none). */
+    val notes: String? = null,
 )
 
 /**
@@ -95,6 +97,11 @@ class EngineUpdater(
         // this: it reads releases/latest, which GitHub already filters.
         val prerelease: Boolean = false,
         val draft: Boolean = false,
+        // The release body (the author's notes markdown). Surfaced through
+        // /health so the user can see WHAT a staged update contains before
+        // the supervisor applies it — an auto-update should never be a black
+        // box merely because nobody is reading a terminal right now.
+        val body: String? = null,
     )
 
     /** Supervisor-facing state written to `state/update.json`. */
@@ -108,6 +115,8 @@ class EngineUpdater(
         val sha256: String? = null,
         /** How many times this target version has been staged (loop guard). */
         val updateAttempt: Int = 1,
+        /** Preview of the target release's notes, persisted with the state. */
+        val releaseNotes: String? = null,
     )
 
     /**
@@ -130,6 +139,15 @@ class EngineUpdater(
     @Volatile override var lastCheckError: String? = null
         private set
     @Volatile var latestKnownVersion: String? = null
+        private set
+
+    /**
+     * Trimmed notes of the newest installable release named by the last
+     * discovery run (the staged target when one exists, else the newest
+     * release GitHub listed). Cleared to null when discovery has never run,
+     * failed, or a release ships no body — /health treats it as absent.
+     */
+    @Volatile var latestReleaseNotes: String? = null
         private set
 
     private val stateFile: File get() = File(stateDir, "update.json")
@@ -178,6 +196,8 @@ class EngineUpdater(
         val stagedVersion: String?,
         val attemptCount: Int,
         val rollbackReason: String?,
+        /** Notes preview of the target release (null when none). */
+        val latestNotes: String? = null,
     )
 
     fun updateSnapshot(): UpdateSnapshot {
@@ -190,6 +210,7 @@ class EngineUpdater(
             stagedVersion = state?.version,
             attemptCount = version?.let { attempts[it] } ?: 0,
             rollbackReason = rollback?.reason,
+            latestNotes = latestReleaseNotes,
         )
     }
 
@@ -252,30 +273,43 @@ class EngineUpdater(
         // entirely: users stay on the last stable build until the release is
         // marked final.
         val installable = releases.filterNot { it.prerelease || it.draft }
-        val update = installable.asSequence()
-            .mapNotNull { rel ->
-                val tag = rel.tag_name ?: return@mapNotNull null
-                val version = tag.removePrefix("v")
-                val asset = rel.assets.firstOrNull {
-                    val n = it.name ?: return@firstOrNull false
-                    n.startsWith(ZIP_ASSET_PREFIX) && n.endsWith(".zip") && !n.endsWith(".sha256")
-                }
-                val url = asset?.browser_download_url ?: return@mapNotNull null
-                // Authenticity: the release MUST publish the zip's SHA-256.
-                // A release without it is never auto-installed (see class
-                // docs — old servers keep running and update manually).
-                val checksumUrl = rel.assets
-                    .firstOrNull { it.name == asset.name + ".sha256" }
-                    ?.browser_download_url
-                if (checksumUrl == null) {
-                    if (isNewerVersion(version, runningVersion) && skippedUnsigned == null) {
-                        skippedUnsigned = "v$version"
-                    }
-                    return@mapNotNull null
-                }
-                RemoteUpdate(version = version, zipUrl = url, sha256Url = checksumUrl)
+        val candidates = installable.asSequence().mapNotNull { rel ->
+            val tag = rel.tag_name ?: return@mapNotNull null
+            val version = tag.removePrefix("v")
+            val asset = rel.assets.firstOrNull {
+                val n = it.name ?: return@firstOrNull false
+                n.startsWith(ZIP_ASSET_PREFIX) && n.endsWith(".zip") && !n.endsWith(".sha256")
             }
-            .firstOrNull { isNewerVersion(it.version, runningVersion) }
+            val url = asset?.browser_download_url ?: return@mapNotNull null
+            // Authenticity: the release MUST publish the zip's SHA-256.
+            // A release without it is never auto-installed (see class
+            // docs — old servers keep running and update manually).
+            val checksumUrl = rel.assets
+                .firstOrNull { it.name == asset.name + ".sha256" }
+                ?.browser_download_url
+            if (checksumUrl == null) {
+                if (isNewerVersion(version, runningVersion) && skippedUnsigned == null) {
+                    skippedUnsigned = "v$version"
+                }
+                return@mapNotNull null
+            }
+            rel to RemoteUpdate(
+                version = version,
+                zipUrl = url,
+                sha256Url = checksumUrl,
+                notes = previewReleaseNotes(rel.body),
+            )
+        }.toList()
+        val update = candidates
+            .firstOrNull { (_, candidate) -> isNewerVersion(candidate.version, runningVersion) }
+            ?.second
+        // The notes shown on the wrist travel with the release we point at:
+        // the staged target when an update was found, else the newest
+        // installable release (potentially the same as running version's
+        // own successor — "this is what you'd move to").
+        val notesSource = update
+            ?.let { u -> candidates.firstOrNull { it.second.version == u.version }?.first }
+            ?: installable.firstOrNull()
 
         lastCheckAtMillis = clock()
         lastCheckError = skippedUnsigned?.let {
@@ -283,6 +317,7 @@ class EngineUpdater(
         }
         latestKnownVersion = update?.version
             ?: installable.firstNotNullOfOrNull { it.tag_name?.removePrefix("v") }
+        latestReleaseNotes = previewReleaseNotes(notesSource?.body)
 
         if (update != null) {
             log.info("New engine available: v{} (running v{})", update.version, runningVersion)
@@ -389,6 +424,7 @@ class EngineUpdater(
             stagedAtMillis = clock(),
             sha256 = actual,
             updateAttempt = attempt,
+            releaseNotes = update.notes,
         )
         stateFile.writeAtomically(json.encodeToString(state))
         recordAttempt(update.version)
@@ -467,6 +503,47 @@ class EngineUpdater(
         /** Extracts the first 64-hex token from a `.sha256` checksum file. */
         fun parseSha256(text: String): String? =
             Regex("[a-fA-F0-9]{64}").find(text)?.value?.lowercase()
+
+        /**
+         * Shapes a release body for on-device consumption. GitHub bodies are
+         * light markdown; the watch (and the web dashboard) want short plain
+         * paragraphs. Drops badge images (`![...](...)`), link references
+         * (`[x]: https://...`) and HTML comment noise, unhashes headings, and
+         * clamps to ~400 chars with an ellipsis. Null in, null out; a blank
+         * or media-only body is also null ("no notes").
+         */
+        fun previewReleaseNotes(raw: String?, maxChars: Int = 400): String? {
+            if (raw.isNullOrBlank()) return null
+            // A whole line that is nothing but a badge image: `![b](u)` or a
+            // badge wrapped in a link `[![b](u)](v)`. Regex, because the
+            // "starts with ![" / "ends with ]" shape test let the wrapped
+            // form through (it ends with a paren).
+            val badgeLine = Regex("""^\s*\[?!\[[^\]]*\]\([^)]*\)(?:\]\([^)]*\))?\s*$""")
+            val cleaned = raw.lines()
+                .map { it.trim() }
+                .filter { line ->
+                    when {
+                        line.isBlank() -> true // blank lines separate paragraphs
+                        badgeLine.matches(line) -> false
+                        // Link definition blocks.
+                        line.startsWith("[") && line.contains("]:") -> false
+                        // GitHub per-release body never uses these, but a
+                        // stray diff banner shouldn't reach the watch.
+                        line.startsWith("<") || line.startsWith("<!--") -> false
+                        else -> true
+                    }
+                }
+                .joinToString("\n") { line ->
+                    // Unhash markdown headings ("### Title" -> "Title"). NOTE:
+                    // it is not removePrefix("#") — that would strip exactly
+                    // one hash and leave "##" behind for every h2/h3 heading.
+                    line.replaceFirst(Regex("^#+\\s*"), "")
+                }
+                .trim()
+            if (cleaned.isEmpty()) return null
+            return if (cleaned.length <= maxChars) cleaned
+            else cleaned.take(maxChars).trimEnd() + "…"
+        }
 
         /** Streaming SHA-256 of [file], lowercase hex. */
         fun sha256Of(file: File): String {

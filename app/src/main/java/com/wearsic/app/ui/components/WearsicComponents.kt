@@ -37,6 +37,7 @@ import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.watchScaled
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -506,7 +507,7 @@ fun WearsicEmptyState(
     ) {
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(watchScaled(48.dp))
                 .clip(RoundedCornerShape(WearsicDimens.ArtRadius))
                 .background(wearsicAccentContainer())
                 .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.ArtRadius)),
@@ -750,7 +751,7 @@ fun WearsicAlbumShimmerCard(
         }
         Box(
             modifier = Modifier
-                .size(88.dp)
+                .size(watchScaled(88.dp))
                 .clip(RoundedCornerShape(WearsicDimens.ArtRadius))
                 .background(base)
         )

@@ -48,12 +48,13 @@ X-Wearsic-Key: <key>
 ```json
 {
   "status": "ok",
-  "version": "1.9.47",
+  "version": "1.9.48",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
   "canaryHealthy": null,
-  "update": { "status": "idle", "latestKnownVersion": null, "lastCheckAtMillis": 0, "lastError": null, "stagedVersion": null }
+  "uptimeMs": 655680,
+  "update": { "status": "idle", "latestKnownVersion": null, "lastCheckAtMillis": 0, "lastError": null, "stagedVersion": null, "latestNotes": null }
 }
 ```
 
@@ -63,10 +64,15 @@ with the Gradle build/JAR name); `transcoderAvailable` is informational and
 reports the **live** ffmpeg status for Opus/WebM→AAC transcoding — the
 server re-probes a missing binary while running (30 s throttle,
 single-flight), so installing ffmpeg later flips it true without a restart;
+`uptimeMs` is the process uptime in milliseconds (nullable — the web
+dashboard and the watch's Engine Dashboard show it as "uptime");
 `extraction`/`canaryHealthy`/`update` expose the self-healing engine
 state: a broken extraction is detected via the canary and healed by
 auto-installing a checksum-verified newer release when one exists (see
-`wearsic-server/README.md`).
+`wearsic-server/README.md`). From server ≥ v1.9.48, `update.latestNotes`
+carries a short preview of the target release's GitHub notes — the staged
+auto-update never has to be a black box (the same preview the status
+dashboard renders).
 
 ### 1-b. Readiness
 
@@ -82,7 +88,7 @@ auto-installing a checksum-verified newer release when one exists (see
   "database": true,
   "extractor": true,
   "transcoder": true,
-  "engineVersion": "1.9.47"
+  "engineVersion": "1.9.48"
 }
 ```
 
@@ -90,6 +96,22 @@ auto-installing a checksum-verified newer release when one exists (see
 presence — missing only affects rare Opus/WebM-only songs). On engines
 older than v1.4.0 the route does not exist (404) — treat that as "unknown",
 not "not ready".
+
+### 1-c. Status dashboard (server ≥ v1.9.48)
+
+- **GET** `/` — open the engine's address in any browser and get a real
+  status page, not a Ktor 404: an OLED-dark single page in the watch's own
+  palette (black + lavender `#D0BCFF`) rendering readiness tiles, extraction
+  health, the update state **with the staged release's notes**, crash and
+  CDN-refusal counters, and live latency percentiles.
+- The page is one self-contained HTML file inside the engine JAR; the
+  server embeds the CURRENT `/health` + `/diag` snapshot into every
+  response (first paint is real data, never "loading…"), and the page then
+  self-refreshes over `/health`, `/ready` and `/diag` every 5 s while a
+  window stays open (failing refreshes keep the last good data visible).
+- Public and secret-free like `/health` (no API key), served
+  `Cache-Control: no-store` (an open must show the engine AS IT IS) and
+  gzipped when the client accepts it.
 
 ### 2. Music Search
 
@@ -452,7 +474,9 @@ Commands:
 ## Response Compression & Caching (server ≥ v1.9.1)
 - **gzip**: JSON responses ≥ 512 bytes are gzip-compressed
   (`Content-Encoding: gzip`) when the client sends `Accept-Encoding`. The
-  compressor is allow-listed to `application/json` — audio bytes are never
+  compressor is allow-listed to `application/json` and, since v1.9.48,
+  `text/html` (the `/` status dashboard — one ≈16 KB `no-store` page whose
+  gzip matters exactly on metered Funnel links); audio bytes are never
   recompressed, so Range reads stay byte-exact.
 - **Read-path `Cache-Control`** — GET only, and only on 2xx responses (a
   transient 404 is never cached):
@@ -464,6 +488,18 @@ Commands:
 
   Streams, `/api/config/*`, `/health`, `/ready` and errors carry no cache
   headers (non-cacheable to HTTP caches).
+- **Route-level TTL caches (server ≥ v1.9.48)** — three upstream-heavy
+  reads are additionally cached SERVER-side, with per-key single-flight
+  (`TtlLoaderCache`): a burst of identical reads costs ONE upstream fetch
+  and every waiter receives the same result.
+  - `/api/suggestions` — 60 s window, key = trimmed query;
+  - `/api/related/{videoId}` — 5 min window, key = videoId;
+  - `/api/search/albums` — 5 min window, key = trimmed query.
+
+  A failed load is NEVER cached: it propagates to that burst's waiters and
+  the next caller retries. The HTTP `Cache-Control` windows above are
+  unchanged and stack with this — the watch's own disk cache can still be
+  one window behind, so favorites-style mutation busting is unaffected.
 - **Cloudflare front door**: the Worker passes the engine's `Cache-Control`
   through on non-stream responses, so the read-path caching above still
   applies over the permanent `workers.dev` URL; only audio/Range stream

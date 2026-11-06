@@ -54,6 +54,7 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.LocalWearsicAccent
+import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.util.WearsicMotion
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.theme.WearsicTextWhite80
@@ -139,13 +140,17 @@ fun WearsicSongRow(
  * hairline ring. Rounded squares — not circles — are the album-art language
  * of every serious music app (Spotify, Apple Music, YTM); circles read as a
  * generic template and crop away the album cover's own composition.
+ *
+ * The default size scales with the watch face ([watchScaled]): on a smaller
+ * 40mm-class face the thumb shrinks a touch so rows keep more room for the
+ * title instead of pushing it against the curved edge.
  */
 @Composable
 fun WearsicSongRowArtwork(
     artworkUrl: String?,
     contentDescription: String,
     modifier: Modifier = Modifier,
-    size: Dp = 40.dp,
+    size: Dp = watchScaled(40.dp),
 ) {
     val context = LocalContext.current
     val shape = RoundedCornerShape(WearsicDimens.ArtRadius)

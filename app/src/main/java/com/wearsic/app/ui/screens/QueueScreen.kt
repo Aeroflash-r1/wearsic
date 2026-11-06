@@ -91,6 +91,7 @@ import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTheme
+import com.wearsic.app.ui.theme.watchScaled
 
 import com.wearsic.app.ui.util.WearsicMotion
 import com.wearsic.app.ui.util.wearsicClickable
@@ -647,7 +648,7 @@ fun QueueScreen(
             if (draggedIndex != null) {
                 val liftedTrack = queue.getOrNull(draggedIndex)
                 if (liftedTrack != null) {
-                    val overlayH = with(LocalDensity.current) { 64.dp.toPx() }
+                    val overlayH = with(LocalDensity.current) { watchScaled(64.dp).toPx() }
                     val overlayYDp = with(LocalDensity.current) {
                         (dragStartCentrePx + dragFingerDy - overlayH / 2f).toDp()
                     }
@@ -656,7 +657,7 @@ fun QueueScreen(
                             .fillMaxWidth()
                             .offset(y = overlayYDp)
                             .padding(horizontal = WearsicDimens.ScreenPaddingH)
-                            .height(64.dp)
+                            .height(watchScaled(64.dp))
                             .clip(RoundedCornerShape(WearsicDimens.CardRadius))
                             .background(WearsicSurfaceRaised.copy(alpha = 0.96f))
                             .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.6f), RoundedCornerShape(WearsicDimens.CardRadius))
@@ -674,7 +675,7 @@ fun QueueScreen(
                                     .crossfade(true)
                                     .build(),
                                 contentDescription = null,
-                                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)),
+                                modifier = Modifier.size(watchScaled(44.dp)).clip(RoundedCornerShape(8.dp)),
                                 contentScale = ContentScale.Crop,
                             )
                             Spacer(modifier = Modifier.width(10.dp))

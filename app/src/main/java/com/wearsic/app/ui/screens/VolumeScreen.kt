@@ -72,6 +72,7 @@ import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.util.rememberSystemVolumeState
 import com.wearsic.app.ui.util.wearsicRotaryScroll
 import com.wearsic.app.ui.util.wearsicClickable
@@ -375,7 +376,7 @@ private fun VolumeDial(
 
     Box(
         modifier = modifier
-            .size(diameter)
+            .size(watchScaled(diameter))
             .clip(CircleShape)
             .wearsicClickable(pressedScale = 0.95f, onClick = onToggleMute)
             .semantics {

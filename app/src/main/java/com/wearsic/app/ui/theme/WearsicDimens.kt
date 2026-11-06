@@ -3,6 +3,7 @@ package com.wearsic.app.ui.theme
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.Dp
@@ -64,7 +65,47 @@ object WearsicDimens {
 
     /** Minimum row height inside action sheets and menus. */
     val SheetRowMinHeight: Dp = 44.dp
+
+    // ---- Viewport-aware scaling ----
+    /**
+     * The logical width (dp) the tokens above were tuned for — a 44mm round
+     * watch (~240dp circle). On faces that report less logical room (some
+     * 40mm devices and emulators), fixed dp sizes that are comfortable here
+     * consume a bigger share of the circle and can clip at the curved edge;
+     * [rememberWatchScale] shrinks them in lockstep instead of shipping a
+     * second, hand-maintained layout.
+     */
+    const val BaselineViewportDp = 240
+
+    /** Floor so content never becomes fiddly on tiny faces. */
+    const val MinWatchScale = 0.85f
+
+    /**
+     * Anything larger than the baseline is left alone: a face that reports
+     * MORE logical room (older 40mm watches often do) needs no shrinking.
+     */
+    const val MaxWatchScale = 1f
 }
+
+/**
+ * The ratio between this face's logical width and the [WearsicDimens.BaselineViewportDp]
+ * reference (clamped to [WearsicDimens.MinWatchScale]..[WearsicDimens.MaxWatchScale]).
+ * 1f on a 44mm-class face; <1f on physically smaller/wickedly dense faces.
+ */
+@Composable
+fun rememberWatchScale(): Float {
+    val widthDp = LocalConfiguration.current.screenWidthDp.toFloat()
+    return (widthDp / WearsicDimens.BaselineViewportDp)
+        .coerceIn(WearsicDimens.MinWatchScale, WearsicDimens.MaxWatchScale)
+}
+
+/** [base] scaled by [rememberWatchScale] — call inside a @Composable. */
+@Composable
+fun watchScaled(base: Dp): Dp = base * rememberWatchScale()
+
+/** Compose the scale once and reuse it for several values. */
+@Composable
+fun rememberWatchScaledDp(base: Dp): Dp = base * rememberWatchScale()
 
 /**
  * Canonical content padding for scrolling screens: the Wearsic design
@@ -72,13 +113,19 @@ object WearsicDimens {
  * never doubled). Screens must use this instead of raw literals so system
  * UI (time text, gesture areas, curved insets) is always respected while
  * the visual safe area stays identical on devices that report no insets.
+ *
+ * The base padding scales with [rememberWatchScale] so a smaller/denser
+ * round face gets proportionally more breathing room at the curved edges.
  */
 @Composable
 fun wearsicListContentPadding(scaffoldPadding: PaddingValues): PaddingValues {
     val direction = LocalLayoutDirection.current
-    val start = maxOf(WearsicDimens.ScreenPaddingH, scaffoldPadding.calculateStartPadding(direction))
-    val end = maxOf(WearsicDimens.ScreenPaddingH, scaffoldPadding.calculateEndPadding(direction))
-    val top = maxOf(WearsicDimens.ScreenPaddingV, scaffoldPadding.calculateTopPadding())
-    val bottom = maxOf(WearsicDimens.ScreenPaddingV, scaffoldPadding.calculateBottomPadding())
+    val scale = rememberWatchScale()
+    val h = WearsicDimens.ScreenPaddingH * scale
+    val v = WearsicDimens.ScreenPaddingV * scale
+    val start = maxOf(h, scaffoldPadding.calculateStartPadding(direction))
+    val end = maxOf(h, scaffoldPadding.calculateEndPadding(direction))
+    val top = maxOf(v, scaffoldPadding.calculateTopPadding())
+    val bottom = maxOf(v, scaffoldPadding.calculateBottomPadding())
     return PaddingValues(start = start, top = top, end = end, bottom = bottom)
 }

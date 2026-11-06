@@ -93,6 +93,7 @@ fun WearsicApp(
     val searchSuggestionsEnabled by settingsVM.searchSuggestionsEnabled.collectAsStateWithLifecycle()
     val serverProfiles by settingsVM.serverProfiles.collectAsStateWithLifecycle()
     val serverReachable by libraryVM.serverReachable.collectAsStateWithLifecycle()
+    val failoverServerName by libraryVM.failoverServerName.collectAsStateWithLifecycle()
     val offlineDownloads by downloadsVM.completedTracks.collectAsStateWithLifecycle()
 
     // Accent precedence:
@@ -203,6 +204,7 @@ fun WearsicApp(
                         navController.navigate(Screen.Player.route)
                     },
                     isServerReachable = serverReachable,
+                    failoverServerName = failoverServerName,
                     offlineDownloads = offlineDownloads,
                     onPlayOfflineTrack = { tracks, index ->
                         playerViewModel.playTracksFromList(tracks, index)

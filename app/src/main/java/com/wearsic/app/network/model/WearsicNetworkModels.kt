@@ -24,7 +24,10 @@ data class ServerHealthDto(
     val update: ServerUpdateStatusDto? = null,
     val crashCount: Int = 0,
     val lastCrashAtMillis: Long = 0,
-    val upstreamRefusals: Int = 0
+    val upstreamRefusals: Int = 0,
+    // Wall-clock time the server JVM has been up (server v1.9.48+). Shown on
+    // the Engine dashboard; optional + defaulted so older servers decode fine.
+    val uptimeMs: Long? = 0L
 )
 
 /** Extraction-engine success/failure counters from /health. */
@@ -51,7 +54,11 @@ data class ServerUpdateStatusDto(
     val lastError: String? = null,
     val stagedVersion: String? = null,
     val updateAttempt: Int = 0,
-    val rollbackReason: String? = null
+    val rollbackReason: String? = null,
+    // Preview of the target release's notes (server v1.9.48+). Shown on the
+    // Engine dashboard when an update is staged, so an auto-update is never
+    // a black box on the wrist either.
+    val latestNotes: String? = null
 )
 
 /**

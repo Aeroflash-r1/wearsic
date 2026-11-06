@@ -82,6 +82,7 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
+import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.AlbumsUiState
 
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -315,7 +316,7 @@ private fun AlbumCard(
         WearsicSongRowArtwork(
             artworkUrl = album.thumbnailUrl,
             contentDescription = album.name,
-            size = 88.dp
+            size = watchScaled(88.dp)
         )
         Spacer(Modifier.height(8.dp))
         Text(

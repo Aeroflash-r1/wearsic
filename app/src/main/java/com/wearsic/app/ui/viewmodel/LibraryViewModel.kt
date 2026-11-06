@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wearsic.app.WearsicApp
+import com.wearsic.app.data.FailoverState
 import com.wearsic.app.model.Album
 import com.wearsic.app.model.ArtistGroup
 import com.wearsic.app.model.DnsError
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.cancel
@@ -97,6 +99,16 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val _serverReachable = MutableStateFlow(true)
     val serverReachable: StateFlow<Boolean> = _serverReachable.asStateFlow()
 
+    /**
+     * Name of the server profile the failover coordinator switched to, while
+     * its "switched" banner should be visible; null otherwise. Read straight
+     * from the process-wide coordinator so a manual profile change in
+     * Settings and an automatic one can never disagree about the banner.
+     */
+    val failoverServerName: StateFlow<String?> = container.serverFailover.state
+        .map { (it as? FailoverState.Switched)?.profileName }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     /** A network failure marks offline only after this long without success. */
     private var lastServerSuccessAt = 0L
     private var everSucceeded = false
@@ -110,6 +122,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             lastServerSuccessAt = System.currentTimeMillis()
             everSucceeded = true
             if (!_serverReachable.value) _serverReachable.value = true
+            // Let the failover coordinator see successes too: they clear its
+            // "no alternative" state, and age out the switched banner.
+            container.serverFailover.onServerReachable()
             return
         }
         val stale = everSucceeded &&
@@ -127,6 +142,13 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     val pingError = ping.exceptionOrNull()
                     if (pingError != null && isNetworkFailure(pingError)) {
                         _serverReachable.value = false
+                        // Offline is now CONFIRMED (hysteresis + health ping
+                        // both agree) — this is the failover trigger. Launch,
+                        // never block: the banner must appear on time even
+                        // while the probe round runs for a few seconds.
+                        viewModelScope.launch {
+                            container.serverFailover.onServerUnreachable()
+                        }
                     } else {
                         // Reachable after all — refresh the success clock so
                         // the next miss starts its grace window fresh.

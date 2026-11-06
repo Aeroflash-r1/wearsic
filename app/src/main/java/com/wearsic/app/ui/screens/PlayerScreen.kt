@@ -129,6 +129,7 @@ import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicSurfaceBorder
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTheme
+import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.ArtworkColors
 import com.wearsic.app.ui.util.LocalRotaryDirectionInverted
@@ -513,7 +514,7 @@ private fun NowPlayingPage(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = WearsicDimens.ScreenPaddingH)
+                .padding(horizontal = watchScaled(WearsicDimens.ScreenPaddingH))
                 .pointerInput(hasTrack, track.id) {
                     // Pull UP to lock into lyrics. Runs on the INITIAL (tunnel)
                     // pass so it sees drags BEFORE the disc's ring-scrub

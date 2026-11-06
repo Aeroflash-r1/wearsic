@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -81,6 +82,7 @@ import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
+import com.wearsic.app.ui.theme.watchScaled
 
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -101,6 +103,7 @@ fun LibraryScreen(
     recentTracks: List<Track> = emptyList(),
     onPlayRecentTrack: (List<Track>, Int) -> Unit = { _, _ -> },
     isServerReachable: Boolean = true,
+    failoverServerName: String? = null,
     offlineDownloads: List<Track> = emptyList(),
     onPlayOfflineTrack: (List<Track>, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
@@ -156,6 +159,44 @@ fun LibraryScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = "Offline — showing saved music",
+                                color = WearsicTextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Failover banner — the saved server proved unreachable, the app
+            // switched ITSELF to another saved profile, and music keeps
+            // working without a Settings visit. Deliberately a different
+            // banner from the offline one: this is reassurance ("handled"),
+            // that one is a limitation ("saved music only").
+            if (failoverServerName != null) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(CircleShape)
+                            .background(WearsicGlassFill)
+                            .border(1.dp, WearsicGlassBorder, CircleShape)
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .testTag("library_failover_banner"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Rounded.SwapHoriz,
+                                contentDescription = null,
+                                tint = LocalWearsicAccent.current,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Switched to $failoverServerName",
                                 color = WearsicTextPrimary,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -387,7 +428,7 @@ private fun NowPlayingMiniCard(
                 // Real album art (or the music-note chip when there is none).
                 val artShape = RoundedCornerShape(WearsicDimens.ArtRadius)
                 val artModifier = Modifier
-                    .size(42.dp)
+                    .size(watchScaled(42.dp))
                     .clip(artShape)
                     .then(
                         if (isPlaying) Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), artShape)

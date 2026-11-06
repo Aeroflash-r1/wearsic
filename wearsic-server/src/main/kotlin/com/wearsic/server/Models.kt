@@ -90,6 +90,10 @@ data class UpdateStatusDto(
     // been staged, and why the supervisor last rolled back (if it ever did).
     val updateAttempt: Int = 0,
     val rollbackReason: String? = null,
+    // Preview of the target release's GitHub notes (first ~400 chars,
+    // newline-joined). Optional + nullable everywhere so a rollback with no
+    // notes, an old staged state file, or an old client all stay compatible.
+    val latestNotes: String? = null,
 )
 
 /**
@@ -147,6 +151,10 @@ data class HealthResponse(
     // (see LatencyMetrics). Counts only, no user data, no secrets: this is what
     // turns "it feels slow" into "extract p90 = 9.8s, lean p90 = 0.4s".
     val latency: Map<String, LatencyStatsDto>? = null,
+    // Process uptime in milliseconds (when the JVM was started). Optional and
+    // nullable so older clients parse this defensively; the web dashboard and
+    // the watch's Engine Dashboard use it for "uptime".
+    val uptimeMs: Long? = 0L,
 )
 
 /**

@@ -58,22 +58,26 @@ def main() -> None:
             counts = {k: first_attr(header.group(0), k) for k in ("failures", "errors")}
             if all((counts.get(k) or "0") == "0" for k in ("failures", "errors")):
                 continue
-            for case in re.finditer(r"<testcase\b([^>]*)>(.*?)</testcase>", xml, re.S):
+            for start_m in re.finditer(r"<testcase\b([^>]*)>", xml):
                 if annotations >= MAX_ANNOTATIONS:
                     break
-                tag, body = case.group(1), case.group(2)
+                tag = start_m.group(1)
                 if tag.rstrip().endswith("/"):
-                    continue
+                    continue  # self-closing testcase (passed)
+                body_start = start_m.end()
+                body_end = xml.find("</testcase>", body_start)
+                if body_end == -1:
+                    break
+                body = xml[body_start:body_end]
                 bad = (re.search(r"<failure\b[^>]*>(.*?)</failure>", body, re.S)
                        or re.search(r"<error\b[^>]*>(.*?)</error>", body, re.S))
                 if not bad:
                     continue
                 name = first_attr(tag, "name") or "?"
-                msg = (re.search(r'message="([^"]*)"', bad.group(1))
-                       or re.search(r'message="([^"]*)"', bad.group(0)))
+                msg = re.search(r'message="([^"]*)"', bad.group(0))
                 cause = unescape(msg.group(1) if msg else "(no message)")
                 cause = cause.replace("\n", " | ")[:600]
-                trace = unescape(bad.group(2)).strip()
+                trace = unescape(bad.group(1)).strip()
                 short_class = path.name.replace("TEST-", "").removesuffix(".xml")
                 full_name = f"{short_class}#{name}"
                 print(f"::error title=TEST::{full_name}::"

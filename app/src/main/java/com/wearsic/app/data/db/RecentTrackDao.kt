@@ -10,16 +10,21 @@ import kotlinx.coroutines.flow.Flow
 interface RecentTrackDao {
 
     // Display-level grouping: one row per SONG NAME (title+artist), keeping
-    // the most recently played recording of that song. A REPLACE on replay
-    // re-inserts the row with a fresh rowid, so MAX(rowid) per group is the
-    // latest play. Rows themselves stay per-recording-id in the DB (two
-    // different recordings that share a name keep separate rows, and tapping
-    // the visible row plays that exact row's recording id — never a title
-    // re-search). rowid DESC also breaks same-millisecond playedAt ties.
+    // the most recently played recording of that song. Replays BUMP the
+    // existing row (same rowid, newer playedAt), so the group winner must be
+    // the LATEST playedAt per name — MAX(rowid) alone would keep an older
+    // replay pinned when a newer replay of another recording arrives (a
+    // regression the 1.9.49 playCount bump introduced and the identity tests
+    // caught). rowid DESC breaks same-millisecond playedAt ties. Rows stay
+    // per-recording-id in the DB, so tapping the visible row plays that
+    // exact row's recording id — never a title re-search.
     @Query(
-        "SELECT * FROM recent_tracks WHERE rowid IN (" +
-            "SELECT MAX(rowid) FROM recent_tracks " +
-            "GROUP BY UPPER(title), UPPER(artist)" +
+        "SELECT * FROM recent_tracks " +
+            "WHERE rowid = (" +
+            "  SELECT r2.rowid FROM recent_tracks r2 " +
+            "  WHERE UPPER(r2.title) = UPPER(recent_tracks.title) " +
+            "    AND UPPER(r2.artist) = UPPER(recent_tracks.artist) " +
+            "  ORDER BY r2.playedAt DESC, r2.rowid DESC LIMIT 1" +
             ") ORDER BY playedAt DESC, rowid DESC LIMIT 10"
     )
     fun getRecentTracksFlow(): Flow<List<WearsicRecentTrackEntity>>
@@ -56,9 +61,12 @@ interface RecentTrackDao {
      * recents), ranked by cumulative play count; latest play breaks ties.
      */
     @Query(
-        "SELECT * FROM recent_tracks WHERE rowid IN (" +
-            "SELECT MAX(rowid) FROM recent_tracks " +
-            "GROUP BY UPPER(title), UPPER(artist)" +
+        "SELECT * FROM recent_tracks " +
+            "WHERE rowid = (" +
+            "  SELECT r2.rowid FROM recent_tracks r2 " +
+            "  WHERE UPPER(r2.title) = UPPER(recent_tracks.title) " +
+            "    AND UPPER(r2.artist) = UPPER(recent_tracks.artist) " +
+            "  ORDER BY r2.playedAt DESC, r2.rowid DESC LIMIT 1" +
             ") ORDER BY playCount DESC, playedAt DESC LIMIT 10"
     )
     fun getMostPlayedFlow(): Flow<List<WearsicRecentTrackEntity>>

@@ -3,8 +3,10 @@ package com.wearsic.app
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -141,7 +143,14 @@ class RelaunchWithDataTest {
         }
 
         // The start destination must appear — a hang/crash in ViewModel init,
-        // Room/DataStore/IO startup or composition times this out.
+        // Room/DataStore/IO startup or composition times this out. The app
+        // opens on the Hub's Home tab, so wait for the rail, switch to
+        // Library, and confirm the Library list renders.
+        composeTestRule.waitUntil(timeoutMillis = 15_000) {
+            composeTestRule.onAllNodesWithContentDescription("Library tab")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithContentDescription("Library tab").performClick()
         composeTestRule.waitUntil(timeoutMillis = 15_000) {
             composeTestRule.onAllNodesWithTag("library_lazy_column")
                 .fetchSemanticsNodes().isNotEmpty()
@@ -205,6 +214,13 @@ class RelaunchWithDataTest {
                 WearsicApp(timeText = {})
             }
         }
+        // Switch to Library (the app opens on Hub → Home). Wait for the rail
+        // chip first so the click never races the first composition.
+        composeTestRule.waitUntil(15_000) {
+            composeTestRule.onAllNodesWithContentDescription("Library tab")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithContentDescription("Library tab").performClick()
         composeTestRule.waitUntil(15_000) {
             composeTestRule.onAllNodesWithTag("library_lazy_column")
                 .fetchSemanticsNodes().isNotEmpty()
@@ -240,10 +256,16 @@ class RelaunchWithDataTest {
             seedPreferences(context)
         }
 
-        // First launch.
+        // First launch — the app opens on Hub → Home, so switch to Library
+        // before waiting for the Library list to compose.
         composeTestRule.setContent {
             WearsicTheme { WearsicApp(timeText = {}) }
         }
+        composeTestRule.waitUntil(15_000) {
+            composeTestRule.onAllNodesWithContentDescription("Library tab")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithContentDescription("Library tab").performClick()
         composeTestRule.waitUntil(15_000) {
             composeTestRule.onAllNodesWithTag("library_lazy_column")
                 .fetchSemanticsNodes().isNotEmpty()

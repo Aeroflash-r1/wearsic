@@ -130,38 +130,33 @@ jobs:
         if: failure()
         run: |
           set -euo pipefail
-          mkdir -p ci-logs-out
-          if [ -f gradle.out ]; then cp gradle.out ci-logs-out/gradle.out; fi
+          rm -rf /tmp/ci-logs-out
+          mkdir -p /tmp/ci-logs-out
+          if [ -f gradle.out ]; then cp gradle.out /tmp/ci-logs-out/gradle.out; fi
           if [ -d app/build/test-results/testDebugUnitTest ]; then
-            cp -r app/build/test-results/testDebugUnitTest ci-logs-out/test-results
+            cp -r app/build/test-results/testDebugUnitTest /tmp/ci-logs-out/test-results
           fi
-          if [ -f summary.md ]; then cp summary.md ci-logs-out/summary.md; fi
-          git config user.name "CI diagnostics bot"
-          git config user.email "ci@wearsic.invalid"
-          git fetch origin ci-logs || git branch ci-logs origin/main
-          git checkout -B ci-logs origin/ci-logs 2>/dev/null || git checkout -B ci-logs origin/main
-          rm -rf ci-logs-out
-          cp -r /tmp/ci-logs-out ci-logs-out 2>/dev/null || true
-          # rebuild from the captured directory
-          rm -rf ci-logs-out
-          mkdir -p ci-logs-out
-          if [ -f gradle.out ]; then cp gradle.out ci-logs-out/gradle.out; fi
-          if [ -d app/build/test-results/testDebugUnitTest ]; then
-            cp -r app/build/test-results/testDebugUnitTest ci-logs-out/test-results
-          fi
-          if [ -f summary.md ]; then cp summary.md ci-logs-out/summary.md; fi
+          if [ -f summary.md ]; then cp summary.md /tmp/ci-logs-out/summary.md; fi
           if [ -f .github/scripts/summarize-failures.py ]; then
-            cp .github/scripts/summarize-failures.py ci-logs-out/
+            cp .github/scripts/summarize-failures.py /tmp/ci-logs-out/
           fi
           printf '%s\n' "commit: $GITHUB_SHA" "run: $GITHUB_RUN_ID" \
             "attempt: ${GITHUB_RUN_ATTEMPT:-1}" "job: $GITHUB_JOB" \
-            > ci-logs-out/meta.txt
-          ls -la ci-logs-out
-          git add -A ci-logs-out
+            > /tmp/ci-logs-out/meta.txt
+          ls -la /tmp/ci-logs-out
+          # Orphan branch = ONLY the diagnostics, never the whole tree; and
+          # pushing ci-logs does not re-trigger this workflow (not main, not
+          # a tag).
+          git checkout --orphan ci-logs-diag
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          rm -rf ./* ./.github ./.devcontainer 2>/dev/null || true
+          mkdir -p ci-logs-out
+          cp -r /tmp/ci-logs-out/. ci-logs-out/
+          git add -A
           git -c user.name="CI diagnostics bot" \
              -c user.email="ci@wearsic.invalid" \
-             commit -m "ci(debug): publish failure artifacts for run $GITHUB_RUN_ID" || true
-          git push origin ci-logs --force
+             commit -m "ci(debug): publish failure artifacts for run $GITHUB_RUN_ID"
+          git push origin HEAD:ci-logs --force
 
       # A broken server must not merge silently while only Android tests run.
       - name: Run server tests

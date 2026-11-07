@@ -99,6 +99,44 @@ jobs:
         timeout-minutes: 10
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
+      # When the suite fails on a runner that cannot reach the local
+      # workspace, the error lives only in the log zip (download needs a
+      # token). This step surfaces the failing test XMLs in the job
+      # summary instead — the summary is readable anonymously, so the
+      # diagnosis needs no credentials.
+      - name: Surface failing tests in the job summary
+        if: failure()
+        run: |
+          {
+            echo "## Failing tests"
+            echo
+            for f in app/build/test-results/testDebugUnitTest/TEST-*.xml; do
+              [ -f "$f" ] || continue
+              if grep -q 'failures="[1-9]"\|errors="[1-9]"' "$f"; then
+                echo "### $f"
+                echo '```'
+                grep -oE '(failures|errors)="[0-9]+"' "$f" | head -2
+                python3 - "$f" <<'PY' | head -80
+import re, sys
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+for m in re.finditer(r'<testcase[^>]*name="([^"]+)"[^>]*>(.*?)</testcase>', xml, re.S):
+    body = m.group(2)
+    if "<failure" not in body and "<error" not in body:
+        continue
+    print("TEST:", m.group(1))
+    msg = re.search(r'(?:message|type)="([^"]+)"', body)
+    print("CAUSE:", msg.group(1)[:400] if msg else "?")
+    trace = re.search(r'(?:failure|error)[^>]*>(.*?)</(?:failure|error)>', body, re.S)
+    if trace:
+        print((trace.group(1).replace("&gt;", ">").replace("&lt;", "<")
+               .replace("&quot;", '"').replace("&amp;", "&"))[:2500])
+    print()
+PY
+                echo '```'
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # A broken server must not merge silently while only Android tests run.
       - name: Run server tests
         run: ./gradlew :wearsic-server:test --stacktrace

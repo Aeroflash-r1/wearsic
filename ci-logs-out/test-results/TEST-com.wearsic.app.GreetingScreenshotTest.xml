@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.GreetingScreenshotTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:23:53.218Z" hostname="runnervmwuk1x" time="4.103">
+  <properties/>
+  <testcase name="wearsic_screenshot" classname="com.wearsic.app.GreetingScreenshotTest" time="4.05"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

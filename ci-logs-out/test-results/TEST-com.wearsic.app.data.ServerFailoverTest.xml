@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.data.ServerFailoverTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:24:02.625Z" hostname="runnervmwuk1x" time="0.059">
+  <properties/>
+  <testcase name="after the debounce the coordinator probes the remaining alternatives" classname="com.wearsic.app.data.ServerFailoverTest" time="0.042"/>
+  <testcase name="success clears NoAlternative immediately" classname="com.wearsic.app.data.ServerFailoverTest" time="0.001"/>
+  <testcase name="a crashing probe counts as unreachable" classname="com.wearsic.app.data.ServerFailoverTest" time="0.004"/>
+  <testcase name="no other saved profile means no probing at all" classname="com.wearsic.app.data.ServerFailoverTest" time="0.0"/>
+  <testcase name="a dead round cools down five minutes before the next round" classname="com.wearsic.app.data.ServerFailoverTest" time="0.001"/>
+  <testcase name="the activated profile is passed whole - url AND api key" classname="com.wearsic.app.data.ServerFailoverTest" time="0.001"/>
+  <testcase name="all alternatives dead reports NoAlternative without activating anything" classname="com.wearsic.app.data.ServerFailoverTest" time="0.0"/>
+  <testcase name="the switched banner survives brief successes and clears after the grace period" classname="com.wearsic.app.data.ServerFailoverTest" time="0.001"/>
+  <testcase name="switches to the first healthy alternative and never probes the dead url" classname="com.wearsic.app.data.ServerFailoverTest" time="0.0"/>
+  <testcase name="a burst of failures kicks off exactly one probe round" classname="com.wearsic.app.data.ServerFailoverTest" time="0.006"/>
+  <testcase name="profiles pointing at the same url are deduped to one probe" classname="com.wearsic.app.data.ServerFailoverTest" time="0.0"/>
+  <testcase name="an immediate repeat is debounced - nothing probes again within the gap" classname="com.wearsic.app.data.ServerFailoverTest" time="0.001"/>
+  <testcase name="saved order beats probe timing - earlier profile wins when both are healthy" classname="com.wearsic.app.data.ServerFailoverTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" tests="34" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:24:02.686Z" hostname="runnervmwuk1x" time="0.005">
+  <properties/>
+  <testcase name="a replaced queue drops the prepare" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.001"/>
+  <testcase name="skipping a song drops the prepare" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="the fade completes exactly at the end of its window" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="the fade begins only with a buffered incoming stream inside the window" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="the standby is not armed while the track is still early" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a fade is dropped when the session moves to another item" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="nothing is armed once the track has already ended" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a fade is dropped if the user pauses mid-ramp" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a cleared queue drops the prepare" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="an unexplained stored value falls back to off" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.001"/>
+  <testcase name="the fade does not begin before the window or after the end" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a normal queue with a real duration is eligible" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="off short-circuits eligibility completely" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="an unknown stream length cannot be faded against" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a healthy prepare survives every tick" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="labels read as seconds with off spelled out" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a prepare is dropped the moment the user takes over" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a single-item queue has nothing to fade into" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="an incoming stream that is still buffering holds the fade back" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a disabled fade never begins" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="progress runs from zero to one and clamps" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="the curve keeps total power constant across the whole window" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.001"/>
+  <testcase name="off is the default so an upgrade never changes how playback sounds" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="nothing is armed when the pair is ineligible or a fade is still winding down" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="gains clamp instead of overshooting on a late or early tick" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.001"/>
+  <testcase name="a healthy fade survives every tick" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="gains start and end at the right extremes" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="the standby is armed inside the window plus its buffering lead" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a track no longer than the fade is played out normally" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="every offered length survives sanitising" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a fade is dropped when the queue changes size underneath it" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="repeat-one is never crossfaded with itself" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="a late tick compresses the window to the audio that is left" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.0"/>
+  <testcase name="the outgoing track only ever gets quieter and the incoming only louder" classname="com.wearsic.app.media.crossfade.WearsicCrossfadeTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

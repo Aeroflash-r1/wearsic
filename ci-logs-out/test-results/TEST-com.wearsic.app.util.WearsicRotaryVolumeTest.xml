@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.util.WearsicRotaryVolumeTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:24:03.745Z" hostname="runnervmwuk1x" time="0.001">
+  <properties/>
+  <testcase name="one notch maps to exactly one step up" classname="com.wearsic.app.util.WearsicRotaryVolumeTest" time="0.001"/>
+  <testcase name="no movement maps to no step" classname="com.wearsic.app.util.WearsicRotaryVolumeTest" time="0.0"/>
+  <testcase name="a fast spin maps multiples of the notch to multiple steps" classname="com.wearsic.app.util.WearsicRotaryVolumeTest" time="0.0"/>
+  <testcase name="a sub-notch event still steps once in its direction" classname="com.wearsic.app.util.WearsicRotaryVolumeTest" time="0.0"/>
+  <testcase name="one notch down is one step down" classname="com.wearsic.app.util.WearsicRotaryVolumeTest" time="0.0"/>
+  <testcase name="a zero or negative notch distance can never divide by mistake" classname="com.wearsic.app.util.WearsicRotaryVolumeTest" time="0.0"/>
+  <testcase name="the notch distance is caller-configurable" classname="com.wearsic.app.util.WearsicRotaryVolumeTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

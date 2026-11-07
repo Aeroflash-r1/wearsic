@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.DownloadOwnershipTest" tests="25" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:23:29.021Z" hostname="runnervmwuk1x" time="20.307">
+  <properties/>
+  <testcase name="switching to another song makes the deferred AUTO eligible" classname="com.wearsic.app.DownloadOwnershipTest" time="0.993"/>
+  <testcase name="download on an auto-cached song promotes it without a second download" classname="com.wearsic.app.DownloadOwnershipTest" time="0.408"/>
+  <testcase name="clear auto-saved during AUTO to MANUAL promotion leaves MANUAL" classname="com.wearsic.app.DownloadOwnershipTest" time="0.733"/>
+  <testcase name="manual promotion during a deferred deletion keeps the file MANUAL" classname="com.wearsic.app.DownloadOwnershipTest" time="1.107"/>
+  <testcase name="manual download of a new song yields one MANUAL file" classname="com.wearsic.app.DownloadOwnershipTest" time="0.343"/>
+  <testcase name="no local file means network playback is used" classname="com.wearsic.app.DownloadOwnershipTest" time="0.293"/>
+  <testcase name="manual request while an AUTO job is downloading upgrades that job" classname="com.wearsic.app.DownloadOwnershipTest" time="1.819"/>
+  <testcase name="restart while the file is still in use keeps it deferred" classname="com.wearsic.app.DownloadOwnershipTest" time="0.825"/>
+  <testcase name="promoted MANUAL track survives clear-auto and is not evictable" classname="com.wearsic.app.DownloadOwnershipTest" time="0.961"/>
+  <testcase name="auto-cache download of a new song yields one AUTO file" classname="com.wearsic.app.DownloadOwnershipTest" time="0.336"/>
+  <testcase name="rows left downloading by a killed process are cleaned on restart" classname="com.wearsic.app.DownloadOwnershipTest" time="0.488"/>
+  <testcase name="startup reconciliation rescues or removes CANCELLED rows safely" classname="com.wearsic.app.DownloadOwnershipTest" time="0.397"/>
+  <testcase name="deleting a playing MANUAL download defers until the file is released" classname="com.wearsic.app.DownloadOwnershipTest" time="0.666"/>
+  <testcase name="manual request on an already-manual track does nothing" classname="com.wearsic.app.DownloadOwnershipTest" time="0.934"/>
+  <testcase name="auto-cache request on a MANUAL file never downgrades it" classname="com.wearsic.app.DownloadOwnershipTest" time="0.933"/>
+  <testcase name="third concurrent download queues while two are active" classname="com.wearsic.app.DownloadOwnershipTest" time="2.115"/>
+  <testcase name="eviction removes oldest AUTO only and keeps MANUAL" classname="com.wearsic.app.DownloadOwnershipTest" time="0.5"/>
+  <testcase name="manual promotion racing auto eviction keeps the file as MANUAL" classname="com.wearsic.app.DownloadOwnershipTest" time="0.713"/>
+  <testcase name="auto-cache while the same track is downloading stays one job" classname="com.wearsic.app.DownloadOwnershipTest" time="1.284"/>
+  <testcase name="restart reconciles over-cap AUTO while keeping MANUAL" classname="com.wearsic.app.DownloadOwnershipTest" time="0.964"/>
+  <testcase name="AUTO and MANUAL completed files both resolve for offline playback" classname="com.wearsic.app.DownloadOwnershipTest" time="0.338"/>
+  <testcase name="storage breakdown counts each physical file exactly once" classname="com.wearsic.app.DownloadOwnershipTest" time="0.516"/>
+  <testcase name="clear auto-saved removes only AUTO rows and files" classname="com.wearsic.app.DownloadOwnershipTest" time="0.613"/>
+  <testcase name="clear auto-saved defers the playing AUTO file and deletes it once released" classname="com.wearsic.app.DownloadOwnershipTest" time="1.018"/>
+  <testcase name="clear auto-saved then process death - restart deterministically removes the deferred AUTO" classname="com.wearsic.app.DownloadOwnershipTest" time="0.996"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

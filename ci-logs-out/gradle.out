@@ -1,0 +1,890 @@
+Calculating task graph as no cached configuration is available for tasks: :app:testDebugUnitTest
+
+> Configure project :app
+WARNING: The option setting 'android.experimental.enableScreenshotTest=true' is experimental.
+The current default is 'false'.
+
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:kspDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:generateDebugRFile UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugUnitTestManifest UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:bundleDebugClassesToRuntimeJar UP-TO-DATE
+> Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
+> Task :app:packageDebugUnitTestForUnitTest UP-TO-DATE
+> Task :app:generateDebugUnitTestConfig UP-TO-DATE
+> Task :app:kspDebugUnitTestKotlin UP-TO-DATE
+> Task :app:compileDebugUnitTestKotlin UP-TO-DATE
+> Task :app:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+
+> Task :app:testDebugUnitTest
+
+AlbumBrowsingTest > emptyCatalog_explainsHowToDiscoverAlbums STARTED
+
+AlbumBrowsingTest > artworkCard_opensExactAlbum_andDeduplicatesIds STARTED
+
+DownloadOwnershipTest > switching to another song makes the deferred AUTO eligible STARTED
+
+DownloadOwnershipTest > download on an auto-cached song promotes it without a second download STARTED
+
+DownloadOwnershipTest > clear auto-saved during AUTO to MANUAL promotion leaves MANUAL STARTED
+
+DownloadOwnershipTest > manual promotion during a deferred deletion keeps the file MANUAL STARTED
+
+DownloadOwnershipTest > manual download of a new song yields one MANUAL file STARTED
+
+DownloadOwnershipTest > no local file means network playback is used STARTED
+
+DownloadOwnershipTest > manual request while an AUTO job is downloading upgrades that job STARTED
+
+DownloadOwnershipTest > restart while the file is still in use keeps it deferred STARTED
+
+DownloadOwnershipTest > promoted MANUAL track survives clear-auto and is not evictable STARTED
+
+DownloadOwnershipTest > auto-cache download of a new song yields one AUTO file STARTED
+
+DownloadOwnershipTest > rows left downloading by a killed process are cleaned on restart STARTED
+
+DownloadOwnershipTest > startup reconciliation rescues or removes CANCELLED rows safely STARTED
+
+DownloadOwnershipTest > deleting a playing MANUAL download defers until the file is released STARTED
+
+DownloadOwnershipTest > manual request on an already-manual track does nothing STARTED
+
+DownloadOwnershipTest > auto-cache request on a MANUAL file never downgrades it STARTED
+
+DownloadOwnershipTest > third concurrent download queues while two are active STARTED
+
+DownloadOwnershipTest > eviction removes oldest AUTO only and keeps MANUAL STARTED
+
+DownloadOwnershipTest > manual promotion racing auto eviction keeps the file as MANUAL STARTED
+
+DownloadOwnershipTest > auto-cache while the same track is downloading stays one job STARTED
+
+DownloadOwnershipTest > restart reconciles over-cap AUTO while keeping MANUAL STARTED
+
+DownloadOwnershipTest > AUTO and MANUAL completed files both resolve for offline playback STARTED
+
+DownloadOwnershipTest > storage breakdown counts each physical file exactly once STARTED
+
+DownloadOwnershipTest > clear auto-saved removes only AUTO rows and files STARTED
+
+DownloadOwnershipTest > clear auto-saved defers the playing AUTO file and deletes it once released STARTED
+
+DownloadOwnershipTest > clear auto-saved then process death - restart deterministically removes the deferred AUTO STARTED
+
+ExampleRobolectricTest > testWearsicPlaybackControllerRelease STARTED
+
+ExampleRobolectricTest > testAudioOutputHelperDefault STARTED
+
+ExampleRobolectricTest > testVolumeAndOutputScreenNavigation STARTED
+
+ExampleRobolectricTest > testMusicRepositoryIntegration STARTED
+
+ExampleRobolectricTest > testLibraryAndSearchNavigation STARTED
+
+ExampleRobolectricTest > testLibraryAndSearchNavigation FAILED
+    java.lang.AssertionError at ExampleRobolectricTest.kt:184
+
+ExampleRobolectricTest > testDownloadsScreenNavigation STARTED
+
+ExampleRobolectricTest > testMockApiClient STARTED
+
+ExampleRobolectricTest > testMediaItemFactoryCreation STARTED
+
+ExampleRobolectricTest > testSettingsScreenRendersInIsolation STARTED
+
+ExampleRobolectricTest > testServerUrlValidation STARTED
+
+ExampleRobolectricTest > testWearsicHttpApiClientSchemeValidation STARTED
+
+ExampleRobolectricTest > testAppNameResource STARTED
+
+ExampleRobolectricTest > testRoomDownloadDatabaseAndRepository STARTED
+
+ExampleUnitTest > addition_isCorrect STARTED
+
+GreetingScreenshotTest > wearsic_screenshot STARTED
+
+OfflinePersistenceTest > interrupted download resumes from the written offset and completes STARTED
+
+OfflinePersistenceTest > similar titles from different artists stay separate rows STARTED
+
+OfflinePersistenceTest > same-title recordings keep per-id rows but show once as the latest play STARTED
+
+OfflinePersistenceTest > replaying a song bumps it to the top without duplicating STARTED
+
+OfflinePersistenceTest > replaying AAA after BBB keeps both rows and shows the exact AAA recording STARTED
+
+PairingImportTest > noPairingFile_isANoOp STARTED
+
+PairingImportTest > pairingFile_blankKey_clearsTheStoredKey STARTED
+
+PairingImportTest > pairingFile_invalidUrl_changesNothing STARTED
+
+PairingImportTest > pairingFile_appliesUrlAndKey_andIsConsumed STARTED
+
+PairingImportTest > pairingFile_toleratesCommentsAndCrlf STARTED
+
+PlayerInteractionTest > pageSwitch_opensActions_andReturnsToTransport STARTED
+
+PlayerInteractionTest > nowPlaying_keepsEveryControlInsideTheRoundFace STARTED
+
+PlayerInteractionTest > emptyPlayer_disablesTransport STARTED
+
+PlayerInteractionTest > songRow_longPress_doesNotAlsoPlay STARTED
+
+PlayerInteractionTest > nowPlaying_keepsALongSongTitleOnOneLine STARTED
+
+PlayerInteractionTest > nowPlaying_showsElapsedAndTotalTime STARTED
+
+PlayerInteractionTest > pageSwitch_return_diagnostic STARTED
+
+RecentPlaybackIdentityTest > exact ids survive restart and still resolve their own recordings STARTED
+
+RecentPlaybackIdentityTest > exact ids survive restart and still resolve their own recordings FAILED
+    org.junit.ComparisonFailure at RecentPlaybackIdentityTest.kt:179
+
+RecentPlaybackIdentityTest > local MANUAL file is used only for its own visible recording STARTED
+
+RecentPlaybackIdentityTest > replaying AAA after BBB always replays recording AAA STARTED
+
+RecentPlaybackIdentityTest > local AUTO file is used only for its own visible recording STARTED
+
+RecentPlaybackIdentityTest > same-title recordings stay stored and the visible row resolves its own id STARTED
+
+RelaunchWithDataTest > relaunch_withPersistedState_rendersAndStaysResponsive STARTED
+
+RelaunchWithDataTest > relaunch_withPersistedState_rendersAndStaysResponsive FAILED
+    java.lang.AssertionError at RelaunchWithDataTest.kt:158
+
+RelaunchWithDataTest > relaunch_reconciliation_isIdempotentAcrossRepeatedRuns STARTED
+
+RelaunchWithDataTest > relaunch_navigationAfterRestart_doesNotDeadlock STARTED
+
+ScreenGalleryTest > lyrics_unavailable STARTED
+
+ScreenGalleryTest > storage STARTED
+
+ScreenGalleryTest > playlists STARTED
+
+ScreenGalleryTest > favorites STARTED
+
+ScreenGalleryTest > library_idle STARTED
+
+ScreenGalleryTest > settings_error STARTED
+
+ScreenGalleryTest > albums STARTED
+
+ScreenGalleryTest > playlistDetail STARTED
+
+ScreenGalleryTest > artists STARTED
+
+ScreenGalleryTest > player_nowPlaying STARTED
+
+ScreenGalleryTest > lyrics_synced_activeLineCentered STARTED
+
+ScreenGalleryTest > serverDashboard STARTED
+
+ScreenGalleryTest > library_playing STARTED
+
+ScreenGalleryTest > trackActionSheet STARTED
+
+ScreenGalleryTest > player_empty STARTED
+
+ScreenGalleryTest > queue STARTED
+
+ScreenGalleryTest > audioOutput STARTED
+
+ScreenGalleryTest > search_empty STARTED
+
+ScreenGalleryTest > lyrics_loading STARTED
+
+ScreenGalleryTest > mix_tab STARTED
+
+ScreenGalleryTest > search_results STARTED
+
+ScreenGalleryTest > downloads STARTED
+
+ScreenGalleryTest > settings STARTED
+
+ScreenGalleryTest > home_feed STARTED
+
+SearchResultsRenderTest > searchResults_showEmptyMessage_whenNoResults STARTED
+
+SearchResultsRenderTest > searchRow_longPressOpensActions_withoutPlaying STARTED
+
+SearchResultsRenderTest > searchResults_render_rows_when_listHasResults STARTED
+
+WearsicArtistCollageTest > collage never repeats the same cover STARTED
+
+WearsicArtistCollageTest > collage picks first-encounter artwork in order STARTED
+
+WearsicArtistCollageTest > collage caps at four panes STARTED
+
+WearsicArtistCollageTest > caller can ask for a smaller collage STARTED
+
+WearsicArtistCollageTest > collage skips songs without artwork STARTED
+
+WearsicArtistCollageTest > an artist with no artwork ends in an empty collage STARTED
+
+WearsicArtistCollageTest > an empty artist has no collage STARTED
+
+ServerFailoverTest > after the debounce the coordinator probes the remaining alternatives STARTED
+
+ServerFailoverTest > success clears NoAlternative immediately STARTED
+
+ServerFailoverTest > a crashing probe counts as unreachable STARTED
+
+ServerFailoverTest > no other saved profile means no probing at all STARTED
+
+ServerFailoverTest > a dead round cools down five minutes before the next round STARTED
+
+ServerFailoverTest > the activated profile is passed whole - url AND api key STARTED
+
+ServerFailoverTest > all alternatives dead reports NoAlternative without activating anything STARTED
+
+ServerFailoverTest > the switched banner survives brief successes and clears after the grace period STARTED
+
+ServerFailoverTest > switches to the first healthy alternative and never probes the dead url STARTED
+
+ServerFailoverTest > a burst of failures kicks off exactly one probe round STARTED
+
+ServerFailoverTest > profiles pointing at the same url are deduped to one probe STARTED
+
+ServerFailoverTest > an immediate repeat is debounced - nothing probes again within the gap STARTED
+
+ServerFailoverTest > saved order beats probe timing - earlier profile wins when both are healthy STARTED
+
+WearsicCrossfadeTest > a replaced queue drops the prepare STARTED
+
+WearsicCrossfadeTest > skipping a song drops the prepare STARTED
+
+WearsicCrossfadeTest > the fade completes exactly at the end of its window STARTED
+
+WearsicCrossfadeTest > the fade begins only with a buffered incoming stream inside the window STARTED
+
+WearsicCrossfadeTest > the standby is not armed while the track is still early STARTED
+
+WearsicCrossfadeTest > a fade is dropped when the session moves to another item STARTED
+
+WearsicCrossfadeTest > nothing is armed once the track has already ended STARTED
+
+WearsicCrossfadeTest > a fade is dropped if the user pauses mid-ramp STARTED
+
+WearsicCrossfadeTest > a cleared queue drops the prepare STARTED
+
+WearsicCrossfadeTest > an unexplained stored value falls back to off STARTED
+
+WearsicCrossfadeTest > the fade does not begin before the window or after the end STARTED
+
+WearsicCrossfadeTest > a normal queue with a real duration is eligible STARTED
+
+WearsicCrossfadeTest > off short-circuits eligibility completely STARTED
+
+WearsicCrossfadeTest > an unknown stream length cannot be faded against STARTED
+
+WearsicCrossfadeTest > a healthy prepare survives every tick STARTED
+
+WearsicCrossfadeTest > labels read as seconds with off spelled out STARTED
+
+WearsicCrossfadeTest > a prepare is dropped the moment the user takes over STARTED
+
+WearsicCrossfadeTest > a single-item queue has nothing to fade into STARTED
+
+WearsicCrossfadeTest > an incoming stream that is still buffering holds the fade back STARTED
+
+WearsicCrossfadeTest > a disabled fade never begins STARTED
+
+WearsicCrossfadeTest > progress runs from zero to one and clamps STARTED
+
+WearsicCrossfadeTest > the curve keeps total power constant across the whole window STARTED
+
+WearsicCrossfadeTest > off is the default so an upgrade never changes how playback sounds STARTED
+
+WearsicCrossfadeTest > nothing is armed when the pair is ineligible or a fade is still winding down STARTED
+
+WearsicCrossfadeTest > gains clamp instead of overshooting on a late or early tick STARTED
+
+WearsicCrossfadeTest > a healthy fade survives every tick STARTED
+
+WearsicCrossfadeTest > gains start and end at the right extremes STARTED
+
+WearsicCrossfadeTest > the standby is armed inside the window plus its buffering lead STARTED
+
+WearsicCrossfadeTest > a track no longer than the fade is played out normally STARTED
+
+WearsicCrossfadeTest > every offered length survives sanitising STARTED
+
+WearsicCrossfadeTest > a fade is dropped when the queue changes size underneath it STARTED
+
+WearsicCrossfadeTest > repeat-one is never crossfaded with itself STARTED
+
+WearsicCrossfadeTest > a late tick compresses the window to the audio that is left STARTED
+
+WearsicCrossfadeTest > the outgoing track only ever gets quieter and the incoming only louder STARTED
+
+ErrorTest > InvalidTrackIdError has correct display message STARTED
+
+ErrorTest > InvalidConfigError reports offline limit value STARTED
+
+ErrorTest > UnknownError has correct properties STARTED
+
+ErrorTest > SessionExpiredError has correct properties STARTED
+
+ErrorTest > DnsError has correct display message STARTED
+
+ErrorTest > Generic Exception converts to UnknownError STARTED
+
+ErrorTest > displayMessage prefers the curated wording for HTTP errors STARTED
+
+ErrorTest > MissingApiKeyError has correct properties STARTED
+
+ErrorTest > PlaybackInterruptedError has correct display message STARTED
+
+ErrorTest > UnknownError without cause has correct properties STARTED
+
+ErrorTest > TooManyDownloadsError has correct properties STARTED
+
+ErrorTest > displayMessage keeps a plain exception message STARTED
+
+ErrorTest > HttpError 400 has correct display message STARTED
+
+ErrorTest > Errors with same properties are equal STARTED
+
+ErrorTest > All errors have non-null display messages STARTED
+
+ErrorTest > EmptyInputError has correct display message STARTED
+
+ErrorTest > PermissionDeniedError has correct display message STARTED
+
+ErrorTest > HttpError 500 has correct display message STARTED
+
+ErrorTest > AudioFocusLostError has correct display message STARTED
+
+ErrorTest > RateLimitedError has correct properties STARTED
+
+ErrorTest > ConnectException converts to ConnectionRefusedError STARTED
+
+ErrorTest > DownloadCancelledError has correct properties STARTED
+
+ErrorTest > Int 400 converts to HttpError STARTED
+
+ErrorTest > DecodingError has correct display message STARTED
+
+ErrorTest > Int 401 converts to UnauthorizedError STARTED
+
+ErrorTest > HttpError 401 has correct display message STARTED
+
+ErrorTest > ValidationError hierarchy is correct STARTED
+
+ErrorTest > StorageFullError has correct display message STARTED
+
+ErrorTest > UnknownHostException converts to HostUnreachableError STARTED
+
+ErrorTest > FileNotFoundError has correct display message STARTED
+
+ErrorTest > DownloadConflictError has correct display message STARTED
+
+ErrorTest > displayMessage falls back when the message is blank STARTED
+
+ErrorTest > ConnectionRefusedError has correct display message STARTED
+
+ErrorTest > InvalidUrlError has correct display message STARTED
+
+ErrorTest > NetworkError hierarchy is correct STARTED
+
+ErrorTest > ExternalError has correct properties STARTED
+
+ErrorTest > NoInternetError has correct display message STARTED
+
+ErrorTest > HttpError 502 has correct display message STARTED
+
+ErrorTest > Int 404 converts to NotFoundError STARTED
+
+ErrorTest > ServerUrlNotConfiguredError has correct properties STARTED
+
+ErrorTest > ServiceUnavailableError has correct properties STARTED
+
+ErrorTest > HttpError 429 has correct display message STARTED
+
+ErrorTest > DownloadNetworkError has correct display message STARTED
+
+ErrorTest > IOException with hostname message converts to DnsError STARTED
+
+ErrorTest > SocketTimeoutException converts to TimeoutError STARTED
+
+ErrorTest > UnauthorizedError has correct properties STARTED
+
+ErrorTest > All errors extend WearsicError STARTED
+
+ErrorTest > DatabaseError has correct display message STARTED
+
+ErrorTest > InputTooLongError has correct display message STARTED
+
+ErrorTest > NoMediaSourceError has correct display message STARTED
+
+ErrorTest > InvalidConfigError has correct display message STARTED
+
+ErrorTest > HttpError 503 has correct display message STARTED
+
+ErrorTest > FileCorruptedError has correct display message STARTED
+
+ErrorTest > Errors with different properties are not equal STARTED
+
+ErrorTest > ServerError hierarchy is correct STARTED
+
+ErrorTest > DecodingError without mime type has correct display message STARTED
+
+ErrorTest > Int 500 converts to HttpError STARTED
+
+ErrorTest > HostUnreachableError has correct display message STARTED
+
+ErrorTest > HttpError 404 has correct display message STARTED
+
+ErrorTest > Singleton errors are equal to themselves STARTED
+
+ErrorTest > TimeoutError has correct display message STARTED
+
+ErrorTest > InvalidApiKeyError has correct properties STARTED
+
+TrackDtoContractTest > serializesPostBodyWithServerFieldNames STARTED
+
+TrackDtoContractTest > decodesRealServerSearchResponse STARTED
+
+WearsicRetryTest > a 503 is retried and the next successful answer is used STARTED
+
+WearsicRetryTest > a POST is never replayed STARTED
+
+WearsicRetryTest > a 401 is terminal and not retried STARTED
+
+LyricsDtoTest > activeIndexFor picks the line at or before the position STARTED
+
+LyricsDtoTest > plain response maps to paragraphs without timestamps STARTED
+
+LyricsDtoTest > unavailable and unknown modes map to Unavailable STARTED
+
+LyricsDtoTest > activeIndexFor is -1 for non-synced lyrics STARTED
+
+LyricsDtoTest > synced response maps mode, lines and timestamps STARTED
+
+HomeFeedLogicTest > every boundary hour yields a greeting STARTED
+
+HomeFeedLogicTest > greeting buckets match the day STARTED
+
+HomeFeedLogicTest > moods are unique and search-ready STARTED
+
+WearsicGeometryTest > negative distance treated like positive STARTED
+
+WearsicGeometryTest > chord beyond radius clamps to zero STARTED
+
+WearsicGeometryTest > bar at the bezel keeps clear of the curve STARTED
+
+WearsicGeometryTest > chord narrows toward the edge STARTED
+
+WearsicGeometryTest > centre row uses full width STARTED
+
+WearsicGeometryTest > radius follows the shorter axis STARTED
+
+WearsicGeometryTest > safety cut shrinks symmetrically STARTED
+
+WearsicGeometryTest > degenerate zero canvas does not crash or go negative STARTED
+
+WearsicGeometryTest > bar inset further inward gains width STARTED
+
+LyricsAutoCenterTargetTest > no-op when the row is already at the anchor STARTED
+
+LyricsAutoCenterTargetTest > target clamps at the scrollable bounds STARTED
+
+LyricsAutoCenterTargetTest > target moves the row center onto the anchor STARTED
+
+LyricsAutoCenterTargetTest > zero-size scrollable stays zero STARTED
+
+LyricsCacheCodecTest > malformed json decodes to null STARTED
+
+LyricsCacheCodecTest > lines round trip losslessly STARTED
+
+SystemVolumeTest > rotary maps every non-zero event to exactly one step STARTED
+
+SystemVolumeTest > level clamps at both ends STARTED
+
+SystemVolumeTest > unmute from silence restores a step, never silence STARTED
+
+SystemVolumeTest > mute then unmute restores the last audible level STARTED
+
+SystemVolumeTest > step moves one index and reflects in the fraction STARTED
+
+SystemVolumeTest > audio availability is false without a service STARTED
+
+SystemVolumeTest > applying the current level is a no-op STARTED
+
+SystemVolumeTest > default range is the platform media range STARTED
+
+ValidationTest > Result isValid returns false on failure STARTED
+
+ValidationTest > String validateApiKey extension works STARTED
+
+ValidationTest > URL with user info fails validation STARTED
+
+ValidationTest > Track ID with forward slash fails validation STARTED
+
+ValidationTest > URL with negative port fails validation STARTED
+
+ValidationTest > URL with spaces in host fails validation STARTED
+
+ValidationTest > Query with spaces passes validation STARTED
+
+ValidationTest > Valid API key passes validation STARTED
+
+ValidationTest > hasValidScheme returns false for FTP STARTED
+
+ValidationTest > Track ID with underscores passes validation STARTED
+
+ValidationTest > sanitizeFilename removes backslashes STARTED
+
+ValidationTest > loopback IP URL passes validation STARTED
+
+ValidationTest > Valid playlist name passes validation STARTED
+
+ValidationTest > Blank track ID fails validation STARTED
+
+ValidationTest > Result getDisplayError returns null on success STARTED
+
+ValidationTest > URL without host fails validation STARTED
+
+ValidationTest > sanitizeDisplayString removes newlines STARTED
+
+ValidationTest > sanitizeFilename removes forward slashes STARTED
+
+ValidationTest > URL with invalid port fails validation STARTED
+
+ValidationTest > Valid HTTPS URL passes validation STARTED
+
+ValidationTest > sanitizeFilename removes invalid characters STARTED
+
+ValidationTest > Playlist name with colon fails validation STARTED
+
+ValidationTest > Valid YouTube video ID passes validation STARTED
+
+ValidationTest > Blank query fails validation STARTED
+
+ValidationTest > Very long query fails validation STARTED
+
+ValidationTest > sanitizeDisplayString removes tabs STARTED
+
+ValidationTest > Empty query fails validation STARTED
+
+ValidationTest > sanitizeFilename returns unnamed for empty input STARTED
+
+ValidationTest > API key with special characters passes validation STARTED
+
+ValidationTest > Empty API key fails validation STARTED
+
+ValidationTest > sanitizeDisplayString collapses multiple spaces STARTED
+
+ValidationTest > URL with query parameters passes validation STARTED
+
+ValidationTest > Very long API key fails validation STARTED
+
+ValidationTest > sanitizeDisplayString removes carriage returns STARTED
+
+ValidationTest > Blank URL fails validation STARTED
+
+ValidationTest > URL with FTP scheme fails validation STARTED
+
+ValidationTest > URL with trailing slash is normalized STARTED
+
+ValidationTest > String sanitizeForFilename extension works STARTED
+
+ValidationTest > sanitizeDisplayString trims result STARTED
+
+ValidationTest > URL with path passes validation STARTED
+
+ValidationTest > Track ID with backslash fails validation STARTED
+
+ValidationTest > String validateServerUrl extension works STARTED
+
+ValidationTest > sanitizeTrackIdForFilename returns unknown for empty input STARTED
+
+ValidationTest > Too short API key fails validation STARTED
+
+ValidationTest > String hasValidScheme extension works STARTED
+
+ValidationTest > String validateQuery extension works STARTED
+
+ValidationTest > Track ID with hyphens passes validation STARTED
+
+ValidationTest > sanitizeFilename returns unnamed for null bytes only STARTED
+
+ValidationTest > API key with spaces is trimmed STARTED
+
+ValidationTest > Track ID with path traversal fails validation STARTED
+
+ValidationTest > URL with fragment passes validation STARTED
+
+ValidationTest > URL without scheme fails validation STARTED
+
+ValidationTest > Valid query passes validation STARTED
+
+ValidationTest > String sanitizeDisplay extension works STARTED
+
+ValidationTest > Playlist name with forward slash fails validation STARTED
+
+ValidationTest > Result getOrNull returns null on failure STARTED
+
+ValidationTest > Empty track ID fails validation STARTED
+
+ValidationTest > Result getOrNull returns value on success STARTED
+
+ValidationTest > hasValidScheme returns true for HTTPS STARTED
+
+ValidationTest > String validateTrackId extension works STARTED
+
+ValidationTest > Result getDisplayError returns null for non-WearsicError STARTED
+
+ValidationTest > HTTPS required validation fails for HTTP STARTED
+
+ValidationTest > hasValidScheme returns false for empty string STARTED
+
+ValidationTest > Empty playlist name fails validation STARTED
+
+ValidationTest > Valid YouTube Music ID passes validation STARTED
+
+ValidationTest > Track ID with double dots fails validation STARTED
+
+ValidationTest > Private IP URL passes validation STARTED
+
+ValidationTest > sanitizeTrackIdForFilename replaces spaces STARTED
+
+ValidationTest > Empty URL fails validation STARTED
+
+ValidationTest > Very long track ID fails validation STARTED
+
+ValidationTest > hasValidScheme returns true for HTTP STARTED
+
+ValidationTest > sanitizeTrackIdForFilename replaces invalid characters STARTED
+
+ValidationTest > Result isValid returns true on success STARTED
+
+ValidationTest > Localhost URL passes validation STARTED
+
+ValidationTest > Query with special characters passes validation STARTED
+
+ValidationTest > Playlist name with special characters passes validation STARTED
+
+ValidationTest > Playlist name with spaces passes validation STARTED
+
+ValidationTest > Playlist name with double dots fails validation STARTED
+
+ValidationTest > String sanitizeFilename extension works STARTED
+
+ValidationTest > Very long playlist name fails validation STARTED
+
+ValidationTest > Result getDisplayError returns error message for WearsicError STARTED
+
+ValidationTest > URL with port passes validation STARTED
+
+ValidationTest > sanitizeDisplayString removes null bytes STARTED
+
+ValidationTest > Valid HTTP URL passes validation STARTED
+
+ValidationTest > HTTPS required validation passes for HTTPS STARTED
+
+ValidationTest > Playlist name with backslash fails validation STARTED
+
+WearsicRotaryVolumeTest > one notch maps to exactly one step up STARTED
+
+WearsicRotaryVolumeTest > no movement maps to no step STARTED
+
+WearsicRotaryVolumeTest > a fast spin maps multiples of the notch to multiple steps STARTED
+
+WearsicRotaryVolumeTest > a sub-notch event still steps once in its direction STARTED
+
+WearsicRotaryVolumeTest > one notch down is one step down STARTED
+
+WearsicRotaryVolumeTest > a zero or negative notch distance can never divide by mistake STARTED
+
+WearsicRotaryVolumeTest > the notch distance is caller-configurable STARTED
+
+339 tests completed, 3 failed
+
+> Task :app:testDebugUnitTest FAILED
+> Task :app:finalizeTestRoborazziDebug SKIPPED
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1794039800066.json
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testDebugUnitTest'.
+> There were failing tests. See the report at: file:///home/runner/work/wearsic/wearsic/app/build/reports/tests/testDebugUnitTest/index.html
+
+* Try:
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+
+* Exception is:
+org.gradle.api.tasks.TaskExecutionException: Execution failed for task ':app:testDebugUnitTest'.
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.lambda$executeIfValid$1(ExecuteActionsTaskExecuter.java:135)
+	at org.gradle.internal.Try$Failure.ifSuccessfulOrElse(Try.java:288)
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.executeIfValid(ExecuteActionsTaskExecuter.java:133)
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.execute(ExecuteActionsTaskExecuter.java:121)
+	at org.gradle.api.internal.tasks.execution.ProblemsTaskPathTrackingTaskExecuter.execute(ProblemsTaskPathTrackingTaskExecuter.java:41)
+	at org.gradle.api.internal.tasks.execution.FinalizePropertiesTaskExecuter.execute(FinalizePropertiesTaskExecuter.java:46)
+	at org.gradle.api.internal.tasks.execution.ResolveTaskExecutionModeExecuter.execute(ResolveTaskExecutionModeExecuter.java:51)
+	at org.gradle.api.internal.tasks.execution.SkipTaskWithNoActionsExecuter.execute(SkipTaskWithNoActionsExecuter.java:57)
+	at org.gradle.api.internal.tasks.execution.SkipOnlyIfTaskExecuter.execute(SkipOnlyIfTaskExecuter.java:74)
+	at org.gradle.api.internal.tasks.execution.CatchExceptionTaskExecuter.execute(CatchExceptionTaskExecuter.java:36)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.executeTask(EventFiringTaskExecuter.java:77)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.call(EventFiringTaskExecuter.java:55)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.call(EventFiringTaskExecuter.java:52)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:209)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:204)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:166)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:53)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter.execute(EventFiringTaskExecuter.java:52)
+	at org.gradle.execution.plan.DefaultNodeExecutor.executeLocalTaskNode(DefaultNodeExecutor.java:55)
+	at org.gradle.execution.plan.DefaultNodeExecutor.execute(DefaultNodeExecutor.java:34)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$InvokeNodeExecutorsAction.execute(DefaultTaskExecutionGraph.java:355)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$InvokeNodeExecutorsAction.execute(DefaultTaskExecutionGraph.java:343)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.lambda$execute$0(DefaultTaskExecutionGraph.java:339)
+	at org.gradle.internal.operations.CurrentBuildOperationRef.with(CurrentBuildOperationRef.java:84)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.execute(DefaultTaskExecutionGraph.java:339)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.execute(DefaultTaskExecutionGraph.java:328)
+	at org.gradle.execution.plan.DefaultPlanExecutor$ExecutorWorker.execute(DefaultPlanExecutor.java:459)
+	at org.gradle.execution.plan.DefaultPlanExecutor$ExecutorWorker.run(DefaultPlanExecutor.java:376)
+	at org.gradle.internal.concurrent.ExecutorPolicy$CatchAndRecordFailures.onExecute(ExecutorPolicy.java:64)
+	at org.gradle.internal.concurrent.AbstractManagedExecutor$1.run(AbstractManagedExecutor.java:47)
+Caused by: org.gradle.api.internal.exceptions.MarkedVerificationException: There were failing tests. See the report at: file:///home/runner/work/wearsic/wearsic/app/build/reports/tests/testDebugUnitTest/index.html
+	at org.gradle.api.tasks.testing.AbstractTestTask.executeTests(AbstractTestTask.java:552)
+	at org.gradle.api.tasks.testing.Test.executeTests(Test.java:722)
+	at com.android.build.gradle.tasks.factory.AndroidUnitTest.executeTests(AndroidUnitTest.java:172)
+	at org.gradle.internal.reflect.JavaMethod.invoke(JavaMethod.java:125)
+	at org.gradle.api.internal.project.taskfactory.StandardTaskAction.doExecute(StandardTaskAction.java:58)
+	at org.gradle.api.internal.project.taskfactory.StandardTaskAction.execute(StandardTaskAction.java:51)
+	at org.gradle.api.internal.project.taskfactory.StandardTaskAction.execute(StandardTaskAction.java:29)
+	at org.gradle.api.internal.tasks.execution.TaskExecution$3.run(TaskExecution.java:259)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$1.execute(DefaultBuildOperationRunner.java:29)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$1.execute(DefaultBuildOperationRunner.java:26)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:166)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.run(DefaultBuildOperationRunner.java:47)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.executeAction(TaskExecution.java:244)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.executeActions(TaskExecution.java:227)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.executeWithPreviousOutputFiles(TaskExecution.java:210)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.execute(TaskExecution.java:176)
+	at org.gradle.internal.execution.steps.ExecuteStep.executeInternal(ExecuteStep.java:110)
+	at org.gradle.internal.execution.steps.ExecuteStep.access$000(ExecuteStep.java:47)
+	at org.gradle.internal.execution.steps.ExecuteStep$1.call(ExecuteStep.java:64)
+	at org.gradle.internal.execution.steps.ExecuteStep$1.call(ExecuteStep.java:61)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:209)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:204)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:66)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:166)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:59)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:53)
+	at org.gradle.internal.execution.steps.ExecuteStep.execute(ExecuteStep.java:61)
+	at org.gradle.internal.execution.steps.ExecuteStep.execute(ExecuteStep.java:47)
+	at org.gradle.internal.execution.steps.CancelExecutionStep.execute(CancelExecutionStep.java:42)
+	at org.gradle.internal.execution.steps.TimeoutStep.executeWithoutTimeout(TimeoutStep.java:75)
+	at org.gradle.internal.execution.steps.TimeoutStep.execute(TimeoutStep.java:55)
+	at org.gradle.internal.execution.steps.PreCreateOutputParentsStep.execute(PreCreateOutputParentsStep.java:51)
+	at org.gradle.internal.execution.steps.PreCreateOutputParentsStep.execute(PreCreateOutputParentsStep.java:29)
+	at org.gradle.internal.execution.steps.RemovePreviousOutputsStep.executeMutable(RemovePreviousOutputsStep.java:70)
+	at org.gradle.internal.execution.steps.RemovePreviousOutputsStep.executeMutable(RemovePreviousOutputsStep.java:40)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:25)
+	at org.gradle.internal.execution.steps.BroadcastChangingOutputsStep.execute(BroadcastChangingOutputsStep.java:62)
+	at org.gradle.internal.execution.steps.BroadcastChangingOutputsStep.execute(BroadcastChangingOutputsStep.java:27)
+	at org.gradle.internal.execution.steps.CaptureOutputsAfterExecutionStep.execute(CaptureOutputsAfterExecutionStep.java:69)
+	at org.gradle.internal.execution.steps.CaptureOutputsAfterExecutionStep.execute(CaptureOutputsAfterExecutionStep.java:46)
+	at org.gradle.internal.execution.steps.ResolveInputChangesStep.executeMutable(ResolveInputChangesStep.java:39)
+	at org.gradle.internal.execution.steps.ResolveInputChangesStep.executeMutable(ResolveInputChangesStep.java:28)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:25)
+	at org.gradle.internal.execution.steps.BuildCacheStep.executeWithoutCache(BuildCacheStep.java:192)
+	at org.gradle.internal.execution.steps.BuildCacheStep.executeAndStoreInCache(BuildCacheStep.java:148)
+	at org.gradle.internal.execution.steps.BuildCacheStep.lambda$executeWithCache$4(BuildCacheStep.java:104)
+	at org.gradle.internal.execution.steps.BuildCacheStep.lambda$executeWithCache$5(BuildCacheStep.java:104)
+	at org.gradle.internal.Try$Success.map(Try.java:170)
+	at org.gradle.internal.execution.steps.BuildCacheStep.executeWithCache(BuildCacheStep.java:88)
+	at org.gradle.internal.execution.steps.BuildCacheStep.lambda$execute$0(BuildCacheStep.java:75)
+	at org.gradle.internal.Either$Left.fold(Either.java:116)
+	at org.gradle.internal.execution.caching.CachingState.fold(CachingState.java:62)
+	at org.gradle.internal.execution.steps.BuildCacheStep.execute(BuildCacheStep.java:74)
+	at org.gradle.internal.execution.steps.BuildCacheStep.execute(BuildCacheStep.java:49)
+	at org.gradle.internal.execution.steps.StoreExecutionStateStep.execute(StoreExecutionStateStep.java:46)
+	at org.gradle.internal.execution.steps.StoreExecutionStateStep.execute(StoreExecutionStateStep.java:35)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.executeBecause(SkipUpToDateStep.java:75)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.lambda$execute$2(SkipUpToDateStep.java:53)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.execute(SkipUpToDateStep.java:53)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.execute(SkipUpToDateStep.java:35)
+	at org.gradle.internal.execution.steps.legacy.MarkSnapshottingInputsFinishedStep.execute(MarkSnapshottingInputsFinishedStep.java:37)
+	at org.gradle.internal.execution.steps.legacy.MarkSnapshottingInputsFinishedStep.execute(MarkSnapshottingInputsFinishedStep.java:27)
+	at org.gradle.internal.execution.steps.ResolveIncrementalCachingStateStep.executeDelegate(ResolveIncrementalCachingStateStep.java:49)
+	at org.gradle.internal.execution.steps.ResolveIncrementalCachingStateStep.executeDelegate(ResolveIncrementalCachingStateStep.java:27)
+	at org.gradle.internal.execution.steps.AbstractResolveCachingStateStep.execute(AbstractResolveCachingStateStep.java:71)
+	at org.gradle.internal.execution.steps.AbstractResolveCachingStateStep.execute(AbstractResolveCachingStateStep.java:39)
+	at org.gradle.internal.execution.steps.ResolveChangesStep.executeMutable(ResolveChangesStep.java:63)
+	at org.gradle.internal.execution.steps.ResolveChangesStep.executeMutable(ResolveChangesStep.java:34)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:25)
+	at org.gradle.internal.execution.steps.ValidateStep.execute(ValidateStep.java:64)
+	at org.gradle.internal.execution.steps.ValidateStep.execute(ValidateStep.java:42)
+	at org.gradle.internal.execution.steps.AbstractCaptureStateBeforeExecutionStep.execute(AbstractCaptureStateBeforeExecutionStep.java:77)
+	at org.gradle.internal.execution.steps.AbstractCaptureStateBeforeExecutionStep.execute(AbstractCaptureStateBeforeExecutionStep.java:46)
+	at org.gradle.internal.execution.steps.AbstractSkipEmptyWorkStep.executeWithNonEmptySources(AbstractSkipEmptyWorkStep.java:133)
+	at org.gradle.internal.execution.steps.AbstractSkipEmptyWorkStep.execute(AbstractSkipEmptyWorkStep.java:64)
+	at org.gradle.internal.execution.steps.AbstractSkipEmptyWorkStep.execute(AbstractSkipEmptyWorkStep.java:36)
+	at org.gradle.internal.execution.steps.legacy.MarkSnapshottingInputsStartedStep.execute(MarkSnapshottingInputsStartedStep.java:38)
+	at org.gradle.internal.execution.steps.LoadPreviousExecutionStateStep.execute(LoadPreviousExecutionStateStep.java:36)
+	at org.gradle.internal.execution.steps.LoadPreviousExecutionStateStep.execute(LoadPreviousExecutionStateStep.java:23)
+	at org.gradle.internal.execution.steps.HandleStaleOutputsStep.executeMutable(HandleStaleOutputsStep.java:77)
+	at org.gradle.internal.execution.steps.HandleStaleOutputsStep.executeMutable(HandleStaleOutputsStep.java:43)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:25)
+	at org.gradle.internal.execution.steps.AssignMutableWorkspaceStep.lambda$execute$0(AssignMutableWorkspaceStep.java:35)
+	at org.gradle.api.internal.tasks.execution.TaskExecution$4.withWorkspace(TaskExecution.java:305)
+	at org.gradle.internal.execution.steps.AssignMutableWorkspaceStep.execute(AssignMutableWorkspaceStep.java:31)
+	at org.gradle.internal.execution.steps.AssignMutableWorkspaceStep.execute(AssignMutableWorkspaceStep.java:22)
+	at org.gradle.internal.execution.steps.ChoosePipelineStep.execute(ChoosePipelineStep.java:40)
+	at org.gradle.internal.execution.steps.ChoosePipelineStep.execute(ChoosePipelineStep.java:23)
+	at org.gradle.internal.execution.steps.ExecuteWorkBuildOperationFiringStep.lambda$execute$2(ExecuteWorkBuildOperationFiringStep.java:67)
+	at org.gradle.internal.execution.steps.ExecuteWorkBuildOperationFiringStep.execute(ExecuteWorkBuildOperationFiringStep.java:67)
+	at org.gradle.internal.execution.steps.ExecuteWorkBuildOperationFiringStep.execute(ExecuteWorkBuildOperationFiringStep.java:39)
+	at org.gradle.internal.execution.steps.IdentityCacheStep.execute(IdentityCacheStep.java:46)
+	at org.gradle.internal.execution.steps.IdentityCacheStep.execute(IdentityCacheStep.java:34)
+	at org.gradle.internal.execution.steps.IdentifyStep.execute(IdentifyStep.java:44)
+	at org.gradle.internal.execution.steps.IdentifyStep.execute(IdentifyStep.java:31)
+	at org.gradle.internal.execution.impl.DefaultExecutionEngine$1.execute(DefaultExecutionEngine.java:68)
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.executeIfValid(ExecuteActionsTaskExecuter.java:132)
+	... 30 more
+
+
+BUILD FAILED in 44s
+32 actionable tasks: 1 executed, 31 up-to-date
+Configuration cache entry stored.

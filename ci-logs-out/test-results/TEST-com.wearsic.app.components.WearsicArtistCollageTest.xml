@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.components.WearsicArtistCollageTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:24:02.621Z" hostname="runnervmwuk1x" time="0.003">
+  <properties/>
+  <testcase name="collage never repeats the same cover" classname="com.wearsic.app.components.WearsicArtistCollageTest" time="0.002"/>
+  <testcase name="collage picks first-encounter artwork in order" classname="com.wearsic.app.components.WearsicArtistCollageTest" time="0.0"/>
+  <testcase name="collage caps at four panes" classname="com.wearsic.app.components.WearsicArtistCollageTest" time="0.0"/>
+  <testcase name="caller can ask for a smaller collage" classname="com.wearsic.app.components.WearsicArtistCollageTest" time="0.0"/>
+  <testcase name="collage skips songs without artwork" classname="com.wearsic.app.components.WearsicArtistCollageTest" time="0.001"/>
+  <testcase name="an artist with no artwork ends in an empty collage" classname="com.wearsic.app.components.WearsicArtistCollageTest" time="0.0"/>
+  <testcase name="an empty artist has no collage" classname="com.wearsic.app.components.WearsicArtistCollageTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

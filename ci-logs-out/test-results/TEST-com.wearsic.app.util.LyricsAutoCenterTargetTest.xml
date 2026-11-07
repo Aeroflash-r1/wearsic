@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.util.LyricsAutoCenterTargetTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:24:03.719Z" hostname="runnervmwuk1x" time="0.005">
+  <properties/>
+  <testcase name="no-op when the row is already at the anchor" classname="com.wearsic.app.util.LyricsAutoCenterTargetTest" time="0.004"/>
+  <testcase name="target clamps at the scrollable bounds" classname="com.wearsic.app.util.LyricsAutoCenterTargetTest" time="0.0"/>
+  <testcase name="target moves the row center onto the anchor" classname="com.wearsic.app.util.LyricsAutoCenterTargetTest" time="0.0"/>
+  <testcase name="zero-size scrollable stays zero" classname="com.wearsic.app.util.LyricsAutoCenterTargetTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

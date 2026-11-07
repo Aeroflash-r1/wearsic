@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.SearchResultsRenderTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:24:02.194Z" hostname="runnervmwuk1x" time="0.423">
+  <properties/>
+  <testcase name="searchResults_showEmptyMessage_whenNoResults" classname="com.wearsic.app.SearchResultsRenderTest" time="0.092"/>
+  <testcase name="searchRow_longPressOpensActions_withoutPlaying" classname="com.wearsic.app.SearchResultsRenderTest" time="0.165"/>
+  <testcase name="searchResults_render_rows_when_listHasResults" classname="com.wearsic.app.SearchResultsRenderTest" time="0.162"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

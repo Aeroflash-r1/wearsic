@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.network.model.LyricsDtoTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:24:03.713Z" hostname="runnervmwuk1x" time="0.002">
+  <properties/>
+  <testcase name="activeIndexFor picks the line at or before the position" classname="com.wearsic.app.network.model.LyricsDtoTest" time="0.002"/>
+  <testcase name="plain response maps to paragraphs without timestamps" classname="com.wearsic.app.network.model.LyricsDtoTest" time="0.0"/>
+  <testcase name="unavailable and unknown modes map to Unavailable" classname="com.wearsic.app.network.model.LyricsDtoTest" time="0.0"/>
+  <testcase name="activeIndexFor is -1 for non-synced lyrics" classname="com.wearsic.app.network.model.LyricsDtoTest" time="0.0"/>
+  <testcase name="synced response maps mode, lines and timestamps" classname="com.wearsic.app.network.model.LyricsDtoTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

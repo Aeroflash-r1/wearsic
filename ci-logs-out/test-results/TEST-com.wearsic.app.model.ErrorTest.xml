@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.model.ErrorTest" tests="62" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:24:02.694Z" hostname="runnervmwuk1x" time="0.031">
+  <properties/>
+  <testcase name="InvalidTrackIdError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="InvalidConfigError reports offline limit value" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="UnknownError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="SessionExpiredError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.003"/>
+  <testcase name="DnsError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="Generic Exception converts to UnknownError" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="displayMessage prefers the curated wording for HTTP errors" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="MissingApiKeyError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="PlaybackInterruptedError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="UnknownError without cause has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="TooManyDownloadsError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="displayMessage keeps a plain exception message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="HttpError 400 has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="Errors with same properties are equal" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="All errors have non-null display messages" classname="com.wearsic.app.model.ErrorTest" time="0.004"/>
+  <testcase name="EmptyInputError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="PermissionDeniedError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="HttpError 500 has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="AudioFocusLostError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="RateLimitedError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="ConnectException converts to ConnectionRefusedError" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="DownloadCancelledError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="Int 400 converts to HttpError" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="DecodingError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="Int 401 converts to UnauthorizedError" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="HttpError 401 has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="ValidationError hierarchy is correct" classname="com.wearsic.app.model.ErrorTest" time="0.002"/>
+  <testcase name="StorageFullError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="UnknownHostException converts to HostUnreachableError" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="FileNotFoundError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="DownloadConflictError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="displayMessage falls back when the message is blank" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="ConnectionRefusedError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="InvalidUrlError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="NetworkError hierarchy is correct" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="ExternalError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="NoInternetError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="HttpError 502 has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="Int 404 converts to NotFoundError" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="ServerUrlNotConfiguredError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="ServiceUnavailableError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.002"/>
+  <testcase name="HttpError 429 has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="DownloadNetworkError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="IOException with hostname message converts to DnsError" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="SocketTimeoutException converts to TimeoutError" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="UnauthorizedError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="All errors extend WearsicError" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="DatabaseError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="InputTooLongError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="NoMediaSourceError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="InvalidConfigError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="HttpError 503 has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="FileCorruptedError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.001"/>
+  <testcase name="Errors with different properties are not equal" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="ServerError hierarchy is correct" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="DecodingError without mime type has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="Int 500 converts to HttpError" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="HostUnreachableError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="HttpError 404 has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="Singleton errors are equal to themselves" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="TimeoutError has correct display message" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <testcase name="InvalidApiKeyError has correct properties" classname="com.wearsic.app.model.ErrorTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

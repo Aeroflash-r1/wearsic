@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.util.ValidationTest" tests="86" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:24:03.740Z" hostname="runnervmwuk1x" time="0.005">
+  <properties/>
+  <testcase name="Result isValid returns false on failure" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="String validateApiKey extension works" classname="com.wearsic.app.util.ValidationTest" time="0.001"/>
+  <testcase name="URL with user info fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Track ID with forward slash fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL with negative port fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL with spaces in host fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Query with spaces passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Valid API key passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="hasValidScheme returns false for FTP" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Track ID with underscores passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeFilename removes backslashes" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="loopback IP URL passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.001"/>
+  <testcase name="Valid playlist name passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Blank track ID fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Result getDisplayError returns null on success" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL without host fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeDisplayString removes newlines" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeFilename removes forward slashes" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL with invalid port fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Valid HTTPS URL passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeFilename removes invalid characters" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Playlist name with colon fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Valid YouTube video ID passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Blank query fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Very long query fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeDisplayString removes tabs" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Empty query fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeFilename returns unnamed for empty input" classname="com.wearsic.app.util.ValidationTest" time="0.001"/>
+  <testcase name="API key with special characters passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Empty API key fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeDisplayString collapses multiple spaces" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL with query parameters passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Very long API key fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeDisplayString removes carriage returns" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Blank URL fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL with FTP scheme fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL with trailing slash is normalized" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="String sanitizeForFilename extension works" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeDisplayString trims result" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL with path passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Track ID with backslash fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="String validateServerUrl extension works" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeTrackIdForFilename returns unknown for empty input" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Too short API key fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="String hasValidScheme extension works" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="String validateQuery extension works" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Track ID with hyphens passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeFilename returns unnamed for null bytes only" classname="com.wearsic.app.util.ValidationTest" time="0.001"/>
+  <testcase name="API key with spaces is trimmed" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Track ID with path traversal fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL with fragment passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL without scheme fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Valid query passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="String sanitizeDisplay extension works" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Playlist name with forward slash fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Result getOrNull returns null on failure" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Empty track ID fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Result getOrNull returns value on success" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="hasValidScheme returns true for HTTPS" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="String validateTrackId extension works" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Result getDisplayError returns null for non-WearsicError" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="HTTPS required validation fails for HTTP" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="hasValidScheme returns false for empty string" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Empty playlist name fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Valid YouTube Music ID passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Track ID with double dots fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Private IP URL passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeTrackIdForFilename replaces spaces" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Empty URL fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Very long track ID fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="hasValidScheme returns true for HTTP" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeTrackIdForFilename replaces invalid characters" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Result isValid returns true on success" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Localhost URL passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Query with special characters passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Playlist name with special characters passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Playlist name with spaces passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Playlist name with double dots fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="String sanitizeFilename extension works" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Very long playlist name fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Result getDisplayError returns error message for WearsicError" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="URL with port passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="sanitizeDisplayString removes null bytes" classname="com.wearsic.app.util.ValidationTest" time="0.001"/>
+  <testcase name="Valid HTTP URL passes validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="HTTPS required validation passes for HTTPS" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <testcase name="Playlist name with backslash fails validation" classname="com.wearsic.app.util.ValidationTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

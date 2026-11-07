@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.PairingImportTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:23:57.916Z" hostname="runnervmwuk1x" time="0.137">
+  <properties/>
+  <testcase name="noPairingFile_isANoOp" classname="com.wearsic.app.PairingImportTest" time="0.021"/>
+  <testcase name="pairingFile_blankKey_clearsTheStoredKey" classname="com.wearsic.app.PairingImportTest" time="0.038"/>
+  <testcase name="pairingFile_invalidUrl_changesNothing" classname="com.wearsic.app.PairingImportTest" time="0.021"/>
+  <testcase name="pairingFile_appliesUrlAndKey_andIsConsumed" classname="com.wearsic.app.PairingImportTest" time="0.024"/>
+  <testcase name="pairingFile_toleratesCommentsAndCrlf" classname="com.wearsic.app.PairingImportTest" time="0.021"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.OfflinePersistenceTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:23:57.323Z" hostname="runnervmwuk1x" time="0.589">
+  <properties/>
+  <testcase name="interrupted download resumes from the written offset and completes" classname="com.wearsic.app.OfflinePersistenceTest" time="0.483"/>
+  <testcase name="similar titles from different artists stay separate rows" classname="com.wearsic.app.OfflinePersistenceTest" time="0.027"/>
+  <testcase name="same-title recordings keep per-id rows but show once as the latest play" classname="com.wearsic.app.OfflinePersistenceTest" time="0.026"/>
+  <testcase name="replaying a song bumps it to the top without duplicating" classname="com.wearsic.app.OfflinePersistenceTest" time="0.028"/>
+  <testcase name="replaying AAA after BBB keeps both rows and shows the exact AAA recording" classname="com.wearsic.app.OfflinePersistenceTest" time="0.022"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.util.SystemVolumeTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:24:03.730Z" hostname="runnervmwuk1x" time="0.008">
+  <properties/>
+  <testcase name="rotary maps every non-zero event to exactly one step" classname="com.wearsic.app.util.SystemVolumeTest" time="0.0"/>
+  <testcase name="level clamps at both ends" classname="com.wearsic.app.util.SystemVolumeTest" time="0.007"/>
+  <testcase name="unmute from silence restores a step, never silence" classname="com.wearsic.app.util.SystemVolumeTest" time="0.0"/>
+  <testcase name="mute then unmute restores the last audible level" classname="com.wearsic.app.util.SystemVolumeTest" time="0.001"/>
+  <testcase name="step moves one index and reflects in the fraction" classname="com.wearsic.app.util.SystemVolumeTest" time="0.0"/>
+  <testcase name="audio availability is false without a service" classname="com.wearsic.app.util.SystemVolumeTest" time="0.0"/>
+  <testcase name="applying the current level is a no-op" classname="com.wearsic.app.util.SystemVolumeTest" time="0.0"/>
+  <testcase name="default range is the platform media range" classname="com.wearsic.app.util.SystemVolumeTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

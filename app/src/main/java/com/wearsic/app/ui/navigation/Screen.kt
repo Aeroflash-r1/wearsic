@@ -3,6 +3,8 @@ package com.wearsic.app.ui.navigation
 import android.net.Uri
 
 sealed class Screen(val route: String) {
+    /** The four-tab app shell (Home/Library/Search/Mix) — start destination. */
+    data object Hub : Screen("hub")
     data object Library : Screen("library")
     data object Search : Screen("search")
     data object Player : Screen("player")

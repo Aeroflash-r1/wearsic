@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WearsicFavoriteTrackEntity::class,
         WearsicLyricsEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class WearsicDatabase : RoomDatabase() {
@@ -97,6 +97,14 @@ abstract class WearsicDatabase : RoomDatabase() {
             }
         }
 
+        // Play counts (1.9.49 redesign): cumulative listens per recent row —
+        // powers the "Most played" shelf. Existing rows start at 1.
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE recent_tracks ADD COLUMN playCount INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
         fun getInstance(context: Context): WearsicDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -110,6 +118,7 @@ abstract class WearsicDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5,
                         MIGRATION_5_6,
+                        MIGRATION_6_7,
                     )
                     // Safety net: a future schema change that ships without a
                     // migration (or a DB created by a package-rename build)

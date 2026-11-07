@@ -13,7 +13,9 @@ data class WearsicRecentTrackEntity(
     val artworkUrl: String?,
     val durationMs: Long,
     val mediaUri: String,
-    val playedAt: Long = System.currentTimeMillis()
+    val playedAt: Long = System.currentTimeMillis(),
+    /** Cumulative handles (v1.9.49): every play bumps — powers "Most played". */
+    val playCount: Long = 1
 ) {
     fun toDomainTrack(): Track {
         return Track(

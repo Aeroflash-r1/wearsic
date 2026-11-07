@@ -8,7 +8,7 @@
 
 **1. Install the server on your phone (Termux):**
 ```bash
-curl -fsSL https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-v1.9.48.sh -o wearsic-server.sh
+curl -fsSL https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-v1.9.49.sh -o wearsic-server.sh
 chmod +x wearsic-server.sh && ./wearsic-server.sh install
 wearsic start
 ```
@@ -22,7 +22,7 @@ wearsic start
 wearsic url        # shows the LAN address + API key
 ```
 
-**3. Install the watch app** — download `Wearsic-v1.9.48.apk` from the [latest release](https://github.com/Aeroflash-r1/wearsic/releases/latest) and install it on the watch (via `wearsic sideload` with adb, or the Play-style sideload).
+**3. Install the watch app** — download `Wearsic-v1.9.49.apk` from the [latest release](https://github.com/Aeroflash-r1/wearsic/releases/latest) and install it on the watch (via `wearsic sideload` with adb, or the Play-style sideload).
 
 **4. Pair the watch:** open Wearsic on the watch → Settings → enter the URL + key from step 2. All done — search and play.
 
@@ -58,12 +58,14 @@ Wearsic adopts a clean, modular Model-View-ViewModel (MVVM) architecture with st
 ```
 
 ### 1. Presentation & Interaction (Jetpack Compose for Wear OS)
-- **Rotary Scroll Input**: Uses a dedicated, zero-allocation custom `wearsicRotaryScroll()` modifier leveraging `FocusRequester` and `dispatchRawDelta` to translate physical crown and touch bezel movements directly into list movements and player seeks. Every list screen merges the system insets with the shared design padding via `wearsicListContentPadding()` (`ui/theme/WearsicDimens.kt`), so content always stays inside the circular safe area.
+- **Four-tab discovery shell (redesign)**: the app opens on a four-tab Hub — **Home / Library / Search / Mix** — with a compact section rail (glass chip row under the time text, scrim-backed so lists scroll beneath it) instead of a buried navigation drawer. **Home** is the premium entry: a personal "Listen again" hero, a "Fresh for you" carousel (server taste-ranked recommendations), mood chips that run real searches ("Chill lo-fi", "Workout", "Jazz & coffee"…), a **Most played** shelf (cumulative Room play counts, new `playCount` column with a v6→v7 migration) and a "Keep listening" recents shelf. **Mix** is personalized radio: Auto radio (existing related-tracks pipeline with live `RadioState`), shuffle-favorites and the Made-for-you list. **Search** gained Songs/Albums/Artists mode chips and voice search through the system recognizer. Nothing is duplicated: every tab composes the existing screens/ViewModels/APIs — the only new network request is the one recommendations POST when its shelf is empty.
+- **Persistent mini-player**: a compact glass pill (artwork, marquee title, play/pause, hairline progress, round-safe width computed from the circular chord via `WearsicGeometry`) floats above the Hub and sub-screens and hides on the surfaces that own the bottom of the screen (Player/Queue/Volume/Settings). Its reserve flows through `LocalWearsicMiniPlayerReserve` → `wearsicListContentPadding()`, so every list lifts its last row above the pill with zero per-screen changes. It reuses the shared Media3 `PlaybackUiState` — no extra playback engine, position interpolation is a local 500ms stepper.
+- **Rotary Scroll Input**: Uses a dedicated, zero-allocation custom `wearsicRotaryScroll()` modifier leveraging `FocusRequester` and `dispatchRawDelta` to translate physical crown and touch bezel movements directly into list movements, plus a sibling `wearsicRotaryVolume()` binding on Now Playing that turns the crown into volume steps. Every list screen merges the system insets with the shared design padding via `wearsicListContentPadding()` (`ui/theme/WearsicDimens.kt`), so content always stays inside the circular safe area.
 - **Watch-First Touch Targets**: every tappable control carries at least a 44dp touch box (the `WearsicDimens.TouchTarget` token), including compact transport pills and song-row actions — visual size and tap area are decoupled so dense lists stay usable on the 44mm round display.
 - **Material Design 3 (Vibrant Palette)**: Deep black background (`#000000`), dark charcoal surfaces (`#1C1B1F`), and high-contrast Lavender accents (`#D0BCFF`). All colors/type live as named tokens in `ui/theme/Color.kt` — no scattered hex literals.
 - **Immersive visual hierarchy**: OLED-black canvases, section-colored header markers, rounded album-cover rows, and an artwork-backed Library shortcut. Shared typography, quiet borders, and compact surface-local gradients keep the music—not decoration—in focus.
 - **One motion system** (`ui/util/Motion.kt`): spring press feedback, brief screen/sheet entrances with density-correct translation, and shared click/long-press handling with haptics. Song rows do not replay entrance animations as lazy scrolling recycles them. Player motion is finite by design: a track change plays one short staggered entrance (art scales in, text rises) and the play/pause glyph pops on each state change — nothing animates while the user simply listens.
-- **Wear-native player (screen + sub-screen)**: the album artwork is the full-bleed background under a dark scrim; a 2-page pager holds Now Playing (album-art disc + metadata + transport, always visible — never scrolled to) and an Actions sub-screen (favourite/download/queue/output). The composition is centre-weighted for the round face, because the widest part of a circle is its middle: the art disc owns the centre, metadata sits in the readable mid-band, and the transport hugs the lower third. Progress is a ring drawn around the art, and every size derives from the measured viewport so a control can never leave the visible chord (short viewports automatically use a tighter scale). Controls and ring use colors extracted from decoded artwork off the main thread, with lavender fallback. A tappable 44dp page indicator exposes the scrollable Actions page. **The rotating bezel / crown slides between the pages** (a firm turn past a threshold switches; small turns are ignored), and dragging around the disc's ring scrubs to any point in the track — both are the primary controls on Samsung Galaxy Watch bezel devices.
+- **Wear-native player (screen + sub-screen)**: the album artwork is the full-bleed background under a dark scrim; a 2-page pager holds Now Playing (album-art disc + metadata + transport, always visible — never scrolled to) and an Actions sub-screen (favourite/download/queue/output). The composition is centre-weighted for the round face, because the widest part of a circle is its middle: the art disc owns the centre, metadata sits in the readable mid-band, and the transport hugs the lower third. Progress is a ring drawn around the art, and every size derives from the measured viewport so a control can never leave the visible chord (short viewports automatically use a tighter scale). Controls and ring use colors extracted from decoded artwork off the main thread, with lavender fallback. A tappable 44dp page indicator exposes the scrollable Actions page. **The rotating bezel / crown IS the volume control**: every notch steps the system media level (fast spins step repeatedly) under a tiny glass HUD that springs in above the artwork and glides away — and dragging around the disc's ring scrubs to any point in the track.
 - **Consistent components & states**: screens share canonical empty/loading states (`WearsicEmptyState`, `WearsicLoadingState`), glass pills, headers and song rows, so loading/empty/error moments look identical everywhere.
 - **Settings that cannot eat your keystrokes**: the server URL and API key fields keep their edit local while focused and commit on Done/blur/leaving the screen; an async DataStore round-trip can never reset the text mid-typing, and invalid input is reported inline (never silently written over a working URL).
 - **Server Port setting**: a dedicated "Server Port" pill in Settings edits the port baked into the current server URL (1024–65535) without retyping the whole address — perfect for `wearsic port 9000`-style setups.
@@ -74,7 +76,7 @@ Wearsic adopts a clean, modular Model-View-ViewModel (MVVM) architecture with st
 - **Play all / Shuffle all**: one tap on Favorites (play all, shuffle) and Downloads (play all, offline library).
 - **Retry pills**: Search and Albums error states offer an inline Retry button for the same query.
 - **Dynamic Accent & Rotating Artwork**: opt-in toggles in Settings — accent that follows the album art, and the player disc's slow rotation (default on).
-- **Sound screen with a live volume dial**: media volume is observed from the system (crown overlay, earbud absolute volume, other apps all stay in sync), the physical crown adjusts it with a haptic tick per step, the dial taps to mute/unmute, and the real Bluetooth device name is shown when one is connected.
+- **Sound screen with a live volume dial**: media volume is observed from the system (the bezel on Now Playing, crown overlay, earbud absolute volume, other apps all stay in sync), the dial taps to mute/unmute, and the real Bluetooth device name is shown when one is connected. The old +/− click buttons are gone — the crown on Now Playing is the app-wide volume control now.
 - **Engine Dashboard**: a screen that probes `/health` + `/ready` and renders the server's live self-report — engine version, uptime, transcoder, extraction success/failure counters, canary probe, staged updates (with the staged release's notes, server ≥ v1.9.48), crash count and readiness — so problems are diagnosed from the wrist instead of a terminal.
 - **Status dashboard for browsers**: the engine also embeds a self-refreshing OLED-dark status page at `GET /` (see the API contract below) so the same self-report is readable from any phone or laptop without a terminal.
 - **Single-line, self-scrolling track title**: a long song name slides sideways instead of wrapping to a second line, so the artist line and transport never get pushed down and nothing clips at the curved edge — and the full name is still reachable.
@@ -121,7 +123,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 ```json
 {
   "status": "ok",
-  "version": "1.9.48",
+  "version": "1.9.49",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -316,7 +318,7 @@ verified exactly like a stable one.
 To install a specific build without touching the CLI at all:
 
 ```bash
-WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.9.48/wearsic-server-termux-v1.9.48.zip \
+WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.9.49/wearsic-server-termux-v1.9.49.zip \
   wearsic update
 ```
 
@@ -340,7 +342,7 @@ keytool -genkeypair -v -keystore my-upload-key.jks -alias upload \
 Then cut a release:
 
 ```bash
-git tag v1.9.48 && git push origin v1.9.48
+git tag v1.9.49 && git push origin v1.9.49
 ```
 
 ### One-button extractor hotfix (when YouTube breaks)

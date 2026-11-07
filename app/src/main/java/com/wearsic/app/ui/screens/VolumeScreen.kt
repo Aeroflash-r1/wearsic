@@ -23,9 +23,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Headphones
-import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -58,7 +56,6 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.media.AudioOutputHelper
 import com.wearsic.app.media.crossfade.CrossfadeLengths
-import com.wearsic.app.ui.components.WearsicCircularIconButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
@@ -80,16 +77,15 @@ import com.wearsic.app.ui.util.wearsicEntrance
 import kotlin.math.roundToInt
 
 /**
- * SOUND — volume first, then output, sleep timer and crossfade.
- *
- * The hero is a circular volume dial driven by the LIVE system stream volume
- * (a settings observer keeps it in sync when anything else changes it — the
- * system crown overlay, companion apps, or Bluetooth absolute volume from
- * connected earbuds). The physical crown adjusts volume right on this screen
- * with a haptic tick per step; touch drag still scrolls the rows below.
+ * SOUND — output device, sleep timer and crossfade. Volume lives on the
+ * Now Playing page now: a dial-only hero mirrors the LIVE system stream
+ * (a settings observer keeps it in sync when anything changes it — the
+ * bezel on Now Playing, the system crown overlay, companion apps, or
+ * Bluetooth absolute volume from connected earbuds).
  *
  * The dial doubles as the mute control: tap to mute, tap again to restore
- * the previous level.
+ * the previous level. No +/− buttons — the old-style clicks were dropped
+ * when the crown became the app-wide volume control.
  */
 @Composable
 fun VolumeScreen(
@@ -142,25 +138,14 @@ fun VolumeScreen(
             item { SectionLabel("Volume") }
 
             item {
-                Row(
+                // The dial alone: live, tap-to-mute. Volume steps now belong
+                // to the bezel on Now Playing — no +/− buttons here anymore.
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("volume_controls_container"),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    contentAlignment = Alignment.Center
                 ) {
-                    WearsicCircularIconButton(
-                        icon = Icons.Rounded.Remove,
-                        contentDescription = "Decrease Volume",
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            volume.step(-1)
-                        },
-                        size = 40.dp,
-                        iconSize = 20.dp,
-                        testTag = "volume_decrease_button"
-                    )
-
                     VolumeDial(
                         fraction = volume.fraction,
                         isMuted = volume.isMuted,
@@ -169,18 +154,6 @@ fun VolumeScreen(
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             volume.toggleMute()
                         }
-                    )
-
-                    WearsicCircularIconButton(
-                        icon = Icons.Rounded.Add,
-                        contentDescription = "Increase Volume",
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            volume.step(1)
-                        },
-                        size = 40.dp,
-                        iconSize = 20.dp,
-                        testTag = "volume_increase_button"
                     )
                 }
             }

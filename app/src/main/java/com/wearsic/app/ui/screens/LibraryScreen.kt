@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Whatshot
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Star
 import com.wearsic.app.ui.theme.WearsicAccentAmber
@@ -106,6 +107,9 @@ fun LibraryScreen(
     failoverServerName: String? = null,
     offlineDownloads: List<Track> = emptyList(),
     onPlayOfflineTrack: (List<Track>, Int) -> Unit = { _, _ -> },
+    // Cumulative listen ranking (v1.9.49 redesign); empty on fresh installs
+    // until a few songs are played, then it powers the "Most played" shelf.
+    mostPlayed: List<Track> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     val listState = rememberScalingLazyListState()
@@ -299,6 +303,35 @@ fun LibraryScreen(
                         onClick = {
                             val index = recentTracks.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
                             onPlayRecentTrack(recentTracks, index)
+                        }
+                    )
+                }
+            }
+
+            // Most Played (v1.9.49 redesign) — cumulative listens from the
+            // Room playCount column; appears as soon as one song is played
+            // twice, so the shelf is a genuinely earned list, never dummy.
+            if (mostPlayed.size >= 2) {
+                item {
+                    WearsicSectionTitle(
+                        label = "Most played",
+                        icon = Icons.Rounded.Whatshot,
+                        iconContentDescription = null,
+                        trailing = {
+                            Text(
+                                text = "${mostPlayed.size} songs",
+                                color = wearsicSecondaryText(),
+                                fontSize = 10.sp
+                            )
+                        }
+                    )
+                }
+                items(mostPlayed.take(6), key = { it.id }) { track ->
+                    RecentTrackRow(
+                        track = track,
+                        onClick = {
+                            val index = mostPlayed.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+                            onPlayRecentTrack(mostPlayed, index)
                         }
                     )
                 }

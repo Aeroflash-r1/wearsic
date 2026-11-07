@@ -74,6 +74,15 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**
+     * MOST PLAYED — the same Room table the recents shelf reads, ranked by
+     * cumulative play count (kept since the v1.9.49 redesign; every play
+     * bumps the row). Powers the "Most played" shelf on Home without any
+     * new table, migration beyond the playCount column, or server call.
+     */
+    val mostPlayedTracks: StateFlow<List<Track>> = recentRepository.mostPlayedFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
      * Tears down this manually-constructed ViewModel's scope when the owning
      * player ViewModel is cleared (the framework never calls onCleared here).
      */

@@ -48,6 +48,7 @@ import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.wear.tooling.preview.devices.WearDevices
+import com.wearsic.app.ui.components.WearsicArtistCollageAvatar
 import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicLibraryTrackRow
 import com.wearsic.app.ui.components.WearsicLoadingState
@@ -144,20 +145,13 @@ fun ArtistsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(WearsicAccentPeach.copy(alpha = 0.18f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Person,
-                                    contentDescription = null,
-                                    tint = WearsicAccentPeach,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
+                            // Artist "portrait": a 1-4 artwork collage of
+                            // their saved songs — the nearest photo-like
+                            // avatar the offline groupings allow.
+                            WearsicArtistCollageAvatar(
+                                songs = artist.songs,
+                                size = 40.dp
+                            )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(

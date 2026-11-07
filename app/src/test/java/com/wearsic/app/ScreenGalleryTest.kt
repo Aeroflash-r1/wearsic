@@ -25,6 +25,8 @@ import com.wearsic.app.ui.screens.ArtistsScreen
 import com.wearsic.app.ui.screens.DownloadsScreen
 import com.wearsic.app.ui.screens.FavoritesScreen
 import com.wearsic.app.ui.screens.LibraryScreen
+import com.wearsic.app.ui.screens.MixScreen
+import com.wearsic.app.ui.screens.HomeScreen
 import com.wearsic.app.ui.screens.PlayerScreen
 import com.wearsic.app.ui.screens.PlaylistDetailScreen
 import com.wearsic.app.ui.screens.PlaylistsScreen
@@ -40,6 +42,8 @@ import com.wearsic.app.ui.viewmodel.LibraryViewModel.ArtistsUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.FavoritesUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistDetailUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistsUiState
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.RecommendationsUiState
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.RadioState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.SearchUiState
 import com.wearsic.app.ui.viewmodel.ServerDashboardState
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
@@ -394,6 +398,38 @@ class ScreenGalleryTest {
             track = tracks[0], playlists = playlists,
             onDismiss = {}, onPlay = {}, onQueue = {}, onDownload = {},
             onAddToPlaylist = {}, onCreatePlaylistAndAdd = {}
+        )
+    }
+
+    // ── v1.9.49 redesign: Home + Mix discovery tabs ────────────────────────
+
+    @Test
+    fun home_feed() = shoot("22-home-feed") {
+        HomeScreen(
+            recentTracks = tracks.take(3),
+            mostPlayedTracks = tracks.take(4),
+            recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
+            favorites = tracks.take(3),
+            isServerReachable = true,
+            onPlay = { _, _ -> },
+            onOpenSearchForMood = { _ -> },
+            onOpenSearch = {},
+            onOpenMix = {},
+            onRefreshRecommendations = {}
+        )
+    }
+
+    @Test
+    fun mix_tab() = shoot("23-mix") {
+        MixScreen(
+            recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
+            favorites = tracks.take(3),
+            recentTracks = tracks.take(2),
+            radioState = RadioState.Idle,
+            onPlay = { _, _ -> },
+            onStartRadio = {},
+            onShuffleFavorites = {},
+            onRefreshRecommendations = {}
         )
     }
 }

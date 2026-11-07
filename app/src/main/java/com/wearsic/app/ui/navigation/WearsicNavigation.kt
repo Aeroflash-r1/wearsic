@@ -22,11 +22,19 @@ import com.wearsic.app.ui.theme.wearsicColorSchemeFor
 import androidx.wear.compose.material3.TimeText
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
+import androidx.wear.compose.navigation.currentBackStackEntryAsState
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.unit.dp
+import com.wearsic.app.ui.theme.LocalWearsicMiniPlayerReserve
+import com.wearsic.app.ui.components.WearsicMiniPlayer
+import com.wearsic.app.ui.components.wearsicMiniPlayerReserve
 import com.wearsic.app.MainActivity
 import com.wearsic.app.data.db.DownloadState
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.screens.DownloadsScreen
+import com.wearsic.app.ui.screens.WearsicHubScreen
 import com.wearsic.app.ui.screens.AlbumsScreen
 import com.wearsic.app.ui.screens.StorageStatsContent
 import com.wearsic.app.ui.screens.ArtistsScreen
@@ -115,6 +123,7 @@ fun WearsicApp(
     val albumsState by libraryVM.albumsState.collectAsStateWithLifecycle()
     val artistsState by libraryVM.artistsState.collectAsStateWithLifecycle()
     val recentTracks by libraryVM.recentTracks.collectAsStateWithLifecycle()
+    val mostPlayedTracks by libraryVM.mostPlayedTracks.collectAsStateWithLifecycle()
     val startupHealth by settingsVM.startupHealth.collectAsStateWithLifecycle()
     val favoritesState by libraryVM.favoritesState.collectAsStateWithLifecycle()
     val playlistsState by libraryVM.playlistsState.collectAsStateWithLifecycle()
@@ -190,15 +199,115 @@ fun WearsicApp(
             timeText = timeText,
             modifier = modifier
         ) {
+        // ---- Persistent mini-player shell ----
+        // The compact pill floats above Hub navigation (the four-tab shell
+        // and every open sub-screen), and hides on the surfaces that own
+        // the bottom of the screen (Player/Queue/Volume/Settings/Storage/
+        // Dashboard). Its reserve is injected through a CompositionLocal so
+        // every screen's `wearsicListContentPadding()` lifts its last row
+        // above the pill without per-screen changes.
+        val currentDestination by navController.currentBackStackEntryAsState()
+        val miniPlayerRoutes = remember {
+            setOf(
+                Screen.Hub.route,
+                Screen.Library.route,
+                Screen.Search.route,
+                Screen.MadeForYou.route,
+                Screen.Playlists.route,
+                Screen.Favorites.route,
+                Screen.PlaylistDetail.route,
+                Screen.Artists.route,
+                Screen.Albums.route,
+                Screen.Downloads.route
+            )
+        }
+        val hasActiveTrack = stablePlaybackState.currentTrack.id.isNotBlank()
+        val showMiniPlayer = currentDestination?.destination?.route in miniPlayerRoutes && hasActiveTrack
+        val miniPlayerReserve = if (showMiniPlayer) wearsicMiniPlayerReserve() else 0.dp
+        CompositionLocalProvider(
+            LocalWearsicMiniPlayerReserve provides miniPlayerReserve
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
         SwipeDismissableNavHost(
             navController = navController,
-            startDestination = Screen.Library.route
+            startDestination = Screen.Hub.route
         ) {
+            // 0. Hub — Home / Library / Search / Mix tabs + section rail.
+            composable(Screen.Hub.route) {
+                WearsicHubScreen(
+                    playbackState = libraryPlaybackState,
+                    recentTracks = recentTracks,
+                    mostPlayedTracks = mostPlayedTracks,
+                    favoritesState = favoritesState,
+                    playlistsState = playlistsState,
+                    playlistDetailState = playlistDetailState,
+                    albumsState = albumsState,
+                    artistsState = artistsState,
+                    recommendationsState = recommendationsState,
+                    searchState = searchState,
+                    radioState = radioState,
+                    serverReachable = serverReachable,
+                    failoverServerName = failoverServerName,
+                    offlineDownloads = offlineDownloads,
+                    favoriteTrackIds = favoritesState.tracks.map { it.id }.toSet(),
+                    onPlay = { tracks, index ->
+                        playerViewModel.playTracksFromList(tracks, index)
+                        navController.navigate(Screen.Player.route)
+                    },
+                    onPlayFavorites = {
+                        playerViewModel.playTracksFromList(favoritesState.tracks, 0)
+                        navController.navigate(Screen.Player.route)
+                    },
+                    onShuffleFavorites = {
+                        playerViewModel.playTracksShuffled(favoritesState.tracks)
+                        navController.navigate(Screen.Player.route)
+                    },
+                    onStartRadio = {
+                        playerViewModel.startRadio()
+                    },
+                    onQueueTrack = { playerViewModel.queueTrack(it) },
+                    onToggleFavoriteTrack = { playerViewModel.toggleFavoriteFor(it) },
+                    onStartDownload = { downloadsVM.startDownload(it) },
+                    onOpenPlayer = { navController.navigate(Screen.Player.route) },
+                    onOpenSearch = { navController.navigate(Screen.Search.route) },
+                    onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
+                    onOpenPlaylists = { navController.navigate(Screen.Playlists.route) },
+                    onOpenAlbums = { navController.navigate(Screen.Albums.route) },
+                    onOpenFavorites = { navController.navigate(Screen.Favorites.route) },
+                    onOpenArtists = { navController.navigate(Screen.Artists.route) },
+                    onOpenRecommendations = { navController.navigate(Screen.MadeForYou.route) },
+                    onOpenSettings = { navController.navigate(Screen.Settings.route) },
+                    onRefreshLibrary = { libraryVM.refreshLibrary() },
+                    onRefreshFavorites = { libraryVM.refreshFavorites() },
+                    onRefreshArtists = { libraryVM.refreshArtists() },
+                    onRefreshRecommendations = { libraryVM.refreshRecommendations() },
+                    onSearchQueryChanged = { libraryVM.onSearchTextChanged(it) },
+                    onSearchQuerySubmitted = { libraryVM.search(it) },
+                    onLoadMoreResults = { libraryVM.loadMoreResults() },
+                    searchPlaylists = playlistsState.playlists,
+                    onCreatePlaylistAndAdd = { name, track ->
+                        libraryVM.createPlaylistAndAdd(name, track)
+                    },
+                    onAddTrackToPlaylist = { playlistId, track ->
+                        libraryVM.addToPlaylist(playlistId, track)
+                    },
+                    onAlbumQueryChanged = { libraryVM.searchAlbums(it) },
+                    onOpenAlbum = { id, name ->
+                        navController.navigate(Screen.PlaylistDetail.createRoute(id, name))
+                    },
+                    onPlayArtist = { group, index ->
+                        playerViewModel.playTracksFromList(group.songs, index)
+                        navController.navigate(Screen.Player.route)
+                    }
+                )
+            }
+
             // 1. Library Screen (Start destination)
             composable(Screen.Library.route) {
                 LibraryScreen(
                     playbackState = libraryPlaybackState,
                     recentTracks = recentTracks,
+                    mostPlayed = mostPlayedTracks,
                     onPlayRecentTrack = { tracks, index ->
                         playerViewModel.playTracksFromList(tracks, index)
                         navController.navigate(Screen.Player.route)
@@ -659,8 +768,21 @@ fun WearsicApp(
                     }
                 )
             }
+            }
         }
+
+        // Floating mini-player above everything (hidden on Player, Queue,
+        // Volume, Settings, Storage, Server dashboard).
+        if (showMiniPlayer) {
+            WearsicMiniPlayer(
+                playbackState = playbackStateHolder,
+                onOpenPlayer = { navController.navigate(Screen.Player.route) { launchSingleTop = true } },
+                onTogglePlayPause = { playbackVM.togglePlayPause() }
+            )
         }
+            }
         }
     }
 }
+}
+

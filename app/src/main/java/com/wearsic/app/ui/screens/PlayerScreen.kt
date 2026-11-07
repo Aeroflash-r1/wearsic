@@ -26,6 +26,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -37,6 +38,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -52,6 +54,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Download
@@ -65,6 +68,7 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.VolumeOff
 import com.wearsic.app.ui.components.WearsicMarqueeText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -127,6 +131,7 @@ import com.wearsic.app.model.Track
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicSurfaceBorder
+import com.wearsic.app.ui.theme.WearsicPillGlassBrush
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.watchScaled
@@ -136,7 +141,9 @@ import com.wearsic.app.ui.util.LocalRotaryDirectionInverted
 import com.wearsic.app.ui.util.extractArtworkColors
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
+import com.wearsic.app.ui.util.rememberSystemVolumeState
 import com.wearsic.app.ui.util.wearsicRotaryScroll
+import com.wearsic.app.ui.util.wearsicRotaryVolume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -167,8 +174,10 @@ import kotlinx.coroutines.withContext
  *
  * Motion is deliberate and finite: a track change plays one short entrance
  * (art scales up, text rises, staggered), the play/pause glyph pops in on
- * every change, and nothing animates while you simply listen. The rotary
- * bezel is UNUSED on Now Playing (the crown stays with lists).
+ * every change, and nothing animates while you simply listen. The bezel is
+ * the VOLUME control here: each notch steps the system media level under a
+ * small transient HUD above the artwork; the Actions page and the lyrics
+ * sheet reclaim the crown while they are visible.
  */
 @Composable
 fun PlayerScreen(
@@ -212,6 +221,28 @@ fun PlayerScreen(
     val track = playbackState.currentTrack
     val hasTrack = track.id.isNotBlank()
     val haptic = LocalHapticFeedback.current
+
+    // BEZEL = VOLUME on Now Playing: every crown notch steps the system
+    // media stream. Each step re-arms a tiny HUD (the nonce starts at 0, so
+    // merely OPENING the screen never flashes it) and remembers the last
+    // direction for the arrow.
+    val volume = rememberSystemVolumeState()
+    var volumeHudNonce by remember { mutableIntStateOf(0) }
+    var volumeStepUp by remember { mutableStateOf(true) }
+    var volumeHudVisible by remember { mutableStateOf(false) }
+    val onVolumeStep: (Int) -> Unit = { step ->
+        if (step != 0) {
+            volume.step(step)
+            volumeStepUp = step > 0
+            volumeHudNonce++
+        }
+    }
+    LaunchedEffect(volumeHudNonce) {
+        if (volumeHudNonce == 0) return@LaunchedEffect
+        volumeHudVisible = true
+        delay(VOLUME_HUD_HOLD_MS)
+        volumeHudVisible = false
+    }
     var artworkColors by remember(track.artworkUrl) { mutableStateOf(ArtworkColors.Default) }
     val scope = rememberCoroutineScope()
 
@@ -259,11 +290,12 @@ fun PlayerScreen(
             snapshotFlow { pagerState.currentPage }.collect { pageIndex = it }
         }
 
-        // No rotary owner on Now Playing: the bezel should do NOTHING here
-        // (user: "doesn't need touch bezel scroll in nowplaying screen").
-        // The Actions list owns the bezel when page 1 is visible; lyrics own
-        // it while open. Once a node holds focus, rotary events bubble up
-        // from it — with no focus target below, no scroll fires.
+        // Bezel routing on Now Playing: page 0 binds the crown to VOLUME
+        // through the wearsicRotaryVolume owner on the pager box below —
+        // each notch steps the system media level under the transient HUD.
+        // The Actions list owns the bezel when page 1 is visible; lyrics
+        // own it while open — exactly one owner is armed at any time, so
+        // rotary events always land on the visible surface.
 
         // Natural screen-open: a soft zoom + fade across ~220ms. Runs once
         // per entry, layer-only (no recomposition), so it reads as a smooth,
@@ -344,6 +376,13 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(contentPadding)
+                    // Crown = VOLUME on this page; disarmed the moment the
+                    // Actions page or the lyrics sheet becomes visible so
+                    // they reclaim the bezel untouched.
+                    .wearsicRotaryVolume(
+                        onVolumeStep = onVolumeStep,
+                        enabled = pagerState.currentPage == 0 && !lyricsMode
+                    )
             ) {
                 HorizontalPager(
                     state = pagerState,
@@ -448,6 +487,21 @@ fun PlayerScreen(
                 onRetry = onRetryLyrics,
             )
         }
+
+        // VOLUME HUD — the LAST child (drawn over everything): a tiny glass
+        // pill under the clock that exists only while the bezel is stepping
+        // the level, then glides away. It is spring-smoothed so a fast spin
+        // reads as one fluid dial motion, not a series of jumps.
+        WearsicVolumeHud(
+            fraction = volume.fraction,
+            muted = volume.isMuted,
+            stepUp = volumeStepUp,
+            accent = artworkColors.accent,
+            visible = volumeHudVisible,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 30.dp)
+        )
     }
 }
 
@@ -478,6 +532,91 @@ internal fun lyricsAutoCenterTarget(
     rowCenterY: Float,
     anchorY: Float,
 ): Int = (currentValue + rowCenterY - anchorY).roundToInt().coerceIn(0, maxValue)
+
+/** How long the volume HUD stays visible after the last bezel step. */
+private const val VOLUME_HUD_HOLD_MS = 1300L
+
+/**
+ * The transient Now Playing volume pill: icon, hairline level track, percent.
+ * Drawn under the clock, over everything, ONLY while the bezel is stepping
+ * the level (opacity + scale in, glide out). The same WearsicPillGlassBrush
+ * glass as the mini-player keeps the language identical; 30dp below the top
+ * edge keeps its corners well inside the round-face chord at any width.
+ */
+@Composable
+private fun WearsicVolumeHud(
+    fraction: Float,
+    muted: Boolean,
+    stepUp: Boolean,
+    accent: Color,
+    visible: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val shown by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(if (visible) 160 else 260, easing = FastOutSlowInEasing),
+        label = "volumeHudAlpha"
+    )
+    val level by animateFloatAsState(
+        targetValue = fraction,
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f),
+        label = "volumeHudLevel"
+    )
+    if (shown > 0.002f) {
+        val percent = (level * 100f).roundToInt().coerceIn(0, 100)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            modifier = modifier
+                .graphicsLayer {
+                    alpha = shown
+                    val s = 0.92f + 0.08f * shown
+                    scaleX = s
+                    scaleY = s
+                }
+                .clip(RoundedCornerShape(19.dp))
+                .background(WearsicPillGlassBrush)
+                .border(0.5.dp, WearsicGlassBorder, RoundedCornerShape(19.dp))
+                .semantics {
+                    contentDescription =
+                        if (muted) "Volume muted" else "Volume $percent percent"
+                }
+                .testTag("nowplaying_volume_hud")
+        ) {
+            Icon(
+                imageVector = when {
+                    muted -> Icons.Rounded.VolumeOff
+                    stepUp -> Icons.AutoMirrored.Rounded.VolumeUp
+                    else -> Icons.AutoMirrored.Rounded.VolumeDown
+                },
+                contentDescription = null,
+                tint = if (muted) WearsicTextMuted else accent,
+                modifier = Modifier.size(15.dp)
+            )
+            Box(
+                modifier = Modifier
+                    .width(52.dp)
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(1.5.dp))
+                    .background(Color.White.copy(alpha = 0.16f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(if (muted) 0f else level)
+                        .clip(RoundedCornerShape(1.5.dp))
+                        .background(if (muted) WearsicTextMuted else accent)
+                )
+            }
+            Text(
+                text = if (muted) "Off" else "$percent",
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+    }
+}
 
 @Composable
 private fun NowPlayingPage(

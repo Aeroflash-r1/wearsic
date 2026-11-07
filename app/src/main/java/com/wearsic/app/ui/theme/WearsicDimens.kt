@@ -11,8 +11,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
 /**
- * The Wearsic dimension system — tuned for the 44mm round Galaxy Watch 7
- * display (~240dp circular viewport).
+ * The Wearsic dimension system — tuned for the Galaxy Watch 7's 44 mm round
+ * display (~230dp circular viewport; see [WearsicDimens.BaselineViewportDp]).
  *
  * Every screen used to scatter its own literals (14/18, 14/14, 22/30…).
  * These tokens give the app one consistent safe-area and spacing language:
@@ -66,16 +66,39 @@ object WearsicDimens {
     /** Minimum row height inside action sheets and menus. */
     val SheetRowMinHeight: Dp = 44.dp
 
+    // ---- Hub chrome (top rail + mini-player) ----
+    /** Height of one section chip in the Hub's top rail. */
+    val HubRailChip: Dp = 26.dp
+
+    /** Invisible touch margin per chip side (segmented tap-slop, keeps the row inside the chord). */
+    val HubRailChipPad: Dp = 2.dp
+
+    /** Height of the selected-section label under the rail chips. */
+    val HubRailLabelLine: Dp = 12.dp
+
+    /** Compact mini-player pill height. */
+    val MiniPlayerBarHeight: Dp = 34.dp
+
+    /** Gap between the mini-player pill and the bottom bezel curve. */
+    val MiniPlayerEdgeInset: Dp = 10.dp
+
+    /** Extra list breathing room under the mini-player pill (visual, not core). */
+    val MiniPlayerBelowGap: Dp = 6.dp
+
+    /** Artwork square on discovery shelves (Home/Mix/Most played). */
+    val ShelfCardArt: Dp = 64.dp
+
     // ---- Viewport-aware scaling ----
     /**
-     * The logical width (dp) the tokens above were tuned for — a 44mm round
-     * watch (~240dp circle). On faces that report less logical room (some
-     * 40mm devices and emulators), fixed dp sizes that are comfortable here
-     * consume a bigger share of the circle and can clip at the curved edge;
-     * [rememberWatchScale] shrinks them in lockstep instead of shipping a
-     * second, hand-maintained layout.
+     * The logical width (dp) the tokens above were tuned for — the Galaxy
+     * Watch 7's 44 mm round face (450px at ~2.0 density ≈ 228.6dp, kept at
+     * 230 for round margin). On faces that report less logical room (40mm
+     * devices), fixed dp sizes that are comfortable here consume a bigger
+     * share of the circle and can clip at the curved edge; [rememberWatchScale]
+     * shrinks them in lockstep instead of shipping a second, hand-maintained
+     * layout.
      */
-    const val BaselineViewportDp = 240
+    const val BaselineViewportDp = 230
 
     /** Floor so content never becomes fiddly on tiny faces. */
     const val MinWatchScale = 0.85f
@@ -116,6 +139,10 @@ fun rememberWatchScaledDp(base: Dp): Dp = base * rememberWatchScale()
  *
  * The base padding scales with [rememberWatchScale] so a smaller/denser
  * round face gets proportionally more breathing room at the curved edges.
+ *
+ * Floating app chrome is merged in as FLOORS too: the Hub's section rail
+ * raises `top`, the persistent mini-player pill raises `bottom` (see
+ * [LocalWearsicTopChromeReserve] / [LocalWearsicMiniPlayerReserve]).
  */
 @Composable
 fun wearsicListContentPadding(scaffoldPadding: PaddingValues): PaddingValues {
@@ -123,9 +150,13 @@ fun wearsicListContentPadding(scaffoldPadding: PaddingValues): PaddingValues {
     val scale = rememberWatchScale()
     val h = WearsicDimens.ScreenPaddingH * scale
     val v = WearsicDimens.ScreenPaddingV * scale
+    // Floating chrome arrives pre-scaled: the Hub rail and the mini-player
+    // reserve are provided at their final dp, so never re-scale here.
+    val topChrome = LocalWearsicTopChromeReserve.current
+    val miniPlayer = LocalWearsicMiniPlayerReserve.current
     val start = maxOf(h, scaffoldPadding.calculateStartPadding(direction))
     val end = maxOf(h, scaffoldPadding.calculateEndPadding(direction))
-    val top = maxOf(v, scaffoldPadding.calculateTopPadding())
-    val bottom = maxOf(v, scaffoldPadding.calculateBottomPadding())
+    val top = maxOf(v, topChrome, scaffoldPadding.calculateTopPadding())
+    val bottom = maxOf(v, miniPlayer, scaffoldPadding.calculateBottomPadding())
     return PaddingValues(start = start, top = top, end = end, bottom = bottom)
 }

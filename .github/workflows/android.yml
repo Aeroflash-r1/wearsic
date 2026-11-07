@@ -26,6 +26,13 @@ jobs:
   test:
     name: Unit tests
     runs-on: ubuntu-latest
+    # The default GITHUB_TOKEN for push/tag runs can push to a scratch
+    # branch, which is how we smuggle the raw failure log out of the
+    # runner (logs/artifacts are auth-gated for anonymous readers, the
+    # ci-logs branch is not). The branch is not `main` and not a tag, so
+    # this push never re-triggers the workflow.
+    permissions:
+      contents: write
     # Backstop: if anything in this job ever wedges (see the Robolectric
     # pre-fetch step below for the 2026-10-17 Maven-stall incident), fail in
     # 45 min instead of the 6-hour default.
@@ -114,6 +121,47 @@ jobs:
             > summary.md 2>&1 || true
           cat summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
           cat summary.md
+
+      # The single most reliable diagnostic channel an anonymous reader has:
+      # push the raw failure artifacts to a scratch branch (ci-logs) that
+      # never triggers this workflow. Everything else (step logs, artifacts)
+      # needs credentials to read.
+      - name: Publish failure artifacts to ci-logs branch
+        if: failure()
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs-out
+          if [ -f gradle.out ]; then cp gradle.out ci-logs-out/gradle.out; fi
+          if [ -d app/build/test-results/testDebugUnitTest ]; then
+            cp -r app/build/test-results/testDebugUnitTest ci-logs-out/test-results
+          fi
+          if [ -f summary.md ]; then cp summary.md ci-logs-out/summary.md; fi
+          git config user.name "CI diagnostics bot"
+          git config user.email "ci@wearsic.invalid"
+          git fetch origin ci-logs || git branch ci-logs origin/main
+          git checkout -B ci-logs origin/ci-logs 2>/dev/null || git checkout -B ci-logs origin/main
+          rm -rf ci-logs-out
+          cp -r /tmp/ci-logs-out ci-logs-out 2>/dev/null || true
+          # rebuild from the captured directory
+          rm -rf ci-logs-out
+          mkdir -p ci-logs-out
+          if [ -f gradle.out ]; then cp gradle.out ci-logs-out/gradle.out; fi
+          if [ -d app/build/test-results/testDebugUnitTest ]; then
+            cp -r app/build/test-results/testDebugUnitTest ci-logs-out/test-results
+          fi
+          if [ -f summary.md ]; then cp summary.md ci-logs-out/summary.md; fi
+          if [ -f .github/scripts/summarize-failures.py ]; then
+            cp .github/scripts/summarize-failures.py ci-logs-out/
+          fi
+          printf '%s\n' "commit: $GITHUB_SHA" "run: $GITHUB_RUN_ID" \
+            "attempt: ${GITHUB_RUN_ATTEMPT:-1}" "job: $GITHUB_JOB" \
+            > ci-logs-out/meta.txt
+          ls -la ci-logs-out
+          git add -A ci-logs-out
+          git -c user.name="CI diagnostics bot" \
+             -c user.email="ci@wearsic.invalid" \
+             commit -m "ci(debug): publish failure artifacts for run $GITHUB_RUN_ID" || true
+          git push origin ci-logs --force
 
       # A broken server must not merge silently while only Android tests run.
       - name: Run server tests

@@ -79,6 +79,16 @@ interface RecentTrackDao {
     @Query("SELECT COUNT(*) FROM recent_tracks")
     suspend fun countRows(): Int
 
+    /**
+     * Highest playedAt currently stored. The repository uses this to make the
+     * next timestamp strictly increasing even when the wall clock did not
+     * tick (same-millisecond replays on coarse clocks — Robolectric). Without
+     * it, replayed rows tie on playedAt and the rowid tie-break can surface a
+     * stale recording.
+     */
+    @Query("SELECT COALESCE(MAX(playedAt), 0) FROM recent_tracks")
+    suspend fun maxPlayedAt(): Long
+
     @Query("DELETE FROM recent_tracks")
     suspend fun deleteAll()
 }

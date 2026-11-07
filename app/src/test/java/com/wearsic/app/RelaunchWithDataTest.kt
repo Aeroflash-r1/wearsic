@@ -155,7 +155,10 @@ class RelaunchWithDataTest {
             composeTestRule.onAllNodesWithTag("library_lazy_column")
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithText("Library").assertIsDisplayed()
+        // The Library list's own content is unambiguous (the "Library" text
+        // exists in both the rail label and the header).
+        composeTestRule.onNodeWithTag("library_lazy_column", useUnmergedTree = true)
+            .assertIsDisplayed()
 
         // Startup reconciliation effects, verified against the real DB:
         runBlocking {

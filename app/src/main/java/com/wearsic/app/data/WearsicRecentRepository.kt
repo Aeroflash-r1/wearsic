@@ -28,7 +28,7 @@ class WearsicRecentRepository(
         // and only fall back to insert for brand-new tracks — a REPLACE
         // would reset the cumulative play count on every replay and break
         // the "Most played" shelf.
-        val playedAt = System.currentTimeMillis()
+        val playedAt = nextPlayedAt()
         val bumped = recentTrackDao.bumpPlayCount(
             trackId = track.id,
             title = track.title,
@@ -53,6 +53,19 @@ class WearsicRecentRepository(
                 )
             )
         }
+    }
+
+    /**
+     * Strictly increasing play timestamp: the wall clock when it has advanced
+     * past the newest row, otherwise MAX+1. Keeps replay order unambiguous on
+     * coarse clocks (same-millisecond plays) — the display grouping orders
+     * by playedAt, so a tie would fall back to rowid and could surface the
+     * wrong recording of a song (see RecentPlaybackIdentityTest).
+     */
+    private suspend fun nextPlayedAt(): Long {
+        val now = System.currentTimeMillis()
+        val latest = recentTrackDao.maxPlayedAt()
+        return if (now > latest) now else latest + 1
     }
 
     suspend fun clearRecent() {

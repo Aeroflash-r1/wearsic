@@ -180,8 +180,10 @@ class ExampleRobolectricTest {
         // The app now opens on the Hub's Home tab — switch to Library first.
         composeTestRule.onNodeWithContentDescription("Library tab").performClick()
 
-        // Verify Library Header and buttons with unmerged tree
-        composeTestRule.onNodeWithText("Library").assertExists()
+        // Verify Library content with unmerged tree. (The "Library" text
+        // exists in both the rail label and the screen header, so assert the
+        // screen's unique list and buttons instead of the ambiguous text.)
+        composeTestRule.onNodeWithTag("library_lazy_column", useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true).assertExists()
 

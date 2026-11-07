@@ -97,7 +97,9 @@ jobs:
       # hanging test in the log, so a repeat is self-diagnosing.
       - name: Run app unit tests (Robolectric)
         timeout-minutes: 10
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew :app:testDebugUnitTest --stacktrace 2>&1 | tee gradle.out
 
       # When the suite fails on a runner that cannot reach the local
       # workspace, the error lives only in the log zip (download needs a
@@ -107,9 +109,11 @@ jobs:
       - name: Surface failing tests in the job summary
         if: failure()
         run: |
-          echo "## Failing app unit tests" >> "$GITHUB_STEP_SUMMARY"
           python3 .github/scripts/summarize-failures.py \
-            app/build/test-results/testDebugUnitTest >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+            app/build/test-results/testDebugUnitTest gradle.out \
+            > summary.md 2>&1 || true
+          cat summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          cat summary.md
 
       # A broken server must not merge silently while only Android tests run.
       - name: Run server tests

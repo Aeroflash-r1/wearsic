@@ -122,6 +122,11 @@ fun VolumeScreen(
     ) {
         ScalingLazyColumn(
             state = listState,
+            // No auto-centering: the framework otherwise anchors item 1 to the
+            // viewport centre, pushing the header (and the clock) off the top
+            // of the round face. We pin the list with an explicit content
+            // padding instead.
+            autoCentering = null,
             modifier = Modifier
                 .fillMaxSize()
                 .wearsicEntrance()

@@ -1590,6 +1590,7 @@ private fun ActionsPage(
     val scope = rememberCoroutineScope()
     ScalingLazyColumn(
         state = listState,
+            autoCentering = null,
         modifier = Modifier.fillMaxSize().testTag("actions_page_root").wearsicRotaryScroll(listState, enabled = active),
         contentPadding = rememberWearsicListContentPadding(PaddingValues(bottom = 44.dp)),
         horizontalAlignment = Alignment.CenterHorizontally,

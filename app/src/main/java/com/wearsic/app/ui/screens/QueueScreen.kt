@@ -486,6 +486,7 @@ fun QueueScreen(
         ) {
             ScalingLazyColumn(
                 state = listState,
+            autoCentering = null,
                 modifier = Modifier
                     .fillMaxSize()
                     .wearsicEntrance()

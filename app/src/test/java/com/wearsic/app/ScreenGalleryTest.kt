@@ -442,6 +442,66 @@ class ScreenGalleryTest {
     // ── v1.9.49 shell + tri-mode sub-screens ─────────────────────────────
 
     @Test
+    fun debug_chrome_reserve_probe() {
+        composeTestRule.setContent {
+            WearsicTheme {
+                WearsicHubScreen(
+                    playbackState = playback,
+                    recentTracks = tracks.take(3),
+                    mostPlayedTracks = tracks.take(4),
+                    favoritesState = FavoritesUiState(tracks = tracks.take(4)),
+                    playlistsState = PlaylistsUiState(favorites = tracks.take(3), playlists = playlists),
+                    playlistDetailState = PlaylistDetailUiState(),
+                    albumsState = AlbumsUiState(),
+                    artistsState = ArtistsUiState(),
+                    recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
+                    searchState = SearchUiState(),
+                    radioState = RadioState.Idle,
+                    serverReachable = true,
+                    failoverServerName = null,
+                    offlineDownloads = emptyList(),
+                    favoriteTrackIds = emptySet(),
+                    onPlay = { _, _ -> },
+                    onPlayFavorites = {},
+                    onShuffleFavorites = {},
+                    onStartRadio = {},
+                    onQueueTrack = {},
+                    onToggleFavoriteTrack = {},
+                    onStartDownload = {},
+                    onOpenPlayer = {},
+                    onOpenSearch = {},
+                    onOpenDownloads = {},
+                    onOpenPlaylists = {},
+                    onOpenAlbums = {},
+                    onOpenFavorites = {},
+                    onOpenArtists = {},
+                    onOpenRecommendations = {},
+                    onOpenSettings = {},
+                    onRefreshLibrary = {},
+                    onRefreshFavorites = {},
+                    onRefreshArtists = {},
+                    onRefreshRecommendations = {},
+                    onSearchQueryChanged = {},
+                    onSearchQuerySubmitted = {},
+                    onLoadMoreResults = {},
+                    searchPlaylists = playlists,
+                    onCreatePlaylistAndAdd = { _, _ -> },
+                    onAddTrackToPlaylist = { _, _ -> },
+                    onAlbumQueryChanged = {},
+                    onOpenAlbum = { _, _ -> },
+                    onPlayArtist = { _, _ -> }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+        kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(500) }
+        // Not an assertion about behavior — this intentionally fails so the
+        // produced ERROR MESSAGE dumps the value of the composition local to
+        // the CI log:
+        org.junit.Assert.fail("PROBE top=" + 1)
+    }
+
+    @Test
     fun hub_home() = shoot("24-hub-home") {
         WearsicHubScreen(
             playbackState = playback,

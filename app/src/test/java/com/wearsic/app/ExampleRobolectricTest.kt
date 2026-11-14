@@ -199,8 +199,17 @@ class ExampleRobolectricTest {
         }
         downloadsTile.assertExists()
 
-        // Navigate to Search
-        composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).performClick()
+        // Navigate to Search — the Browse grid pushed the Search pill below
+        // the fold on a 44mm viewport, so scroll it into view first.
+        val searchButton =
+            composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true)
+        var searchScrolls = 5
+        while (searchScrolls > 0 && runCatching { searchButton.assertIsDisplayed() }.isFailure) {
+            composeTestRule.onRoot().performTouchInput { swipeUp() }
+            composeTestRule.waitForIdle()
+            searchScrolls--
+        }
+        searchButton.performClick()
         composeTestRule.onNodeWithText("Search").assertExists()
     }
 

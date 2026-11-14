@@ -192,8 +192,17 @@ class RelaunchWithDataTest {
         }
 
         // The UI is still responsive after reconciliation: navigation works.
-        composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true)
-            .performClick()
+        // The Search pill sits below the Browse grid, so scroll it into view
+        // first (a lazy list does not compose off-screen items).
+        val searchButton =
+            composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true)
+        var searchScrolls = 5
+        while (searchScrolls > 0 && runCatching { searchButton.assertIsDisplayed() }.isFailure) {
+            composeTestRule.onRoot().performTouchInput { swipeUp() }
+            composeTestRule.waitForIdle()
+            searchScrolls--
+        }
+        searchButton.performClick()
         composeTestRule.waitUntil(10_000) {
             composeTestRule.onAllNodesWithTag("search_input", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty() ||

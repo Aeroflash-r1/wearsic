@@ -78,7 +78,7 @@ import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDisplayFont
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicGlassBorder
@@ -133,7 +133,7 @@ fun LibraryScreen(
                 .wearsicEntrance()
                 .testTag("library_lazy_column")
                 .wearsicRotaryScroll(listState),
-            contentPadding = wearsicListContentPadding(it),
+            contentPadding = rememberWearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -233,20 +233,9 @@ fun LibraryScreen(
                 }
             }
 
-            // Primary Search Action
-            item {
-                WearsicPrimaryPillButton(
-                    label = "Search Music",
-                    icon = Icons.Rounded.Search,
-                    onClick = onNavigateToSearch,
-                    backgroundColor = LocalWearsicAccent.current,
-                    contentColor = WearsicTextPrimaryDark,
-                    testTag = "library_search_button"
-                )
-            }
-
-            // Browse 2×2 Grid: compact round-screen destination tiles kept near
-            // the top so Downloads and Playlists are one tap from launch.
+            // Browse 2×2 Grid FIRST — the four most-used destinations
+            // (Downloads / Playlists / Albums / Artists) used to sit below the
+            // fold on a 44mm face, unreachable without a blind swipe.
             // The grid is a fixed 2×2 so the layout never reflows when an
             // optional destination (Favorites) is present or absent.
             item {
@@ -291,6 +280,18 @@ fun LibraryScreen(
                         testTag = "library_artists_button"
                     )
                 }
+            }
+
+            // Primary Search Action
+            item {
+                WearsicPrimaryPillButton(
+                    label = "Search Music",
+                    icon = Icons.Rounded.Search,
+                    onClick = onNavigateToSearch,
+                    backgroundColor = LocalWearsicAccent.current,
+                    contentColor = WearsicTextPrimaryDark,
+                    testTag = "library_search_button"
+                )
             }
 
             // Made for you — recommendations from your local taste.

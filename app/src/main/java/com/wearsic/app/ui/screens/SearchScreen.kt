@@ -92,7 +92,7 @@ import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDisplayFont
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicSurfaceActive
@@ -227,7 +227,7 @@ fun SearchScreen(
                 .wearsicEntrance()
                 .testTag("search_lazy_column")
                 .wearsicRotaryScroll(listState),
-            contentPadding = wearsicListContentPadding(it),
+            contentPadding = rememberWearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

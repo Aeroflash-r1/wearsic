@@ -58,7 +58,7 @@ import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicDisplayFont
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicTextMuted
@@ -102,7 +102,7 @@ fun PlaylistsScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = wearsicListContentPadding(it),
+            contentPadding = rememberWearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

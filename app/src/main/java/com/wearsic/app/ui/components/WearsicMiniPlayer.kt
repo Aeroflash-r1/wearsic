@@ -81,7 +81,7 @@ fun WearsicMiniPlayer(
     val hasTrack = outer.currentTrack.id.isNotBlank()
 
     // Reserves list bottom space exactly once per pill — read by
-    // wearsicListContentPadding on every tab screen through the Local.
+    // rememberWearsicListContentPadding on every tab screen through the Local.
     val reserve = wearsicMiniPlayerReserve()
     if (!hasTrack) return
 
@@ -253,7 +253,7 @@ fun WearsicMiniPlayer(
 /**
  * Total bottom list reserve the mini-player requires: pill height + its
  * edge inset + a small visual gap under the pill. Mirrors the layout maths
- * in [WearsicMiniPlayer], provided to [com.wearsic.app.ui.theme.wearsicListContentPadding]
+ * in [WearsicMiniPlayer], provided to [com.wearsic.app.ui.theme.rememberWearsicListContentPadding]
  * through [com.wearsic.app.ui.theme.LocalWearsicMiniPlayerReserve].
  */
 @Composable

@@ -89,7 +89,7 @@ import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppColorChoices
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicAppBackground
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
@@ -263,7 +263,7 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = wearsicListContentPadding(it),
+            contentPadding = rememberWearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

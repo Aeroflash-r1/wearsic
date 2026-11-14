@@ -58,7 +58,7 @@ import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.WearsicSurface
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.util.wearsicClickable
@@ -92,7 +92,7 @@ fun ArtistsScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = wearsicListContentPadding(it),
+            contentPadding = rememberWearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

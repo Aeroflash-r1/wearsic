@@ -1,14 +1,13 @@
 package com.wearsic.app.ui.theme
 
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
 /**
@@ -156,20 +155,71 @@ fun rememberWatchScaledDp(base: Dp): Dp = base * LocalWatchScale.current
  * Floating app chrome is merged in as FLOORS too: the Hub's section rail
  * raises `top`, the persistent mini-player pill raises `bottom` (see
  * [LocalWearsicTopChromeReserve] / [LocalWearsicMiniPlayerReserve]).
+ *
+ * ── WHY THIS RESOLVES LAZILY ──────────────────────────────────────────────
+ * Wear's [androidx.wear.compose.material3.ScreenScaffold] hands the screen a
+ * PaddingValues whose TOP inset is the system status bar (the clock) height —
+ * but ONLY while that status bar is visible. The visibility is resolved in
+ * the scaffold's `onAttach()`, i.e. AFTER the first composition, so reading
+ * the inset during composition returns 0.dp on frame 0. A plain
+ * `maxOf(design, scaffoldPadding.calculateTopPadding())` therefore lays the
+ * list out with NO top inset on the very first frame: the first row starts
+ * under the clock and is clipped by the round bezel.
+ *
+ * The framework is explicit about this: "pass this padding to containers like
+ * TransformingLazyColumn or layout modifiers like Modifier.padding, rather
+ * than inspecting its values directly during composition via functions like
+ * calculateTopPadding" (ScreenScaffold.kt, contentPadding KDoc).
+ *
+ * So this returns a PaddingValues implementation that defers EVERY read to
+ * the measure phase, where the status-bar state is already resolved. The
+ * list then remeasures on its own when the clock slides away or comes back,
+ * instead of being laid out under it.
  */
 @Composable
-fun wearsicListContentPadding(scaffoldPadding: PaddingValues): PaddingValues {
-    val direction = LocalLayoutDirection.current
+fun rememberWearsicListContentPadding(scaffoldPadding: PaddingValues): PaddingValues {
+    val density = LocalDensity.current
     val scale = rememberWatchScale()
-    val h = WearsicDimens.ScreenPaddingH * scale
-    val v = WearsicDimens.ScreenPaddingV * scale
+    // The design padding is static for the life of the composition, so it is
+    // resolved here; only the scaffold's own inset has to stay lazy.
+    val designH = WearsicDimens.ScreenPaddingH * scale
+    val designV = WearsicDimens.ScreenPaddingV * scale
     // Floating chrome arrives pre-scaled: the Hub rail and the mini-player
-    // reserve are provided at their final dp, so never re-scale here.
+    // reserve are provided at their final dp, so never re-scale them.
     val topChrome = LocalWearsicTopChromeReserve.current
     val miniPlayer = LocalWearsicMiniPlayerReserve.current
-    val start = maxOf(h, scaffoldPadding.calculateStartPadding(direction))
-    val end = maxOf(h, scaffoldPadding.calculateEndPadding(direction))
-    val top = maxOf(v, topChrome, scaffoldPadding.calculateTopPadding())
-    val bottom = maxOf(v, miniPlayer, scaffoldPadding.calculateBottomPadding())
-    return PaddingValues(start = start, top = top, end = end, bottom = bottom)
+
+    return remember(scaffoldPadding, density, designH, designV, topChrome, miniPlayer) {
+        object : PaddingValues {
+            override fun calculateLeftPadding(layoutDirection: LayoutDirection): Dp =
+                maxOf(designH, scaffoldPadding.calculateLeftPadding(layoutDirection))
+
+            override fun calculateTopPadding(): Dp =
+                maxOf(designV, topChrome, scaffoldPadding.calculateTopPadding())
+
+            override fun calculateRightPadding(layoutDirection: LayoutDirection): Dp =
+                maxOf(designH, scaffoldPadding.calculateRightPadding(layoutDirection))
+
+            override fun calculateBottomPadding(): Dp =
+                maxOf(designV, miniPlayer, scaffoldPadding.calculateBottomPadding())
+
+            override fun equals(other: Any?): Boolean =
+                this === other ||
+                    (other is PaddingValues &&
+                        calculateLeftPadding(LayoutDirection.Ltr) ==
+                        other.calculateLeftPadding(LayoutDirection.Ltr) &&
+                        calculateTopPadding() == other.calculateTopPadding() &&
+                        calculateRightPadding(LayoutDirection.Ltr) ==
+                        other.calculateRightPadding(LayoutDirection.Ltr) &&
+                        calculateBottomPadding() == other.calculateBottomPadding())
+
+            override fun hashCode(): Int {
+                var result = calculateLeftPadding(LayoutDirection.Ltr).hashCode()
+                result = 31 * result + calculateTopPadding().hashCode()
+                result = 31 * result + calculateRightPadding(LayoutDirection.Ltr).hashCode()
+                result = 31 * result + calculateBottomPadding().hashCode()
+                return result
+            }
+        }
+    }
 }

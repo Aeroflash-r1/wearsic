@@ -145,7 +145,7 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.rememberWatchScale
 import com.wearsic.app.ui.theme.watchScaled
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.util.ArtworkColors
 import com.wearsic.app.ui.util.LocalRotaryDirectionInverted
 import com.wearsic.app.ui.util.RotaryVolumeAccumulator
@@ -1591,7 +1591,7 @@ private fun ActionsPage(
     ScalingLazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize().testTag("actions_page_root").wearsicRotaryScroll(listState, enabled = active),
-        contentPadding = wearsicListContentPadding(PaddingValues(bottom = 44.dp)),
+        contentPadding = rememberWearsicListContentPadding(PaddingValues(bottom = 44.dp)),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {

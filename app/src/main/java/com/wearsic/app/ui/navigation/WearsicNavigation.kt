@@ -137,7 +137,7 @@ fun WearsicApp(
                 // that own the bottom of the screen (Player/Queue/Volume/
                 // Settings/Storage/Dashboard). Its reserve is injected through
                 // a CompositionLocal so every screen's
-                // `wearsicListContentPadding()` lifts its last row above the
+                // `rememberWearsicListContentPadding()` lifts its last row above the
                 // pill without per-screen changes.
                 val currentDestination by navController.currentBackStackEntryAsState()
                 val miniPlayerRoutes = remember {

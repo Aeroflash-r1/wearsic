@@ -95,7 +95,7 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.watchScaled
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
@@ -490,7 +490,7 @@ fun QueueScreen(
                     .fillMaxSize()
                     .wearsicEntrance()
                     .wearsicRotaryScroll(listState),
-                contentPadding = wearsicListContentPadding(padding),
+                contentPadding = rememberWearsicListContentPadding(padding),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {

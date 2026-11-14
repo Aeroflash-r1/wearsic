@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.ScreenScaffold
@@ -48,7 +49,7 @@ import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicViolet
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
@@ -84,7 +85,7 @@ fun StorageStatsContent(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = wearsicListContentPadding(it),
+            contentPadding = rememberWearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -179,26 +180,27 @@ private fun StatRow(
     // Bar = this bucket's share of total local music; full bar when it is all.
     val fill = if (totalMb > 0.0) (mb / totalMb).toFloat() else 0f
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = label,
-                color = WearsicTextPrimary,
-                fontFamily = WearsicBodyFont,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f)
-            )
-            Text(
-                text = detail,
-                color = wearsicSecondaryText(),
-                style = WearsicTabularStyle.merge(
-                    TextStyle(fontSize = 10.sp)
-                )
-            )
-        }
+        // The label gets its OWN line. Sharing one line with the detail left
+        // about 80dp for "Auto-saved songs", which does not fit at 11sp and
+        // broke mid-word ("Auto-save" / "d songs").
+        Text(
+            text = label,
+            color = WearsicTextPrimary,
+            fontFamily = WearsicBodyFont,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = detail,
+            color = wearsicSecondaryText(),
+            style = WearsicTabularStyle.merge(
+                TextStyle(fontSize = 10.sp)
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
         Spacer(modifier = Modifier.height(4.dp))
         Box(
             modifier = Modifier

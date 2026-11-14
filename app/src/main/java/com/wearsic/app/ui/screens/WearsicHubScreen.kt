@@ -92,7 +92,7 @@ enum class WearsicHubSection(val label: String) {
  * HomeStation and Mix screens; nothing is duplicated.
  *
  * The top reserve is injected via [LocalWearsicTopChromeReserve] so every
- * tab's own `wearsicListContentPadding()` lifts its first row below the
+ * tab's own `rememberWearsicListContentPadding()` lifts its first row below the
  * rail without per-screen changes.
  */
 @Composable

@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Icon
@@ -60,6 +61,7 @@ import com.wearsic.app.model.Playlist
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.util.WearsicGeometry
 import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
@@ -108,12 +110,24 @@ fun WearsicTrackActionSheet(
         BoxWithConstraints(
             modifier = Modifier
                 .align(Alignment.Center)
-                .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
+        // A centred panel is at its narrowest at its own bottom edge, so the
+        // horizontal inset is derived from the chord of the face THERE — the
+        // old fixed 24dp inset let the bottom corners of a tall sheet fall
+        // outside the circle and get sliced off by the bezel.
+        val sheetMaxHeight = maxHeight * 0.72f
+        val sheetPadding = with(LocalDensity.current) {
+            WearsicGeometry.panelHorizontalPadding(
+                widthPx = maxWidth.roundToPx(),
+                heightPx = maxHeight.roundToPx(),
+                panelHeightPx = sheetMaxHeight.toPx()
+            ).toDp()
+        }
         Column(
             modifier = Modifier
+                .padding(horizontal = sheetPadding)
                 .fillMaxWidth()
-                .heightIn(max = maxHeight * 0.86f)
+                .heightIn(max = sheetMaxHeight)
                 .wearsicEntrance(riseDp = 12f)
                 .clip(RoundedCornerShape(32.dp))
                 .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))

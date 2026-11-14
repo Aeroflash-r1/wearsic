@@ -52,7 +52,7 @@ import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSecondaryPillButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.FavoritesUiState
 
@@ -95,7 +95,7 @@ fun FavoritesScreen(
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = wearsicListContentPadding(it),
+            contentPadding = rememberWearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

@@ -77,6 +77,7 @@ fun FavoritesScreen(
 ) {
     val listState = rememberScalingLazyListState()
     var actionTrack by remember { mutableStateOf<Track?>(null) }
+    val distinctTracks = remember(favoritesState.tracks) { favoritesState.tracks.distinctBy { it.id } }
 
     LaunchedEffect(Unit) {
         onRefresh()
@@ -148,10 +149,10 @@ fun FavoritesScreen(
 
             // Keyed by track id so rows keep their identity (and lazy state)
             // when the list reorders after a favorite is removed.
-            itemsIndexed(favoritesState.tracks.distinctBy { it.id }, key = { _, track -> track.id }) { index, track ->
+            itemsIndexed(distinctTracks, key = { _, track -> track.id }) { index, track ->
                 WearsicLibraryTrackRow(
                     track = track,
-                    onPlay = { onPlayTrack(favoritesState.tracks, index) },
+                    onPlay = { onPlayTrack(distinctTracks, index) },
                     onLongPress = { actionTrack = track },
                     onMore = { actionTrack = track },
                     isDownloaded = track.id in downloadedTrackIds,
@@ -168,7 +169,7 @@ fun FavoritesScreen(
                 track = t,
                 playlists = playlists,
                 onDismiss = { actionTrack = null },
-                onPlay = { onPlayTrack(favoritesState.tracks, favoritesState.tracks.indexOfFirst { it.id == t.id }.coerceAtLeast(0)) },
+                onPlay = { onPlayTrack(distinctTracks, distinctTracks.indexOfFirst { it.id == t.id }.coerceAtLeast(0)) },
                 onQueue = { onQueue(t) },
                 onDownload = { onDownloadTrack(t) },
                 onAddToPlaylist = { pid -> onAddToPlaylist(pid, t) },

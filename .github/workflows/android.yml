@@ -439,21 +439,32 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Verify signing secrets are configured
+        id: check_secrets
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          missing=0
-          for s in KEYSTORE_BASE64 STORE_PASSWORD KEY_PASSWORD; do
-            if [ -z "${!s}" ]; then echo "::error::Missing repository secret: $s"; missing=1; fi
-          done
-          exit $missing
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::warning::Missing release signing secrets (KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD). Building with a THROWAWAY keystore so the release pipeline is still exercised end to end. The resulting APK is NOT installable over the released app and no GitHub Release is published from this run."
+            echo "has_secrets=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_secrets=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Decode signing keystore
+        if: steps.check_secrets.outputs.has_secrets == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: echo "$KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
+          # Export the credentials for every later step. Using GITHUB_ENV for
+          # BOTH the real and the throwaway key means the assemble step has a
+          # single code path — a step-level `env:` would shadow these.
+          echo "STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -464,10 +475,24 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Assemble signed release APK + server dist
-        env:
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      # Without the repository secrets there is no upload key, but the
+      # pipeline still has to prove that the RELEASE variant builds, minifies
+      # and packages correctly. A throwaway key gives us the real signed
+      # release path (R8 + resource shrinking + the release applicationId)
+      # instead of a debug build that would pass while the release is broken.
+      # The key is ephemeral, so nothing signed with it is ever published.
+      - name: Generate throwaway signing key (no repository secrets)
+        if: steps.check_secrets.outputs.has_secrets != 'true'
+        run: |
+          keytool -genkeypair -v \
+            -keystore my-upload-key.jks \
+            -storepass ci-ephemeral -keypass ci-ephemeral \
+            -alias upload -keyalg RSA -keysize 2048 -validity 30 \
+            -dname "CN=Wearsic CI (throwaway), O=Wearsic, C=US"
+          echo "STORE_PASSWORD=ci-ephemeral" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=ci-ephemeral" >> "$GITHUB_ENV"
+
+      - name: Assemble release APK + server dist
         run: ./gradlew :app:assembleRelease :wearsic-server:installDist --stacktrace
 
       - name: Stage release assets from THIS build (never a committed zip)
@@ -571,7 +596,12 @@ jobs:
         # verify and upload the artifact but never create/replace a release (a
         # release pinned to an untagged commit would be served as "latest" to
         # every updater).
-        if: startsWith(github.ref, 'refs/tags/v')
+        # Publishing needs the REAL upload key: the app's in-app updater and
+        # `wearsic sideload` verify the APK signature, so a release signed
+        # with the throwaway key could never be installed over the released
+        # build. Without the secrets we still build, verify and upload the
+        # CI artifact above — we just do not cut a GitHub Release.
+        if: steps.check_secrets.outputs.has_secrets == 'true' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
           # Empty = publish as a NORMAL release. Set to "true" to cut a beta.

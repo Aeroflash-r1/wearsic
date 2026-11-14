@@ -1,6 +1,7 @@
 package com.wearsic.app.ui.theme
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
@@ -75,14 +76,18 @@ fun wearsicColorSchemeFor(accent: Color, dynamic: Boolean = false): ColorScheme 
 @Composable
 fun WearsicTheme(
     accent: Color = WearsicVibrantLavender,
+    dynamic: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = remember(accent) { wearsicColorSchemeFor(accent) }
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = WearsicTypography,
-        content = content
-    )
+    val watchScale = computeWatchScale()
+    val colorScheme = remember(accent, dynamic) { wearsicColorSchemeFor(accent, dynamic) }
+    CompositionLocalProvider(LocalWatchScale provides watchScale) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = WearsicTypography,
+            content = content
+        )
+    }
 }
 
 /** Container tone derived from the current accent (used behind accent icons). */

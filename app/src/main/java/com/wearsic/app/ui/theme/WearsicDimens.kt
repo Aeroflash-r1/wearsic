@@ -3,12 +3,19 @@ package com.wearsic.app.ui.theme
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+
+/**
+ * Cached watch-face scale factor provided once at the theme root so list rows
+ * and buttons do not re-read [LocalConfiguration] on every recomposition.
+ */
+val LocalWatchScale = staticCompositionLocalOf { 1f }
 
 /**
  * The Wearsic dimension system — tuned for the Galaxy Watch 7's 44 mm round
@@ -42,7 +49,7 @@ object WearsicDimens {
 
     // ---- Touch targets ----
     /** Minimum comfortable touch box for a tappable control on Wear OS. */
-    val TouchTarget: Dp = 44.dp
+    val TouchTarget: Dp = 48.dp
 
     // ---- Corner radii ----
     /**
@@ -64,7 +71,7 @@ object WearsicDimens {
     val PlayerArtwork: Dp = 46.dp
 
     /** Minimum row height inside action sheets and menus. */
-    val SheetRowMinHeight: Dp = 44.dp
+    val SheetRowMinHeight: Dp = 48.dp
 
     // ---- Hub chrome (top rail + mini-player) ----
     /** Height of one section chip in the Hub's top rail. */
@@ -110,25 +117,31 @@ object WearsicDimens {
     const val MaxWatchScale = 1f
 }
 
+/** Compute the viewport scale once (used at theme root). */
+@Composable
+fun computeWatchScale(): Float {
+    val widthDp = LocalConfiguration.current.screenWidthDp
+    return remember(widthDp) {
+        (widthDp.toFloat() / WearsicDimens.BaselineViewportDp)
+            .coerceIn(WearsicDimens.MinWatchScale, WearsicDimens.MaxWatchScale)
+    }
+}
+
 /**
  * The ratio between this face's logical width and the [WearsicDimens.BaselineViewportDp]
  * reference (clamped to [WearsicDimens.MinWatchScale]..[WearsicDimens.MaxWatchScale]).
- * 1f on a 44mm-class face; <1f on physically smaller/wickedly dense faces.
+ * Reads [LocalWatchScale] without re-subscribing to configuration on every row.
  */
 @Composable
-fun rememberWatchScale(): Float {
-    val widthDp = LocalConfiguration.current.screenWidthDp.toFloat()
-    return (widthDp / WearsicDimens.BaselineViewportDp)
-        .coerceIn(WearsicDimens.MinWatchScale, WearsicDimens.MaxWatchScale)
-}
+fun rememberWatchScale(): Float = LocalWatchScale.current
 
 /** [base] scaled by [rememberWatchScale] — call inside a @Composable. */
 @Composable
-fun watchScaled(base: Dp): Dp = base * rememberWatchScale()
+fun watchScaled(base: Dp): Dp = base * LocalWatchScale.current
 
 /** Compose the scale once and reuse it for several values. */
 @Composable
-fun rememberWatchScaledDp(base: Dp): Dp = base * rememberWatchScale()
+fun rememberWatchScaledDp(base: Dp): Dp = base * LocalWatchScale.current
 
 /**
  * Canonical content padding for scrolling screens: the Wearsic design

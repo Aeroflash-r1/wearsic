@@ -50,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -79,6 +80,8 @@ import com.wearsic.app.util.Validation
 import kotlinx.coroutines.delay
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.wearsic.app.ui.theme.WearsicBodyFont
+import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.wearsicAccentContainer
@@ -97,7 +100,6 @@ import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
-import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 
 import com.wearsic.app.ui.util.wearsicClickable
@@ -276,10 +278,12 @@ fun SettingsScreen(
             // ── Connection ───────────────────────────────────────────
             item {
                 Text(
-                    text = "Connection",
+                    text = "CONNECTION",
                     color = LocalWearsicAccent.current,
+                    fontFamily = WearsicDisplayFont,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
@@ -356,6 +360,7 @@ fun SettingsScreen(
                                         singleLine = true,
                                         textStyle = TextStyle(
                                             color = WearsicTextPrimary,
+                                            fontFamily = WearsicBodyFont,
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Normal
                                         ),
@@ -452,6 +457,7 @@ fun SettingsScreen(
                                 Text(
                                     text = "Test Connection",
                                     color = WearsicTextPrimaryDark,
+                                    fontFamily = WearsicDisplayFont,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -681,10 +687,12 @@ fun SettingsScreen(
             // ── Appearance ───────────────────────────────────────────────
             item {
                 Text(
-                    text = "Appearance",
+                    text = "APPEARANCE",
                     color = LocalWearsicAccent.current,
+                    fontFamily = WearsicDisplayFont,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
@@ -711,24 +719,23 @@ fun SettingsScreen(
             // accent into this same slot.
             item {
                 Text(
-                    text = "App Colour",
+                    text = "APP COLOUR",
                     color = LocalWearsicAccent.current,
+                    fontFamily = WearsicDisplayFont,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
             item {
-                // Glass card: the swatch grid used to sit bare on the plain
-                // background, which read as UI clutter rather than a control.
-                // The app's standard translucent container (same fill/border
-                // as the pill rows) frames the palette without a chrome feel.
+                val paletteShape = RoundedCornerShape(WearsicDimens.CardRadius)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-                        .background(WearsicGlassFill)
-                        .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
+                        .clip(paletteShape)
+                        .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+                        .border(1.dp, WearsicSurfaceBorderSubtle, paletteShape)
                         .padding(horizontal = 8.dp, vertical = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -743,7 +750,8 @@ fun SettingsScreen(
                                     color = color,
                                     selected = color.toArgb() == userAccentArgb,
                                     onClick = { onUserAccentSelected(color.toArgb()) },
-                                    testTag = "settings_color_${name.lowercase()}"
+                                    testTag = "settings_color_${name.lowercase()}",
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
                         }
@@ -753,6 +761,7 @@ fun SettingsScreen(
                         Text(
                             text = "Dynamic accent overrides this while a song with artwork plays.",
                             color = WearsicTextMuted,
+                            fontFamily = WearsicBodyFont,
                             fontSize = 10.sp,
                             lineHeight = 13.sp,
                             textAlign = TextAlign.Center,
@@ -854,10 +863,12 @@ fun SettingsScreen(
             // ── Server Profiles ───────────────────────────────────────────
             item {
                 Text(
-                    text = "Server Profiles",
+                    text = "SERVER PROFILES",
                     color = LocalWearsicAccent.current,
+                    fontFamily = WearsicDisplayFont,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
@@ -886,10 +897,12 @@ fun SettingsScreen(
             // ── Offline Audio ────────────────────────────────────────────
             item {
                 Text(
-                    text = "Offline Audio",
+                    text = "OFFLINE AUDIO",
                     color = LocalWearsicAccent.current,
+                    fontFamily = WearsicDisplayFont,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
@@ -1356,12 +1369,14 @@ private fun SettingsPillItem(
     showChevron: Boolean = false,
     testTag: String = "settings_pill"
 ) {
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-            .background(WearsicSurfaceRaised)
-            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
+            .heightIn(min = WearsicDimens.TouchTarget)
+            .clip(cardShape)
+            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+            .border(1.dp, WearsicSurfaceBorderSubtle, cardShape)
             .wearsicClickable(onClick = onClick)
             .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 10.dp)
             .testTag(testTag)
@@ -1389,6 +1404,7 @@ private fun SettingsPillItem(
                 Text(
                     text = title,
                     color = WearsicTextPrimary,
+                    fontFamily = WearsicDisplayFont,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -1397,6 +1413,7 @@ private fun SettingsPillItem(
                 Text(
                     text = subtitle,
                     color = wearsicSecondaryText(),
+                    fontFamily = WearsicBodyFont,
                     fontSize = 10.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1496,11 +1513,14 @@ private fun AppColorSwatch(
     color: Color,
     selected: Boolean,
     onClick: () -> Unit,
-    testTag: String
+    testTag: String,
+    modifier: Modifier = Modifier
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .wearsicClickable(onClick = onClick)
             .padding(vertical = 4.dp)
             .testTag(testTag)
     ) {
@@ -1513,8 +1533,7 @@ private fun AppColorSwatch(
                     width = if (selected) 2.dp else 1.dp,
                     color = if (selected) Color.White else WearsicGlassBorder,
                     shape = CircleShape
-                )
-                .wearsicClickable(onClick = onClick),
+                ),
             contentAlignment = Alignment.Center
         ) {
             if (selected) {
@@ -1530,6 +1549,7 @@ private fun AppColorSwatch(
         Text(
             text = name,
             color = if (selected) LocalWearsicAccent.current else WearsicTextMuted,
+            fontFamily = WearsicBodyFont,
             fontSize = 8.sp,
             maxLines = 1
         )

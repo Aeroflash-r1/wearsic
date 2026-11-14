@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,6 +50,7 @@ import com.wearsic.app.ui.components.WearsicLibraryTrackRow
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSearchShimmerRow
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.wearsicListContentPadding
@@ -82,6 +84,10 @@ fun PlaylistDetailScreen(
 ) {
     val listState = rememberScalingLazyListState()
     var actionTrack by remember { mutableStateOf<Track?>(null) }
+    val distinctTracks = remember(detailState.tracks) { detailState.tracks.distinctBy { it.id } }
+    val notDownloaded = remember(distinctTracks, downloadedTrackIds) {
+        distinctTracks.count { it.id !in downloadedTrackIds }
+    }
 
     LaunchedEffect(playlistId) {
         onLoadTracks(playlistId)
@@ -131,11 +137,10 @@ fun PlaylistDetailScreen(
                 }
             }
 
-            if (detailState.tracks.isNotEmpty() && !detailState.isLoading) {
+            if (distinctTracks.isNotEmpty() && !detailState.isLoading) {
                 item {
                     // "Download all" — one tap to pull the whole album/playlist
                     // offline. Idempotent: tracks already saved are skipped.
-                    val notDownloaded = detailState.tracks.count { it.id !in downloadedTrackIds }
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -144,7 +149,7 @@ fun PlaylistDetailScreen(
                             .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.45f), CircleShape)
                             .wearsicClickable {
                                 if (notDownloaded > 0) {
-                                    onDownloadAllTracks(detailState.tracks)
+                                    onDownloadAllTracks(distinctTracks)
                                 }
                             }
                             .heightIn(min = WearsicDimens.TouchTarget)
@@ -167,7 +172,7 @@ fun PlaylistDetailScreen(
                             Text(
                                 text = when {
                                     notDownloaded == 0 -> "All songs saved offline"
-                                    notDownloaded == detailState.tracks.size -> "Download all (${notDownloaded})"
+                                    notDownloaded == distinctTracks.size -> "Download all (${notDownloaded})"
                                     else -> "Download remaining (${notDownloaded})"
                                 },
                                 color = if (notDownloaded > 0) {
@@ -175,8 +180,12 @@ fun PlaylistDetailScreen(
                                 } else {
                                     WearsicTextMuted
                                 },
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                style = TextStyle(
+                                    fontFamily = WearsicBodyFont,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontFeatureSettings = "tnum"
+                                ),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -185,10 +194,10 @@ fun PlaylistDetailScreen(
                 }
             }
 
-            itemsIndexed(detailState.tracks.distinctBy { it.id }, key = { _, track -> track.id }) { index, track ->
+            itemsIndexed(distinctTracks, key = { _, track -> track.id }) { index, track ->
                 WearsicLibraryTrackRow(
                     track = track,
-                    onPlay = { onPlayTrack(detailState.tracks, index) },
+                    onPlay = { onPlayTrack(distinctTracks, index) },
                     onLongPress = { actionTrack = track },
                     onMore = { actionTrack = track },
                     isDownloaded = track.id in downloadedTrackIds,
@@ -206,7 +215,7 @@ fun PlaylistDetailScreen(
                 track = t,
                 playlists = playlists,
                 onDismiss = { actionTrack = null },
-                onPlay = { onPlayTrack(detailState.tracks, detailState.tracks.indexOfFirst { it.id == t.id }.coerceAtLeast(0)) },
+                onPlay = { onPlayTrack(distinctTracks, distinctTracks.indexOfFirst { it.id == t.id }.coerceAtLeast(0)) },
                 onQueue = { onQueue(t) },
                 onDownload = { onDownloadTrack(t) },
                 onAddToPlaylist = { pid -> onAddToPlaylist(pid, t) },

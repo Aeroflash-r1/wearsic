@@ -47,6 +47,7 @@ import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.util.wearsicClickable
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
@@ -71,11 +72,14 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import com.wearsic.app.model.Album
+import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicTextMuted
@@ -97,6 +101,7 @@ fun AlbumsScreen(
 ) {
     val listState = rememberScalingLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
+    val distinctAlbums = remember(albumsState.albums) { albumsState.albums.distinctBy { it.id } }
     // Initialised ONCE from the ViewModel query — keying this on
     // albumsState.query made the field reset whenever a search landed,
     // silently dropping characters typed while the server was answering.
@@ -195,7 +200,11 @@ fun AlbumsScreen(
                                     debouncedQuery = it
                                 },
                                 singleLine = true,
-                                textStyle = TextStyle(color = WearsicTextPrimary, fontSize = 12.sp),
+                                textStyle = TextStyle(
+                                    color = WearsicTextPrimary,
+                                    fontFamily = WearsicBodyFont,
+                                    fontSize = 12.sp
+                                ),
                                 cursorBrush = SolidColor(LocalWearsicAccent.current),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                                 keyboardActions = KeyboardActions(
@@ -288,7 +297,7 @@ fun AlbumsScreen(
                 }
             }
 
-            items(albumsState.albums.distinctBy { it.id }, key = { it.id }) { album ->
+            items(distinctAlbums, key = { it.id }) { album ->
                 AlbumCard(album = album, onClick = { onOpenAlbum(album) })
             }
 
@@ -303,31 +312,52 @@ private fun AlbumCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val accent = LocalWearsicAccent.current
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
     Column(
         modifier = modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-            .background(WearsicSurfaceRaised)
-            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
+            .clip(cardShape)
+            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+            .border(1.dp, WearsicSurfaceBorderSubtle, cardShape)
             .wearsicClickable(onClick = onClick)
             .testTag("album_${album.id}")
             .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        WearsicSongRowArtwork(
-            artworkUrl = album.thumbnailUrl,
-            contentDescription = album.name,
-            size = watchScaled(88.dp)
-        )
+        Box(contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .size(watchScaled(102.dp))
+                    .background(
+                        Brush.radialGradient(
+                            listOf(accent.copy(alpha = 0.16f), Color.Transparent)
+                        )
+                    )
+            )
+            WearsicSongRowArtwork(
+                artworkUrl = album.thumbnailUrl,
+                contentDescription = album.name,
+                size = watchScaled(88.dp)
+            )
+        }
         Spacer(Modifier.height(8.dp))
         Text(
-            text = album.name, color = WearsicTextPrimary,
-            fontSize = 15.sp, fontWeight = FontWeight.Bold,
-            maxLines = 2, overflow = TextOverflow.Ellipsis,
+            text = album.name,
+            color = WearsicTextPrimary,
+            fontFamily = WearsicDisplayFont,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center
         )
         Text(
-            text = album.uploader, color = WearsicTextMuted,
-            fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+            text = album.uploader,
+            color = WearsicTextMuted,
+            fontFamily = WearsicBodyFont,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
         Spacer(Modifier.height(4.dp))
     }

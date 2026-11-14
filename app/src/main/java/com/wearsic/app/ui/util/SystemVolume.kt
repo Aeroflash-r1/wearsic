@@ -93,6 +93,47 @@ fun rotaryVolumeStep(verticalScrollPixels: Float): Int = when {
 }
 
 /**
+ * Smoothly translates touch-bezel / physical-crown rotary scroll pixels into
+ * discrete media-volume steps.
+ *
+ * Touch bezels on round Wear OS watches stream sub-detent deltas while a
+ * finger glides continuously around the perimeter, whereas mechanical crowns
+ * and UI tests emit single detent impulses. Accumulating against
+ * [stepThresholdPx] prevents overshooting during smooth bezel drags while
+ * immediately discarding opposite-sign remainder on direction reversal.
+ */
+class RotaryVolumeAccumulator(
+    private val stepThresholdPx: Float = DEFAULT_STEP_THRESHOLD_PX,
+    private val maxStepsPerEvent: Int = 2
+) {
+    private var accumulatedPx = 0f
+
+    fun onRotaryDelta(
+        verticalScrollPixels: Float,
+        inverted: Boolean = false
+    ): Int {
+        if (verticalScrollPixels == 0f) return 0
+        val directed = if (inverted) -verticalScrollPixels else verticalScrollPixels
+        if (accumulatedPx != 0f && (directed > 0f) != (accumulatedPx > 0f)) {
+            accumulatedPx = 0f
+        }
+        accumulatedPx += directed
+        val rawSteps = (accumulatedPx / stepThresholdPx).toInt()
+        if (rawSteps == 0) return 0
+        accumulatedPx -= rawSteps * stepThresholdPx
+        return rawSteps.coerceIn(-maxStepsPerEvent, maxStepsPerEvent)
+    }
+
+    fun reset() {
+        accumulatedPx = 0f
+    }
+
+    companion object {
+        const val DEFAULT_STEP_THRESHOLD_PX = 16f
+    }
+}
+
+/**
  * Remembers [SystemVolumeState] and keeps it live for as long as the calling
  * composable is in composition. Observing `Settings.System` (with
  * descendants) catches every path that can change media volume on a watch:

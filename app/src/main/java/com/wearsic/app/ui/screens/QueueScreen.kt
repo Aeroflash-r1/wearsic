@@ -1,64 +1,65 @@
 package com.wearsic.app.ui.screens
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import com.wearsic.app.ui.theme.WearsicSurfaceRaised
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -70,7 +71,6 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
-import androidx.compose.ui.tooling.preview.Preview
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.wearsic.app.model.PlaybackUiState
@@ -79,27 +79,30 @@ import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
+import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDimens
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicSurface
-import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.WearsicSurfaceActive
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
+import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.watchScaled
-
-import com.wearsic.app.ui.util.WearsicMotion
+import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
+import kotlin.math.abs
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun QueueScreen(
@@ -156,13 +159,11 @@ fun QueueScreen(
     // against the centre of each actually laid-out row and the nearest one
     // wins, so one row of travel is one row at every scale.
     val density = LocalDensity.current
-    // Fallback pitch only; a measured one is taken on lift.
     val defaultRowStepPx = with(density) { 72.dp.toPx() }
     val rowSpacingPx = with(density) { 8.dp.toPx() }
+    val slotHysteresisPx = with(density) { 4.dp.toPx() }
 
-    // Stable keys shared by the list AND by the drop-target lookup. The list
-    // also holds the header and the transport row, so a laid-out item's own
-    // `index` is not a queue index — the key is the only safe join.
+    // Stable keys shared by the list AND by hit-testing / drop-target lookup.
     val rowKeys = remember(queue) {
         val occurrences = HashMap<String, Int>()
         queue.map { track ->
@@ -177,99 +178,125 @@ fun QueueScreen(
         }
     }
 
-    // LIVE views consumed by the root drag gesture below. The gesture lambda
-    // is created once; without these it captures a stale queue/key map, and
-    // keyed pointerInput(...) restarts on every playback emission — killing
-    // grabs mid-drag (the "sticks after a few rows" bug). Reads through these
-    // delegates always see the latest values, and the gesture key never
-    // changes during a drag.
+    // LIVE views consumed by the root drag gesture below.
     val liveQueue by rememberUpdatedState(queue)
+    val liveRowKeys by rememberUpdatedState(rowKeys)
     val liveIndexByKey by rememberUpdatedState(queueIndexByKey)
     val liveCurrentIndex by rememberUpdatedState(currentIndex)
 
+    // Measured bounds of each visible QueueTrackItem in gesture-root coordinates.
+    // ScalingLazyListItemInfo.offset is center-relative & anchor-adjusted, which
+    // mis-mapped touch coordinates to the previous row; measuring boundsInRoot()
+    // relative to the gesture root keeps touch hit-testing and drop targeting
+    // in the exact same coordinate frame.
+    val rowSlots = remember { HashMap<String, QueueRowSlot>() }
+    var gestureRootTopInRoot by remember { mutableFloatStateOf(0f) }
+
     var dragIndex by remember { mutableStateOf<Int?>(null) }
-    // Viewport-space centre of the lifted row at the moment it lifted.
+    var dragSessionId by remember { mutableIntStateOf(0) }
+    var dragLastCommitted by remember { mutableStateOf(false) }
     var dragStartCentrePx by remember { mutableFloatStateOf(0f) }
     var dragFingerDy by remember { mutableFloatStateOf(0f) }
     var dragScrollPx by remember { mutableFloatStateOf(0f) }
-    // Measured row pitch, for the parting gap of the rows that make way.
     var dragStepPx by remember { mutableFloatStateOf(0f) }
-    // How far into an edge band the row already was when it lifted. Auto-scroll
-    // needs to get CLEARLY deeper than this before it arms (NaN = not lifted).
-    var autoScrollStartDepthPx by remember { mutableFloatStateOf(Float.NaN) }
+    var dragCardHeightPx by remember { mutableFloatStateOf(0f) }
+    var dragCardWidthPx by remember { mutableFloatStateOf(0f) }
     var autoScrollPxPerFrame by remember { mutableFloatStateOf(0f) }
+    var dragTarget by remember { mutableIntStateOf(-1) }
 
-    // Visual offset of the lifted row (see comment above).
-    val dragOffsetPx = dragFingerDy + dragScrollPx
+    // Drop-settle animation state: smoothly glides the dropped card from the
+    // finger release position into its destination slot without snapping.
+    var settlingKey by remember { mutableStateOf<String?>(null) }
+    var settlingStartOffsetY by remember { mutableFloatStateOf(0f) }
+    var settlingNonce by remember { mutableIntStateOf(0) }
+
     val rowStepPx = if (dragStepPx > 0f) dragStepPx else defaultRowStepPx
 
-    // The queue row whose centre is nearest `centrePx`. Reading `layoutInfo`
-    // here (rather than a value computed during composition) keeps the answer
-    // live: the pointer-input coroutine holds lambdas from the composition
-    // that started the gesture.
+    fun findHitQueueItem(touchY: Float): Pair<Int, QueueRowSlot>? {
+        val visibleKeys = listState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? String }
+        // First pass: exact visual card bounds hit.
+        for (key in visibleKeys) {
+            val idx = liveIndexByKey[key] ?: continue
+            if (idx == liveCurrentIndex) continue
+            val slot = rowSlots[key] ?: continue
+            if (touchY in slot.topY..slot.bottomY) {
+                return idx to slot
+            }
+        }
+        // Second pass: if the finger landed right in the 8dp gap between two cards,
+        // pick the closest card within half a gap.
+        val gapTolerance = rowSpacingPx * 0.55f
+        var best: Pair<Int, QueueRowSlot>? = null
+        var bestDist = gapTolerance
+        for (key in visibleKeys) {
+            val idx = liveIndexByKey[key] ?: continue
+            if (idx == liveCurrentIndex) continue
+            val slot = rowSlots[key] ?: continue
+            val d = when {
+                touchY < slot.topY -> slot.topY - touchY
+                touchY > slot.bottomY -> touchY - slot.bottomY
+                else -> 0f
+            }
+            if (d <= bestDist) {
+                bestDist = d
+                best = idx to slot
+            }
+        }
+        return best
+    }
+
     fun dropTargetFor(from: Int, centrePx: Float): Int {
         val last = liveQueue.lastIndex
-        if (last < 1) return from
+        if (last < 0) return from
+        val cur = liveCurrentIndex
+        val visibleKeys = listState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? String }
         var best = from
         var bestDistance = Float.MAX_VALUE
-        for (item in listState.layoutInfo.visibleItemsInfo) {
-            val key = item.key as? String ?: continue
+        var currentTargetDistance = Float.MAX_VALUE
+        for (key in visibleKeys) {
             val queueIndex = liveIndexByKey[key] ?: continue
-            val distance = kotlin.math.abs(item.offset + item.size / 2f - centrePx)
+            if (queueIndex == cur) continue
+            // Keep upcoming tracks on the upcoming side of Now Playing (and vice versa).
+            if (cur >= 0) {
+                if (from > cur && queueIndex < cur) continue
+                if (from < cur && queueIndex > cur) continue
+            }
+            val slot = rowSlots[key] ?: continue
+            val distance = abs(slot.centerY - centrePx)
+            if (queueIndex == dragTarget) {
+                currentTargetDistance = distance
+            }
             if (distance < bestDistance) {
                 bestDistance = distance
                 best = queueIndex
             }
         }
-        // "Stay put" must stay a no-op: clamping a result of 0 up to the first
-        // droppable slot would otherwise turn an untouched drag into a move.
-        if (best == from) return from
-        // Index 0 is the already-played tail / the Now Playing card, which has
-        // no row to open a gap for — never drop into it.
-        return best.coerceIn(1, last)
+        if (dragTarget in liveQueue.indices &&
+            dragTarget != cur &&
+            best != dragTarget &&
+            currentTargetDistance < Float.MAX_VALUE &&
+            bestDistance + slotHysteresisPx >= currentTargetDistance
+        ) {
+            best = dragTarget
+        }
+        return best
     }
-
-    // The slot the lifted row will land in. Held as state and recomputed
-    // imperatively (lift, movement, auto-scroll) rather than derived during
-    // composition: a scroll frame that does not change the slot must not
-    // recompose the whole queue.
-    var dragTarget by remember { mutableIntStateOf(-1) }
 
     fun recomputeDragTarget() {
         val from = dragIndex ?: return
-        // Centre = lift centre + finger travel. The list's scroll moves the row
-        // up by exactly the compensation its translation adds back, so the two
-        // cancel and the centre follows the finger.
         val to = dropTargetFor(from, dragStartCentrePx + dragFingerDy)
         if (to != dragTarget) dragTarget = to
     }
 
-    fun resetDrag() {
+    fun resetDrag(committed: Boolean) {
+        dragLastCommitted = committed
         dragIndex = null
         dragTarget = -1
         dragFingerDy = 0f
         dragScrollPx = 0f
-        autoScrollStartDepthPx = Float.NaN
         autoScrollPxPerFrame = 0f
     }
 
-    /**
-     * How far the finger's centre has pushed past the top or bottom band line
-     * (0 when it is nowhere near an edge). The band is a fraction of the
-     * viewport so it needs no dp guess and survives short viewports.
-     */
-    fun edgeDepthPx(): Float {
-        val vp = listState.layoutInfo.viewportSize.height.toFloat()
-        if (vp <= 0f) return 0f
-        val band = vp * AUTO_SCROLL_BAND_FRACTION
-        val centre = dragStartCentrePx + dragFingerDy
-        return maxOf(band - centre, centre - (vp - band), 0f)
-    }
-
-    // Auto-scroll speed, driven by how deep the finger is inside an edge
-    // band. Immediate (no dwell) and direction-agnostic: pushing into the
-    // top band scrolls up, pushing into the bottom band scrolls down, and
-    // leaving the band stops. A speed of 0 keeps the loop idle.
     fun updateAutoScroll() {
         val vp = listState.layoutInfo.viewportSize.height.toFloat()
         if (vp <= 0f) {
@@ -295,9 +322,6 @@ fun QueueScreen(
             autoScrollPxPerFrame = 0f
             return
         }
-        // Ramp from the entry threshold to the band's far edge, then hold at a
-        // brisk-but-controllable cap (4 px/frame ≈ 1.7 rows/s at watch
-        // density) instead of the old 8 px/frame runaway.
         val span = (band - entry).coerceAtLeast(1f)
         val t = ((depth - entry) / span).coerceIn(0f, 1f)
         autoScrollPxPerFrame = direction * (AUTO_SCROLL_MIN_SPEED + (AUTO_SCROLL_MAX_SPEED - AUTO_SCROLL_MIN_SPEED) * t)
@@ -305,39 +329,53 @@ fun QueueScreen(
 
     fun commitDrag() {
         val from = dragIndex ?: return
-        // Compute the destination from LIVE state: the pointer-input coroutine
-        // keeps the lambdas from the composition that started the gesture, so
-        // reading a value derived during composition here would use a stale
-        // index. These state reads and the layout query are always current.
         val to = dropTargetFor(from, dragStartCentrePx + dragFingerDy)
-        // Drop the drag visuals BEFORE mutating the queue: the rows are keyed
-        // by track, so for one frame the lifted index would otherwise point at
-        // a different song than the one under the finger.
-        resetDrag()
-        if (to != from && from in liveQueue.indices && to in 1..liveQueue.lastIndex) {
+        val movedKey = liveRowKeys.getOrNull(from)
+        val destKey = liveRowKeys.getOrNull(to)
+        val destCentreY = destKey?.let { rowSlots[it]?.centerY } ?: dragStartCentrePx
+        val releaseCentreY = dragStartCentrePx + dragFingerDy
+        val residualOffsetY = releaseCentreY - destCentreY
+        val didMove = to != from &&
+            from in liveQueue.indices &&
+            to in liveQueue.indices &&
+            to != liveCurrentIndex
+
+        if (movedKey != null) {
+            settlingKey = movedKey
+            settlingStartOffsetY = residualOffsetY
+            settlingNonce++
+        }
+        resetDrag(committed = didMove)
+        if (didMove) {
             onMoveItem(from, to)
         }
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
+
+    fun cancelDrag() {
+        val from = dragIndex ?: return
+        val movedKey = liveRowKeys.getOrNull(from)
+        if (movedKey != null && dragFingerDy != 0f) {
+            settlingKey = movedKey
+            settlingStartOffsetY = dragFingerDy
+            settlingNonce++
+        }
+        resetDrag(committed = false)
     }
 
     // Whether a row needs to make room while a drag is over it.
     fun shiftFor(index: Int): Float {
         val from = dragIndex ?: return 0f
         val to = dragTarget
-        if (from == to) return 0f
+        if (to < 0 || from == to) return 0f
         return if (from < to) {
-            // moving down: the rows it passes slide up to fill the gap
             if (index in (from + 1)..to) -rowStepPx else 0f
         } else {
-            // moving up: the rows it passes slide down to fill the gap
             if (index in to until from) rowStepPx else 0f
         }
     }
 
-    // Auto-scroll loop: runs only while a row is lifted. One dispatch per
-    // FRAME, paced by withFrameNanos — the pacing suspension is MANDATORY:
-    // a bare `continue` on idle spins the coroutine non-stop at 100% CPU and
-    // wedges every gesture on the screen (the v1.9.41 freeze/crash).
+    // Auto-scroll loop: runs only while a row is lifted.
     LaunchedEffect(dragIndex) {
         if (dragIndex == null) return@LaunchedEffect
         while (isActive) {
@@ -347,12 +385,16 @@ fun QueueScreen(
             val consumed = listState.dispatchRawDelta(speed)
             if (consumed != 0f) {
                 dragScrollPx += consumed
-                // The list moved under a pinned row, so the slot under it may
-                // have changed.
                 recomputeDragTarget()
             }
         }
     }
+
+    val liftProgress by animateFloatAsState(
+        targetValue = if (dragIndex != null) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = 1800f),
+        label = "queueDragLift",
+    )
 
     ScreenScaffold(
         scrollState = listState,
@@ -360,22 +402,18 @@ fun QueueScreen(
             .fillMaxSize()
             .background(WearsicAppBackground)
     ) { padding ->
-        // Drag-to-reorder is handled HERE, at the screen root, not on the
-        // row: a lazy list recycles rows as it scrolls, and a gesture bound
-        // to a recycled row loses the pointer mid-drag (the "drops after
-        // ~3 songs" bug). Root-level capture survives any amount of
-        // auto-scroll.
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .onGloballyPositioned { coords ->
+                    gestureRootTopInRoot = coords.boundsInRoot().top
+                }
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                         val startPos = down.position
                         val slop = viewConfiguration.touchSlop * 1.5f
 
-                        // Hold phase: any decisive movement before the hold
-                        // elapses hands the gesture back (scroll / click).
                         val aborted = withTimeoutOrNull(400L) {
                             while (true) {
                                 val e = awaitPointerEvent(PointerEventPass.Initial)
@@ -391,32 +429,33 @@ fun QueueScreen(
                         }
                         if (aborted != null) return@awaitEachGesture
 
-                        // Hold achieved: find the queue row under the finger.
-                        val row = listState.layoutInfo.visibleItemsInfo.firstOrNull {
-                            startPos.y >= it.offset && startPos.y <= it.offset + it.size
-                        }
-                        val key = row?.key as? String
-                        val idx = key?.let { liveIndexByKey[it] }
-                        if (idx == null || idx == liveCurrentIndex) {
-                            // Header / toggles / now-playing card: not draggable.
-                            return@awaitEachGesture
-                        }
-
                         if (listState.isScrollInProgress) {
-                            // Momentum from a pre-hold swipe may still be
-                            // moving the list; grabbing mid-momentum fight the
-                            // animation and both lose. Release cleanly instead.
                             return@awaitEachGesture
                         }
+                        val hit = findHitQueueItem(startPos.y) ?: return@awaitEachGesture
+                        val (idx, slot) = hit
+                        val hitKey = liveRowKeys.getOrNull(idx) ?: return@awaitEachGesture
+                        val itemInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                            it.key == hitKey
+                        }
+                        val unscaledH = itemInfo?.unadjustedSize?.toFloat()
+                            ?.takeIf { it > 0f }
+                            ?: rowSlots.values.maxOfOrNull { it.heightPx }
+                            ?: slot.heightPx
+
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        dragStartCentrePx = row!!.offset + row.size / 2f
-                        dragStepPx = (row.size + rowSpacingPx).toFloat()
+                        settlingKey = null
+                        dragLastCommitted = false
+                        dragSessionId++
+                        dragStartCentrePx = slot.centerY
+                        dragCardHeightPx = slot.heightPx
+                        dragCardWidthPx = slot.widthPx
+                        dragStepPx = unscaledH + rowSpacingPx
                         dragIndex = idx
+                        dragTarget = idx
                         dragFingerDy = 0f
                         dragScrollPx = 0f
-                        autoScrollStartDepthPx = edgeDepthPx()
                         autoScrollPxPerFrame = 0f
-                        recomputeDragTarget()
                         updateAutoScroll()
                         down.consume()
 
@@ -425,7 +464,7 @@ fun QueueScreen(
                             val e = awaitPointerEvent(PointerEventPass.Initial)
                             val c = e.changes.firstOrNull { it.id == down.id }
                             if (c == null) {
-                                resetDrag()
+                                cancelDrag()
                                 break
                             }
                             if (!c.pressed) {
@@ -471,7 +510,7 @@ fun QueueScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(WearsicDimens.TouchTarget)
                             .clip(CircleShape)
                             .background(
                                 if (shuffleEnabled) LocalWearsicAccent.current.copy(alpha = 0.25f)
@@ -489,13 +528,13 @@ fun QueueScreen(
                             imageVector = Icons.Rounded.Shuffle,
                             contentDescription = if (shuffleEnabled) "Shuffle on" else "Shuffle off",
                             tint = if (shuffleEnabled) LocalWearsicAccent.current else WearsicTextMuted,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(WearsicDimens.TouchTarget)
                             .clip(CircleShape)
                             .background(WearsicGlassFill)
                             .border(1.dp, WearsicGlassBorder, CircleShape)
@@ -506,20 +545,20 @@ fun QueueScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         if (radioState is com.wearsic.app.ui.viewmodel.LibraryViewModel.RadioState.Loading) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp))
                         } else {
                             Icon(
                                 imageVector = Icons.Rounded.Radio,
                                 contentDescription = "Radio: queue similar songs",
                                 tint = WearsicTextMuted,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(WearsicDimens.TouchTarget)
                             .clip(CircleShape)
                             .background(
                                 if (repeatMode != 0) LocalWearsicAccent.current.copy(alpha = 0.25f)
@@ -541,7 +580,7 @@ fun QueueScreen(
                             },
                             contentDescription = when (repeatMode) { 1 -> "Repeat One"; 2 -> "Repeat All"; else -> "Repeat off" },
                             tint = if (repeatMode != 0) LocalWearsicAccent.current else WearsicTextMuted,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -569,24 +608,109 @@ fun QueueScreen(
                             isPlaying = playbackState.isPlaying
                         )
                     } else {
+                        val rowKey = rowKeys[index]
+                        DisposableEffect(rowKey) {
+                            onDispose { rowSlots.remove(rowKey) }
+                        }
+
                         val isDragged = dragIndex == index
-                        val shift = shiftFor(index)
-                        // Other rows part with a spring — no instant snapping.
-                        val animatedShift by animateFloatAsState(
-                            targetValue = if (isDragged) 0f else shift,
-                            animationSpec = WearsicMotion.Gentle,
-                            label = "queueShift",
-                        )
-                        QueueTrackItem(
-                            track = track,
-                            // While a drag is in progress the release must not
-                            // also fire the row click (play/remove).
-                            onClick = { if (dragIndex == null) onPlayItem(index) },
-                            onRemove = { if (dragIndex == null) onRemoveItem(index) },
-                            translationY = if (isDragged) 0f else animatedShift,
-                            lifted = isDragged,
-                            modifier = Modifier.zIndex(if (isDragged) 2f else 0f)
-                        )
+                        val isSettling = dragIndex == null && settlingKey == rowKey
+                        val shiftTarget = if (isDragged) 0f else shiftFor(index)
+
+                        val shiftAnim = remember { Animatable(0f) }
+                        LaunchedEffect(dragIndex != null, dragLastCommitted, dragSessionId, shiftTarget) {
+                            if (dragIndex != null) {
+                                shiftAnim.animateTo(
+                                    targetValue = shiftTarget,
+                                    animationSpec = QueueReorderSpring,
+                                )
+                            } else if (dragLastCommitted) {
+                                // Snap immediately so neighbors don't bounce backward after
+                                // ScalingLazyColumn places them in their reordered slots.
+                                shiftAnim.snapTo(0f)
+                            } else if (shiftAnim.value != 0f) {
+                                shiftAnim.animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = QueueReorderSpring,
+                                )
+                            }
+                        }
+
+                        val settleOffsetAnim = remember { Animatable(0f) }
+                        val settleScaleAnim = remember { Animatable(1f) }
+                        var appliedSettleNonce by remember { mutableIntStateOf(0) }
+                        LaunchedEffect(isSettling, settlingNonce) {
+                            if (isSettling && appliedSettleNonce != settlingNonce) {
+                                settleOffsetAnim.snapTo(settlingStartOffsetY)
+                                settleScaleAnim.snapTo(1.04f)
+                                appliedSettleNonce = settlingNonce
+                                val offsetJob = launch {
+                                    settleOffsetAnim.animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = QueueSettleSpring,
+                                    )
+                                }
+                                val scaleJob = launch {
+                                    settleScaleAnim.animateTo(
+                                        targetValue = 1f,
+                                        animationSpec = QueueSettleSpring,
+                                    )
+                                }
+                                offsetJob.join()
+                                scaleJob.join()
+                                if (settlingKey == rowKey) {
+                                    settlingKey = null
+                                }
+                            } else if (!isSettling && (settleOffsetAnim.value != 0f || settleScaleAnim.value != 1f)) {
+                                settleOffsetAnim.snapTo(0f)
+                                settleScaleAnim.snapTo(1f)
+                            }
+                        }
+
+                        val effectiveTranslationY = when {
+                            isDragged -> 0f
+                            dragIndex != null -> shiftAnim.value
+                            isSettling && appliedSettleNonce != settlingNonce -> settlingStartOffsetY
+                            isSettling -> settleOffsetAnim.value
+                            !dragLastCommitted && shiftAnim.isRunning -> shiftAnim.value
+                            else -> 0f
+                        }
+                        val effectiveScale = when {
+                            isSettling && appliedSettleNonce != settlingNonce -> 1.04f
+                            isSettling -> settleScaleAnim.value
+                            else -> 1f
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .zIndex(if (isSettling) 2f else 0f)
+                                .onGloballyPositioned { coords ->
+                                    if (!coords.isAttached) return@onGloballyPositioned
+                                    val b = coords.boundsInRoot()
+                                    if (b.height > 1f) {
+                                        rowSlots[rowKey] = QueueRowSlot(
+                                            topY = b.top - gestureRootTopInRoot,
+                                            bottomY = b.bottom - gestureRootTopInRoot,
+                                            heightPx = b.height,
+                                            widthPx = b.width,
+                                        )
+                                    } else {
+                                        rowSlots.remove(rowKey)
+                                    }
+                                }
+                        ) {
+                            QueueTrackItem(
+                                track = track,
+                                // While a drag is in progress the release must not
+                                // also fire the row click (play/remove).
+                                onClick = { if (dragIndex == null) onPlayItem(index) },
+                                onRemove = { if (dragIndex == null) onRemoveItem(index) },
+                                translationY = effectiveTranslationY,
+                                scale = effectiveScale,
+                                hiddenForDrag = isDragged,
+                            )
+                        }
                     }
                 }
 
@@ -642,60 +766,135 @@ fun QueueScreen(
             }
 
             // Floating lifted-row preview: rendered OUTSIDE the lazy list so
-            // it survives recycling while the list auto-scrolls. Follows the
-            // finger exactly (lift centre + accumulated finger delta).
+            // it survives recycling while the list auto-scrolls, hides the
+            // underlying slot cleanly so adjacent cards never pass behind a
+            // dark duplicate, and follows the fingertip at 1:1.
             val draggedIndex = dragIndex
             if (draggedIndex != null) {
                 val liftedTrack = queue.getOrNull(draggedIndex)
                 if (liftedTrack != null) {
-                    val overlayH = with(LocalDensity.current) { watchScaled(64.dp).toPx() }
-                    val overlayYDp = with(LocalDensity.current) {
-                        (dragStartCentrePx + dragFingerDy - overlayH / 2f).toDp()
+                    val context = LocalContext.current
+                    val accent = LocalWearsicAccent.current
+                    val fallbackHeightPx = with(density) { watchScaled(64.dp).toPx() }
+                    val overlayHeightPx = if (dragCardHeightPx > 0f) dragCardHeightPx else fallbackHeightPx
+                    val overlayYDp = with(density) {
+                        (dragStartCentrePx + dragFingerDy - overlayHeightPx / 2f).toDp()
+                    }
+                    val overlayHeightDp = with(density) { overlayHeightPx.toDp() }
+                    val widthModifier = if (dragCardWidthPx > 0f) {
+                        Modifier
+                            .align(Alignment.TopCenter)
+                            .width(with(density) { dragCardWidthPx.toDp() })
+                    } else {
+                        Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = WearsicDimens.ScreenPaddingH)
+                    }
+                    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
+                    val liftScale = 1f + 0.04f * liftProgress
+                    val liftedArtRequest = remember(liftedTrack.artworkUrl) {
+                        ImageRequest.Builder(context)
+                            .data(liftedTrack.artworkUrl)
+                            .size(96)
+                            .crossfade(false)
+                            .build()
                     }
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
+                        modifier = widthModifier
                             .offset(y = overlayYDp)
-                            .padding(horizontal = WearsicDimens.ScreenPaddingH)
-                            .height(watchScaled(64.dp))
-                            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-                            .background(WearsicSurfaceRaised.copy(alpha = 0.96f))
-                            .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.6f), RoundedCornerShape(WearsicDimens.CardRadius))
-                            .zIndex(3f),
+                            .height(overlayHeightDp)
+                            .zIndex(3f)
+                            .graphicsLayer {
+                                scaleX = liftScale
+                                scaleY = liftScale
+                            }
+                            .clip(cardShape)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        WearsicSurfaceActive,
+                                        WearsicSurfaceRaised,
+                                    )
+                                )
+                            )
+                            .background(accent.copy(alpha = 0.12f * liftProgress))
+                            .border(
+                                width = 1.5.dp,
+                                color = accent.copy(alpha = 0.45f + 0.45f * liftProgress),
+                                shape = cardShape,
+                            )
+                            .padding(horizontal = 10.dp, vertical = 10.dp)
+                            .testTag("queue_drag_floating_card"),
                         contentAlignment = Alignment.CenterStart,
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            AsyncImage(
-                                model = ImageRequest.Builder(LocalContext.current)
-                                    .data(liftedTrack.artworkUrl)
-                                    .size(56)
-                                    .crossfade(true)
-                                    .build(),
-                                contentDescription = null,
-                                modifier = Modifier.size(watchScaled(44.dp)).clip(RoundedCornerShape(8.dp)),
-                                contentScale = ContentScale.Crop,
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(
-                                    text = liftedTrack.title,
-                                    color = WearsicTextPrimary,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = liftedTrack.artist,
-                                    color = WearsicTextMuted,
-                                    fontSize = 11.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                val artShape = RoundedCornerShape(WearsicDimens.ArtRadius)
+                                if (!liftedTrack.artworkUrl.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = liftedArtRequest,
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .size(watchScaled(WearsicDimens.RowThumbnail))
+                                            .clip(artShape),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(watchScaled(WearsicDimens.RowThumbnail))
+                                            .clip(artShape)
+                                            .background(accent.copy(alpha = 0.18f)),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.MusicNote,
+                                            contentDescription = null,
+                                            tint = accent,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = liftedTrack.title,
+                                        color = WearsicTextPrimary,
+                                        fontFamily = WearsicDisplayFont,
+                                        fontSize = 14.sp,
+                                        lineHeight = 18.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = liftedTrack.artist,
+                                        color = WearsicTextMuted,
+                                        fontFamily = WearsicBodyFont,
+                                        fontSize = 12.sp,
+                                        lineHeight = 15.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
+                            Icon(
+                                imageVector = Icons.Rounded.DragHandle,
+                                contentDescription = null,
+                                tint = accent.copy(alpha = 0.9f),
+                                modifier = Modifier
+                                    .padding(horizontal = 10.dp)
+                                    .size(20.dp),
+                            )
                         }
                     }
                 }
@@ -711,12 +910,13 @@ private fun QueueCurrentCard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-            .background(WearsicSurfaceRaised)
-            .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.5f), RoundedCornerShape(WearsicDimens.CardRadius))
+            .clip(cardShape)
+            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+            .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.5f), cardShape)
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag("queue_current_track")
     ) {
@@ -738,7 +938,8 @@ private fun QueueCurrentCard(
                     val artRequest = remember(track.artworkUrl) {
                         ImageRequest.Builder(context)
                             .data(track.artworkUrl)
-                            .size(112)
+                            .size(96)
+                            .crossfade(false)
                             .build()
                     }
                     AsyncImage(
@@ -767,6 +968,7 @@ private fun QueueCurrentCard(
                     Text(
                         text = track.title.ifBlank { "No Active Track" },
                         color = WearsicTextPrimary,
+                        fontFamily = WearsicDisplayFont,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,
@@ -775,6 +977,7 @@ private fun QueueCurrentCard(
                     Text(
                         text = if (isPlaying) "Now Playing" else "Paused",
                         color = if (isPlaying) LocalWearsicAccent.current else WearsicTextMuted,
+                        fontFamily = WearsicBodyFont,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1
@@ -792,13 +995,12 @@ private fun QueueTrackItem(
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
     translationY: Float = 0f,
-    lifted: Boolean = false
+    scale: Float = 1f,
+    hiddenForDrag: Boolean = false,
 ) {
-    // Two boxes on purpose: the OUTER one owns the drag pointer input and
-    // never moves, so pointer deltas stay in a stable coordinate space. The
-    // INNER box carries the visual translation/shadow of a lifted row. If
-    // both lived on one node the row would move with the finger and the
-    // reported deltas would collapse to nearly zero.
+    // Keep the outer wrapper fixed for hit-testing/slot measurement; animate
+    // translation/scale on the inner card and hide it cleanly while lifted so
+    // shifting neighbors never slide behind an opaque ghost card.
     Box(modifier = modifier.fillMaxWidth()) {
         WearsicSongRow(
             title = track.title,
@@ -809,15 +1011,12 @@ private fun QueueTrackItem(
                 .fillMaxWidth()
                 .graphicsLayer {
                     this.translationY = translationY
-                    if (lifted) {
-                        shadowElevation = 18f
-                        alpha = 0.98f
-                    }
+                    this.scaleX = scale
+                    this.scaleY = scale
+                    this.alpha = if (hiddenForDrag) 0f else 1f
                 },
             testTag = "queue_track_${track.id}",
             trailing = {
-                // Only the remove action stays inline — the row keeps its full
-                // width for the song name; reorder is drag-only.
                 WearsicSongRowActionButton(
                     icon = Icons.Rounded.Close,
                     contentDescription = "Remove from Queue",
@@ -829,6 +1028,18 @@ private fun QueueTrackItem(
         )
     }
 }
+
+private data class QueueRowSlot(
+    val topY: Float,
+    val bottomY: Float,
+    val heightPx: Float,
+    val widthPx: Float,
+) {
+    val centerY: Float get() = (topY + bottomY) * 0.5f
+}
+
+private val QueueReorderSpring = spring<Float>(dampingRatio = 0.84f, stiffness = 1200f)
+private val QueueSettleSpring = spring<Float>(dampingRatio = 0.80f, stiffness = 1500f)
 
 /**
  * Auto-scroll tuning, in one place because these three numbers decide whether

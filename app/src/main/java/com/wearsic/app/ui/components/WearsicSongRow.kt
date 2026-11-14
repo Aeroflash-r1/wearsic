@@ -28,12 +28,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -45,11 +47,14 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorder
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
+import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
@@ -87,13 +92,14 @@ fun WearsicSongRow(
     onLongClick: (() -> Unit)? = null,
     trailing: @Composable () -> Unit = {},
 ) {
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
     Box(
         modifier = modifier
             .fillMaxWidth()
             // Rows enter with the list, not every time lazy scrolling recycles them.
-            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-            .background(WearsicSurface)
-            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
+            .clip(cardShape)
+            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised.copy(alpha = 0.72f), WearsicSurface)))
+            .border(1.dp, WearsicSurfaceBorderSubtle, cardShape)
             .wearsicClickable(pressedScale = 0.975f, onLongClick = onLongClick, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 10.dp)
             .testTag(testTag)
@@ -113,6 +119,7 @@ fun WearsicSongRow(
                     Text(
                         text = title,
                         color = titleColor,
+                        fontFamily = WearsicDisplayFont,
                         fontSize = 14.sp,
                         lineHeight = 18.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -123,6 +130,7 @@ fun WearsicSongRow(
                     Text(
                         text = artist,
                         color = artistColor,
+                        fontFamily = WearsicBodyFont,
                         fontSize = 12.sp,
                         lineHeight = 15.sp,
                         maxLines = 1,
@@ -136,14 +144,9 @@ fun WearsicSongRow(
 }
 
 /**
- * 40dp ROUNDED-SQUARE artwork (or lavender music-note placeholder) with a
- * hairline ring. Rounded squares — not circles — are the album-art language
- * of every serious music app (Spotify, Apple Music, YTM); circles read as a
- * generic template and crop away the album cover's own composition.
- *
- * The default size scales with the watch face ([watchScaled]): on a smaller
- * 40mm-class face the thumb shrinks a touch so rows keep more room for the
- * title instead of pushing it against the curved edge.
+ * 40dp ROUNDED-SQUARE artwork (or accent music-note placeholder) with a
+ * hairline ring. Sizes the Coil decode request directly to the target container
+ * pixel size so thumbnails stay light in memory while album art stays crisp.
  */
 @Composable
 fun WearsicSongRowArtwork(
@@ -153,19 +156,15 @@ fun WearsicSongRowArtwork(
     size: Dp = watchScaled(40.dp),
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val requestPx = with(density) { size.roundToPx() }.coerceIn(72, 192)
     val shape = RoundedCornerShape(WearsicDimens.ArtRadius)
     val ring = Modifier.border(1.dp, WearsicSurfaceBorderSubtle, shape)
     if (!artworkUrl.isNullOrBlank()) {
-        // Built once per URL: a fresh ImageRequest on every row recomposition
-        // (rows redraw during a press and on list updates) makes Coil restart
-        // the load instead of reusing the already-decoded bitmap.
-        val request = remember(context, artworkUrl) {
-            // ~80px at watch density; 112 leaves no visible headroom for
-            // scaling-based blurs/shaders but still cuts the decoded bitmap
-            // roughly in half versus the old 160px request.
+        val request = remember(artworkUrl, requestPx) {
             ImageRequest.Builder(context)
                 .data(artworkUrl)
-                .size(112)
+                .size(requestPx)
                 .build()
         }
         AsyncImage(

@@ -17,8 +17,10 @@ import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.viewmodel.LyricsViewModel
 import java.util.Locale
 import kotlin.math.roundToInt
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.StartOffsetType
 import androidx.compose.animation.core.keyframes
@@ -55,6 +57,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Download
@@ -68,7 +71,6 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
-import androidx.compose.material.icons.rounded.VolumeOff
 import com.wearsic.app.ui.components.WearsicMarqueeText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -85,7 +87,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -99,12 +103,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -112,9 +118,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.wear.compose.foundation.hierarchicalFocusGroup
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.requestFocusOnHierarchyActive
-import androidx.wear.compose.foundation.rememberActiveFocusRequester
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
@@ -129,21 +135,26 @@ import coil.request.ImageRequest
 import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.theme.WearsicBlack
+import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.WearsicDisplayFont
+import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicSurfaceBorder
-import com.wearsic.app.ui.theme.WearsicPillGlassBrush
+import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTheme
+import com.wearsic.app.ui.theme.rememberWatchScale
 import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.ArtworkColors
 import com.wearsic.app.ui.util.LocalRotaryDirectionInverted
+import com.wearsic.app.ui.util.RotaryVolumeAccumulator
 import com.wearsic.app.ui.util.extractArtworkColors
+import com.wearsic.app.ui.util.rememberSystemVolumeState
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
-import com.wearsic.app.ui.util.rememberSystemVolumeState
 import com.wearsic.app.ui.util.wearsicRotaryScroll
-import com.wearsic.app.ui.util.wearsicRotaryVolume
+import com.wearsic.app.ui.util.wearsicRotaryVolumePixels
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -174,10 +185,11 @@ import kotlinx.coroutines.withContext
  *
  * Motion is deliberate and finite: a track change plays one short entrance
  * (art scales up, text rises, staggered), the play/pause glyph pops in on
- * every change, and nothing animates while you simply listen. The bezel is
- * the VOLUME control here: each notch steps the system media level under a
- * small transient HUD above the artwork; the Actions page and the lyrics
- * sheet reclaim the crown while they are visible.
+ * every change, and nothing animates while you simply listen. On Now Playing,
+ * scrolling the touch bezel or physical crown adjusts system media volume
+ * directly via a curved, Spotify-style bezel HUD that auto-hides after use;
+ * the Actions page and the lyrics sheet reclaim the crown while they are
+ * visible.
  */
 @Composable
 fun PlayerScreen(
@@ -222,27 +234,6 @@ fun PlayerScreen(
     val hasTrack = track.id.isNotBlank()
     val haptic = LocalHapticFeedback.current
 
-    // BEZEL = VOLUME on Now Playing: every crown notch steps the system
-    // media stream. Each step re-arms a tiny HUD (the nonce starts at 0, so
-    // merely OPENING the screen never flashes it) and remembers the last
-    // direction for the arrow.
-    val volume = rememberSystemVolumeState()
-    var volumeHudNonce by remember { mutableIntStateOf(0) }
-    var volumeStepUp by remember { mutableStateOf(true) }
-    var volumeHudVisible by remember { mutableStateOf(false) }
-    val onVolumeStep: (Int) -> Unit = { step ->
-        if (step != 0) {
-            volume.step(step)
-            volumeStepUp = step > 0
-            volumeHudNonce++
-        }
-    }
-    LaunchedEffect(volumeHudNonce) {
-        if (volumeHudNonce == 0) return@LaunchedEffect
-        volumeHudVisible = true
-        delay(VOLUME_HUD_HOLD_MS)
-        volumeHudVisible = false
-    }
     var artworkColors by remember(track.artworkUrl) { mutableStateOf(ArtworkColors.Default) }
     val scope = rememberCoroutineScope()
 
@@ -290,12 +281,14 @@ fun PlayerScreen(
             snapshotFlow { pagerState.currentPage }.collect { pageIndex = it }
         }
 
-        // Bezel routing on Now Playing: page 0 binds the crown to VOLUME
-        // through the wearsicRotaryVolume owner on the pager box below —
-        // each notch steps the system media level under the transient HUD.
-        // The Actions list owns the bezel when page 1 is visible; lyrics
-        // own it while open — exactly one owner is armed at any time, so
-        // rotary events always land on the visible surface.
+        // Touch-bezel / crown rotary volume control on Now Playing (page 0,
+        // lyrics closed). Page 1 owns the bezel for the Actions list, and
+        // LyricsFullscreen owns it while lyrics are open.
+        val systemVolume = rememberSystemVolumeState()
+        val rotaryInverted = LocalRotaryDirectionInverted.current
+        val volumeAccumulator = remember { RotaryVolumeAccumulator() }
+        var volumeHudVisible by remember { mutableStateOf(false) }
+        var volumeHudPulseToken by remember { mutableIntStateOf(0) }
 
         // Natural screen-open: a soft zoom + fade across ~220ms. Runs once
         // per entry, layer-only (no recomposition), so it reads as a smooth,
@@ -319,7 +312,30 @@ fun PlayerScreen(
         // covering the page dots while open.
         var lyricsMode by remember(track.id) { mutableStateOf(false) }
 
-        val lyricsScrollState = rememberScrollState()
+        val nowPlayingRotaryActive = pageIndex == 0 && !lyricsMode
+        LaunchedEffect(volumeHudVisible, volumeHudPulseToken, nowPlayingRotaryActive) {
+            if (!nowPlayingRotaryActive) {
+                if (volumeHudVisible) volumeHudVisible = false
+                volumeAccumulator.reset()
+                return@LaunchedEffect
+            }
+            if (!volumeHudVisible) return@LaunchedEffect
+            delay(1850L)
+            volumeHudVisible = false
+            volumeAccumulator.reset()
+        }
+
+        val volumeHudProgress by animateFloatAsState(
+            targetValue = if (volumeHudVisible && nowPlayingRotaryActive) 1f else 0f,
+            animationSpec = if (volumeHudVisible && nowPlayingRotaryActive) {
+                spring(dampingRatio = 0.82f, stiffness = 2200f)
+            } else {
+                tween(durationMillis = 240, easing = FastOutSlowInEasing)
+            },
+            label = "volumeHudVisibility"
+        )
+
+        val lyricsScrollState = key(track.id) { rememberScrollState() }
         val currentPos by rememberUpdatedState(playbackState.currentPositionMs)
         val currentPlaying by rememberUpdatedState(playbackState.isPlaying)
         var lyricsActiveIndex by remember(track.id) { mutableIntStateOf(-1) }
@@ -376,13 +392,6 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(contentPadding)
-                    // Crown = VOLUME on this page; disarmed the moment the
-                    // Actions page or the lyrics sheet becomes visible so
-                    // they reclaim the bezel untouched.
-                    .wearsicRotaryVolume(
-                        onVolumeStep = onVolumeStep,
-                        enabled = pagerState.currentPage == 0 && !lyricsMode
-                    )
             ) {
                 HorizontalPager(
                     state = pagerState,
@@ -405,10 +414,27 @@ fun PlayerScreen(
                             onSeekTo = onSeekTo,
                             haptic = haptic,
                             colors = artworkColors,
-                            active = pagerState.currentPage == 0,
+                            active = nowPlayingRotaryActive,
                             rotateArtwork = rotateArtwork,
                             onOpenAlbum = onOpenAlbum,
-                            onOpenLyrics = { if (hasTrack) lyricsMode = true }
+                            onOpenLyrics = { if (hasTrack) lyricsMode = true },
+                            onRotaryVolumePixels = { rawPixels ->
+                                if (rawPixels == 0f) return@NowPlayingPage false
+                                val delta = volumeAccumulator.onRotaryDelta(
+                                    verticalScrollPixels = rawPixels,
+                                    inverted = rotaryInverted
+                                )
+                                if (delta != 0) {
+                                    val prevLevel = systemVolume.level
+                                    systemVolume.step(delta)
+                                    if (systemVolume.level != prevLevel) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                }
+                                volumeHudVisible = true
+                                volumeHudPulseToken++
+                                true
+                            }
                         )
                         else -> ActionsPage(
                             hasTrack = hasTrack,
@@ -420,7 +446,7 @@ fun PlayerScreen(
                             onDownloadTrack = { onDownloadTrack(track) },
                             onNavigateToQueue = onNavigateToQueue,
                             onNavigateToVolume = onNavigateToVolume,
-                            active = pagerState.currentPage == 1,
+                            active = pageIndex == 1 && !lyricsMode,
                             artworkAccent = if (artworkColors.fromArtwork) artworkColors.accent else Color.Transparent,
                             onSaveAccent = onSaveArtworkAccent
                         )
@@ -435,12 +461,16 @@ fun PlayerScreen(
         // scaffold's inset so they follow the display's curved boundary. The
         // 48dp touch target spans inward from the edge while the dots
         // themselves align to the outer edge (End), so they sit right on the
-        // bezel instead of floating mid-screen. They vanish while the lyrics
-        // sheet is over the screen.
+        // bezel instead of floating mid-screen. They crossfade out while the
+        // Spotify-style curved volume arc occupies the right bezel, and vanish
+        // while the lyrics sheet is over the screen.
         if (!lyricsMode) Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .widthIn(min = WearsicDimens.TouchTarget)
+                .graphicsLayer {
+                    alpha = (1f - volumeHudProgress).coerceIn(0f, 1f)
+                }
                 .semantics {
                     contentDescription =
                         if (pageIndex == 0) "Show player actions" else "Show now playing"
@@ -472,6 +502,20 @@ fun PlayerScreen(
             }
         }
 
+        // Spotify-style bezel volume HUD: full-bleed curved outer arc +
+        // animated glass status pill, kept non-blocking so taps still work.
+        if (nowPlayingRotaryActive && (volumeHudVisible || volumeHudProgress > 0.01f)) {
+            NowPlayingVolumeOverlay(
+                fraction = systemVolume.fraction,
+                percent = systemVolume.percent,
+                isMuted = systemVolume.isMuted,
+                accent = artworkColors.accent,
+                hudProgress = volumeHudProgress,
+                pulseToken = volumeHudPulseToken,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
         // LYRICS — THE LAST CHILD: drawn OVER the pager AND the page dots,
         // edge-to-edge with no content padding, so it reads as a true
         // fullscreen page, not a boxed card in the middle.
@@ -487,21 +531,6 @@ fun PlayerScreen(
                 onRetry = onRetryLyrics,
             )
         }
-
-        // VOLUME HUD — the LAST child (drawn over everything): a tiny glass
-        // pill under the clock that exists only while the bezel is stepping
-        // the level, then glides away. It is spring-smoothed so a fast spin
-        // reads as one fluid dial motion, not a series of jumps.
-        WearsicVolumeHud(
-            fraction = volume.fraction,
-            muted = volume.isMuted,
-            stepUp = volumeStepUp,
-            accent = artworkColors.accent,
-            visible = volumeHudVisible,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 30.dp)
-        )
     }
 }
 
@@ -533,91 +562,6 @@ internal fun lyricsAutoCenterTarget(
     anchorY: Float,
 ): Int = (currentValue + rowCenterY - anchorY).roundToInt().coerceIn(0, maxValue)
 
-/** How long the volume HUD stays visible after the last bezel step. */
-private const val VOLUME_HUD_HOLD_MS = 1300L
-
-/**
- * The transient Now Playing volume pill: icon, hairline level track, percent.
- * Drawn under the clock, over everything, ONLY while the bezel is stepping
- * the level (opacity + scale in, glide out). The same WearsicPillGlassBrush
- * glass as the mini-player keeps the language identical; 30dp below the top
- * edge keeps its corners well inside the round-face chord at any width.
- */
-@Composable
-private fun WearsicVolumeHud(
-    fraction: Float,
-    muted: Boolean,
-    stepUp: Boolean,
-    accent: Color,
-    visible: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val shown by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(if (visible) 160 else 260, easing = FastOutSlowInEasing),
-        label = "volumeHudAlpha"
-    )
-    val level by animateFloatAsState(
-        targetValue = fraction,
-        animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f),
-        label = "volumeHudLevel"
-    )
-    if (shown > 0.002f) {
-        val percent = (level * 100f).roundToInt().coerceIn(0, 100)
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-            modifier = modifier
-                .graphicsLayer {
-                    alpha = shown
-                    val s = 0.92f + 0.08f * shown
-                    scaleX = s
-                    scaleY = s
-                }
-                .clip(RoundedCornerShape(19.dp))
-                .background(WearsicPillGlassBrush)
-                .border(0.5.dp, WearsicGlassBorder, RoundedCornerShape(19.dp))
-                .semantics {
-                    contentDescription =
-                        if (muted) "Volume muted" else "Volume $percent percent"
-                }
-                .testTag("nowplaying_volume_hud")
-        ) {
-            Icon(
-                imageVector = when {
-                    muted -> Icons.Rounded.VolumeOff
-                    stepUp -> Icons.AutoMirrored.Rounded.VolumeUp
-                    else -> Icons.AutoMirrored.Rounded.VolumeDown
-                },
-                contentDescription = null,
-                tint = if (muted) WearsicTextMuted else accent,
-                modifier = Modifier.size(15.dp)
-            )
-            Box(
-                modifier = Modifier
-                    .width(52.dp)
-                    .height(3.dp)
-                    .clip(RoundedCornerShape(1.5.dp))
-                    .background(Color.White.copy(alpha = 0.16f))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(if (muted) 0f else level)
-                        .clip(RoundedCornerShape(1.5.dp))
-                        .background(if (muted) WearsicTextMuted else accent)
-                )
-            }
-            Text(
-                text = if (muted) "Off" else "$percent",
-                color = Color.White,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.ExtraBold
-            )
-        }
-    }
-}
-
 @Composable
 private fun NowPlayingPage(
     track: Track,
@@ -639,8 +583,22 @@ private fun NowPlayingPage(
     rotateArtwork: Boolean = true,
     onOpenAlbum: ((Track) -> Unit)? = null,
     onOpenLyrics: () -> Unit = {},
+    onRotaryVolumePixels: (Float) -> Boolean = { false },
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize().testTag("nowplaying_page_root")) {
+    val latestRotaryHandler by rememberUpdatedState(onRotaryVolumePixels)
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            // Bezel/crown = VOLUME on this page. The modifier owns the rotary
+            // focus while `active`; the Actions list and the lyrics sheet
+            // reclaim the bezel the moment they take over.
+            .wearsicRotaryVolumePixels(
+                onVolumePixels = { px -> latestRotaryHandler(px) },
+                enabled = active
+            )
+            .testTag("nowplaying_page_root")
+    ) {
         val compact = maxHeight < 236.dp
         // Slightly smaller discs: the lyrics pill now lives in the mid-band
         // below the subtitle, and the whole fixed stack must leave the two
@@ -757,9 +715,13 @@ private fun NowPlayingPage(
             ) {
                 Text(
                     text = subtitle,
-                    color = Color.White.copy(alpha = 0.70f),
-                    fontSize = 11.sp,
-                    lineHeight = 14.sp,
+                    color = Color.White.copy(alpha = 0.72f),
+                    style = TextStyle(
+                        fontFamily = WearsicBodyFont,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
+                        fontFeatureSettings = "tnum"
+                    ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
@@ -770,7 +732,7 @@ private fun NowPlayingPage(
                 if (hasTrack) {
                     Box(
                         modifier = Modifier
-                            .size(32.dp)
+                            .size(38.dp)
                             .padding(start = 2.dp)
                             .wearsicClickable(onClick = onOpenLyrics)
                             .testTag("lyrics_open_button"),
@@ -807,12 +769,207 @@ private fun NowPlayingPage(
 }
 
 /**
+ * Spotify-style Wear OS volume HUD overlaid when rotating the bezel or crown on
+ * Now Playing. Draws a curved progress arc inset safely inside the right bezel
+ * (zero edge cutoff on compact or 44mm faces) paired with an animated Midnight
+ * OLED glass pill that clears TimeText at the top chord and auto-hides.
+ */
+@Composable
+private fun NowPlayingVolumeOverlay(
+    fraction: Float,
+    percent: Int,
+    isMuted: Boolean,
+    accent: Color,
+    hudProgress: Float,
+    pulseToken: Int,
+    modifier: Modifier = Modifier
+) {
+    val scale = rememberWatchScale()
+    val animatedFraction by animateFloatAsState(
+        targetValue = fraction.coerceIn(0f, 1f),
+        animationSpec = spring(dampingRatio = 0.86f, stiffness = 1800f),
+        label = "nowPlayingVolumeFraction"
+    )
+    val pillBump = remember { Animatable(1f) }
+    LaunchedEffect(pulseToken) {
+        if (pulseToken > 0) {
+            pillBump.snapTo(1.07f)
+            pillBump.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(dampingRatio = 0.65f, stiffness = 1800f)
+            )
+        }
+    }
+
+    val arcTint = if (isMuted) WearsicTextMuted else accent
+    val speakerIcon = when {
+        isMuted -> Icons.AutoMirrored.Rounded.VolumeOff
+        fraction < 0.5f -> Icons.AutoMirrored.Rounded.VolumeDown
+        else -> Icons.AutoMirrored.Rounded.VolumeUp
+    }
+    val label = if (isMuted) "Muted" else "$percent%"
+
+    BoxWithConstraints(
+        modifier = modifier
+            .semantics {
+                contentDescription = if (isMuted) "Volume muted" else "Volume $percent percent"
+            }
+            .testTag("player_volume_overlay")
+    ) {
+        val compact = maxHeight < 236.dp
+        val minDim = minOf(maxWidth, maxHeight)
+        val edgeMargin = (if (compact) 5.dp else 6.dp) * scale
+        val strokeDp = (if (compact) 4.5.dp else 5.5.dp) * scale
+        val sweepDegrees = if (compact) 94f else 106f
+        val startTopAngle = -sweepDegrees / 2f
+        val startBottomAngle = sweepDegrees / 2f
+
+        // Curved right-bezel volume arc — mathematically inset by edgeMargin +
+        // stroke/2 inside minDim so rounded caps never clip at any watch edge.
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val alphaClamped = hudProgress.coerceIn(0f, 1f)
+                    alpha = alphaClamped
+                    translationX = (1f - alphaClamped) * 8.dp.toPx()
+                }
+        ) {
+            val strokePx = strokeDp.toPx()
+            val insetMarginPx = edgeMargin.toPx()
+            val haloExtraPx = 4.dp.toPx()
+            val diameterPx = (minDim.toPx() - (insetMarginPx * 2f) - strokePx - haloExtraPx)
+                .coerceAtLeast(strokePx * 2f)
+            val left = (size.width - diameterPx) / 2f
+            val top = (size.height - diameterPx) / 2f
+            val arcTopLeft = Offset(left, top)
+            val arcSize = Size(diameterPx, diameterPx)
+
+            // Dark OLED backing so the curved track stays legible over bright artwork.
+            drawArc(
+                color = Color.Black.copy(alpha = 0.68f),
+                startAngle = startTopAngle,
+                sweepAngle = sweepDegrees,
+                useCenter = false,
+                topLeft = arcTopLeft,
+                size = arcSize,
+                style = Stroke(width = strokePx + haloExtraPx, cap = StrokeCap.Round)
+            )
+            // Subtle bezel track.
+            drawArc(
+                color = Color.White.copy(alpha = 0.16f),
+                startAngle = startTopAngle,
+                sweepAngle = sweepDegrees,
+                useCenter = false,
+                topLeft = arcTopLeft,
+                size = arcSize,
+                style = Stroke(width = strokePx, cap = StrokeCap.Round)
+            )
+            val fillSweep = sweepDegrees * animatedFraction
+            if (fillSweep > 0.5f) {
+                // Soft accent glow beneath active arc.
+                drawArc(
+                    color = arcTint.copy(alpha = if (isMuted) 0.12f else 0.26f),
+                    startAngle = startBottomAngle,
+                    sweepAngle = -fillSweep,
+                    useCenter = false,
+                    topLeft = arcTopLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokePx + 3.dp.toPx(), cap = StrokeCap.Round)
+                )
+                // Active volume arc sweeping bottom-right -> top-right.
+                drawArc(
+                    color = arcTint,
+                    startAngle = startBottomAngle,
+                    sweepAngle = -fillSweep,
+                    useCenter = false,
+                    topLeft = arcTopLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                )
+                // Crisp specular highlight at the leading arc cap.
+                val tipRad = Math.toRadians((startBottomAngle - fillSweep).toDouble())
+                val radiusPx = diameterPx / 2f
+                val cx = left + radiusPx
+                val cy = top + radiusPx
+                drawCircle(
+                    color = Color.White.copy(alpha = if (isMuted) 0.45f else 0.90f),
+                    radius = (strokePx * 0.26f).coerceAtLeast(1.2f),
+                    center = Offset(
+                        x = cx + (radiusPx * kotlin.math.cos(tipRad)).toFloat(),
+                        y = cy + (radiusPx * kotlin.math.sin(tipRad)).toFloat()
+                    )
+                )
+            }
+        }
+
+        // Compact Midnight OLED floating pill safely below TimeText and well
+        // inside the upper chord on both compact and 44mm round watch faces.
+        val pillTopPadding = (if (compact) 20.dp else 25.dp) * scale
+        val pillHeight = (if (compact) 28.dp else 31.dp) * scale
+        val pillHorizontalPadding = (if (compact) 10.dp else 12.dp) * scale
+        val maxPillWidth = (maxWidth * 0.54f).coerceAtLeast(88.dp)
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = pillTopPadding)
+                .graphicsLayer {
+                    val alphaClamped = hudProgress.coerceIn(0f, 1f)
+                    alpha = alphaClamped
+                    val s = (0.90f + 0.10f * alphaClamped) * pillBump.value
+                    scaleX = s
+                    scaleY = s
+                    translationY = (1f - alphaClamped) * (-6.dp.toPx())
+                }
+                .height(pillHeight)
+                .widthIn(max = maxPillWidth)
+                .clip(CircleShape)
+                .background(WearsicSurfaceRaised.copy(alpha = 0.94f))
+                .border(
+                    width = 1.dp,
+                    color = if (isMuted) WearsicGlassBorder else arcTint.copy(alpha = 0.42f),
+                    shape = CircleShape
+                )
+                .padding(horizontal = pillHorizontalPadding),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Icon(
+                    imageVector = speakerIcon,
+                    contentDescription = null,
+                    tint = arcTint,
+                    modifier = Modifier.size((if (compact) 14.dp else 16.dp) * scale)
+                )
+                Text(
+                    text = label,
+                    color = if (isMuted) Color.White.copy(alpha = 0.78f) else Color.White,
+                    style = TextStyle(
+                        fontFamily = WearsicDisplayFont,
+                        fontSize = if (compact) 12.sp else 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFeatureSettings = "tnum"
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("player_volume_percent")
+                )
+            }
+        }
+    }
+}
+
+/**
  * THE fullscreen lyrics page. The active line is auto-centered by MEASURED
- * position (onGloballyPositioned) at 60% of the body, so wrapped lines stay
- * fully visible below the header band. Manual scrolling (touch, bezel)
- * always wins: auto-centering pauses while any scroll is in progress, and
- * resumes when the list settles. This composable is internal so the
- * Roborazzi gallery can render the real page.
+ * position (onGloballyPositioned) at the watch screen's true vertical center
+ * (clamped safely below the header for tall multi-line wraps), so highlighted
+ * lyrics sit across the widest chord of the round display rather than drifting
+ * toward the bottom bezel. Manual scrolling (touch, bezel) always wins:
+ * auto-centering pauses while any scroll is in progress, and resumes on the
+ * next line change.
  */
 @Composable
 internal fun LyricsFullscreen(
@@ -841,24 +998,21 @@ internal fun LyricsFullscreen(
     // Framework rotary owns the crown while the lyrics are open: the notch
     // scrolls this body (framework routing, short per-step haptics) exactly
     // like a built-in app. Taking focus here also blocks the bezel from
-    // reaching the Actions list behind the sheet. The hierarchy-active
-    // coordinator keeps that claim across cold opens and screen off/on —
-    // the "bezel dead sometimes" reports were unclaimed focus after exactly
-    // those transitions.
-    val lyricsRotaryFocus = rememberActiveFocusRequester()
-    LaunchedEffect(lyricsRotaryFocus) {
-        repeat(4) {
-            if (runCatching { lyricsRotaryFocus.requestFocus() }.getOrNull() == true) {
-                return@LaunchedEffect
-            }
-            delay(60)
-        }
-    }
+    // reaching Now Playing / Actions behind the sheet.
+    val lyricsRotaryFocus = remember { FocusRequester() }
+
+    // Root-space vertical center of the entire watch face, used so the active
+    // lyric sits dead-center on the screen rather than in the lower third.
+    var screenCenterY by remember { mutableFloatStateOf(Float.NaN) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .hierarchicalFocusGroup(active = true)
             .background(backdrop)
+            .onGloballyPositioned { c ->
+                screenCenterY = c.boundsInRoot().center.y
+            }
             .testTag("lyrics_screen"),
     ) {
         // Soft accent glow from the top edge.
@@ -873,35 +1027,28 @@ internal fun LyricsFullscreen(
         )
 
         Column(modifier = Modifier.fillMaxSize()) {
-            // Compact header: "Lyrics" + exit affordance ONLY. The song
-            // name/artist context line was removed — every pixel above the
-            // body is a pixel taken from lyric space, and the player screen
-            // already identifies the track (user request, 1.9.45). The title
-            // is centered over the lyric column (which centers its lines) so
-            // the header reads balanced; the chevron keeps its 30dp touch
-            // target at the trailing edge, still inside the top chord.
+            // Compact header: truly centered "Lyrics" title + 48dp exit button
+            // on the trailing chord.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 40.dp, end = 40.dp, top = 18.dp, bottom = 0.dp),
+                    .padding(horizontal = 22.dp)
+                    .padding(top = 8.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = "Lyrics",
                     color = if (colors.fromArtwork) colors.accent else Color.White.copy(alpha = 0.9f),
+                    fontFamily = WearsicDisplayFont,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = 0.6.sp,
                     maxLines = 1,
                 )
-                // Exit affordance: a small, bare chevron — no bubble, no
-                // border (the translucent circle read as UI noise on the
-                // full-white lyrics canvas). The 30dp invisible touch target
-                // keeps the tap reliable on a sweaty wrist.
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
-                        .size(30.dp)
+                        .size(WearsicDimens.TouchTarget)
                         .wearsicClickable(onClick = onExit)
                         .testTag("lyrics_back_button"),
                     contentAlignment = Alignment.Center,
@@ -914,113 +1061,80 @@ internal fun LyricsFullscreen(
                     )
                 }
             }
-            // No source attribution line: on a 454px round face it pushed
-            // into the body and read as an edge-cut "lyrics by …" label.
-            // The "Lyrics" title is all this header needs.
 
-            // The lyrics body — a BoxWithConstraints so centre math uses the
-            // REAL body height, not the whole screen.
+            // The lyrics body — a BoxWithConstraints so spacer sizing and
+            // header clearance use the REAL body height.
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val bodyPx = with(density) { maxHeight.toPx() }
-                val halfBodyPx = bodyPx / 2f
 
-                // Viewport-center Y of the ACTIVE row, reported by its
-                // onGloballyPositioned on every layout (only the active row
-                // carries the observer; equal-value writes are free).
-                // ROOT coordinates — the anchor below must share this frame.
-                // EPOCH tags the value with the row index that wrote it: the
-                // auto-center below must anchor the CURRENTLY-active row, and
-                // the previous row's leftover value is NOT NaN (it is simply
-                // last), so timing by NaN alone let every line change anchor
-                // against the PREVIOUS row's stale position — the highlight
-                // drifted lower line after line until it left the visible
-                // band (real-device report), and cold opens could center a
-                // row that was not singing at all.
-                var activeRowCenterY by remember { mutableFloatStateOf(Float.NaN) }
+                // Unclipped Y center of the ACTIVE row inside the scrollable
+                // Column content, reported by its onGloballyPositioned on every
+                // layout. Using positionInParent() avoids viewport clipping from
+                // verticalScroll (which shrinks or zeros boundsInRoot() when the
+                // active line starts partially or wholly offscreen).
+                var activeRowCenterInContentY by remember { mutableFloatStateOf(Float.NaN) }
                 var activeRowHeightPx by remember { mutableFloatStateOf(0f) }
                 var activeRowEpoch by remember { mutableIntStateOf(-1) }
 
-                // Root-space Y where the body begins (i.e. directly below the
-                // header). Coordinates only compare correctly within one
-                // frame of reference: the first 1.9.44 fix anchored the row
-                // center at 60% of the BODY measured in ROOT coords, which
-                // silently parked tall wrapped lines up under the header
-                // ("lengthy sentence still hidden by the above bar").
-                // Anchoring at bodyTop + 0.60 × bodyHeight in the SAME
-                // root frame fixes the reference mismatch exactly.
+                // Root-space Y where the body begins (directly below header).
                 var bodyTopInRoot by remember { mutableFloatStateOf(0f) }
 
-                // Auto-center the active line, MEASURED, not pitch-math'd:
-                // row heights vary with wrapping (active lines grow), so the
-                // old uniform-pitch arithmetic drifted. Event-triggered —
-                // runs only on active-line change. Manual scroll always
-                // wins; the NEXT line change re-centres.
-                LaunchedEffect(activeIndex, synced, track.id) {
+                val centerOffsetInBody = if (!screenCenterY.isNaN() && bodyTopInRoot > 0f) {
+                    (screenCenterY - bodyTopInRoot).coerceAtLeast(0f)
+                } else {
+                    bodyPx * 0.34f
+                }
+                val topSpacerPx = (centerOffsetInBody - with(density) { 12.dp.toPx() })
+                    .coerceAtLeast(bodyPx * 0.16f)
+                val bottomSpacerPx = (bodyPx - centerOffsetInBody + with(density) { 20.dp.toPx() })
+                    .coerceAtLeast(bodyPx * 0.68f)
+
+                // Auto-center the active line at the watch screen's true center
+                // (clamped below header clearance for tall wrapped rows).
+                LaunchedEffect(
+                    activeIndex,
+                    synced,
+                    track.id,
+                    lyricsState.lines.size,
+                    topSpacerPx.roundToInt(),
+                ) {
                     if (!synced || activeIndex < 0) {
                         return@LaunchedEffect
                     }
-                    // Two attempts per activation: cold entries sometimes miss
-                    // the first measurement window entirely.
                     var attempt = 0
                     while (attempt < 2) {
                         attempt++
-                        // Let any in-flight scroll finish BEFORE measuring —
-                        // activating mid-animation is normal (fast lines); the
-                        // old one-shot skip meant those activations never
-                        // re-anchored at all. Capped, so a continuous manual
-                        // drag is never fought longer than ~1.5s.
                         var settleFrames = 0
                         while (scrollState.isScrollInProgress && settleFrames < 90) {
                             withFrameNanos { }
                             settleFrames++
                         }
-                        // Wait until the CURRENTLY-active row itself reports
-                        // (epoch match), capped at ~12 frames.
                         var measureFrames = 0
-                        while (activeRowEpoch != activeIndex && measureFrames < 12) {
+                        while ((activeRowEpoch != activeIndex || bodyTopInRoot <= 0f || screenCenterY.isNaN()) && measureFrames < 12) {
                             withFrameNanos { }
                             measureFrames++
                         }
-                        val rowY = activeRowCenterY
-                        if (bodyTopInRoot <= 0f || activeRowEpoch != activeIndex || rowY.isNaN()) {
+                        val contentCenterY = activeRowCenterInContentY
+                        if (bodyTopInRoot <= 0f || screenCenterY.isNaN() || activeRowEpoch != activeIndex || contentCenterY.isNaN()) {
                             if (attempt == 1) {
                                 delay(300)
                                 continue
                             }
                             return@LaunchedEffect
                         }
-                        // Park the active row a little BELOW the body midline: on
-                        // the round face the header zone above can cover the top
-                        // of a tall highlighted row when centered exactly at 50%
-                        // (real-device report: "upper part hidden by the lyrics UI
-                        // design"). 60% keeps the whole highlight visible.
-                        val anchorY = bodyTopInRoot + bodyPx * 0.60f
-                        val centerTarget = lyricsAutoCenterTarget(
+                        val rowY = bodyTopInRoot + contentCenterY - scrollState.value.toFloat()
+                        val clearanceTop = bodyTopInRoot + with(density) { 6.dp.toPx() }
+                        val safeAnchorY = maxOf(
+                            screenCenterY,
+                            clearanceTop + activeRowHeightPx / 2f
+                        )
+                        val target = lyricsAutoCenterTarget(
                             currentValue = scrollState.value,
                             maxValue = scrollState.maxValue,
                             rowCenterY = rowY,
-                            anchorY = anchorY,
+                            anchorY = safeAnchorY,
                         )
-                        // Hard clearance guarantee: the highlight's TOP must land
-                        // below the body's top edge. Centering alone can't do
-                        // that for the tallest (3-line) rows if the body is
-                        // short — re-anchor so the row TOP sits at the clearance
-                        // line instead. (8dp margin below the header band.)
-                        // min(): healthy rows keep the 60% center; an oversize
-                        // row gets pushed DOWN until its top just clears.
-                        val clearanceTop = bodyTopInRoot +
-                            with(density) { 8.dp.toPx() }
-                        val minTopTarget = lyricsAutoCenterTarget(
-                            currentValue = scrollState.value,
-                            maxValue = scrollState.maxValue,
-                            rowCenterY = rowY,
-                            anchorY = clearanceTop + activeRowHeightPx / 2f,
-                        )
-                        val target = minOf(centerTarget, minTopTarget)
                         if (target != scrollState.value) {
-                            // Defensive: a racing manual scroll/disposal must
-                            // never crash out of the scroll math (real-device
-                            // reports of a crash while scrolling during load).
                             runCatching {
                                 scrollState.animateScrollTo(
                                     target,
@@ -1037,17 +1151,9 @@ internal fun LyricsFullscreen(
                         .fillMaxSize()
                         .padding(horizontal = 38.dp)
                         .onGloballyPositioned { c ->
-                            // Root-space top of the padded body = where the
-                            // lyric content becomes visible below the header.
                             bodyTopInRoot = c.boundsInRoot().top
                         }
-                        // Notches scroll this ScrollState through the
-                        // framework's rotary handler — replaces the hand-rolled
-                        // onRotaryScrollEvent dispatcher that intermittently
-                        // left the crown dead ("haptic tick, no scroll").
-                        // Haptic step-ticks stay ON (user: feedback was back);
-                        // direction follows the Settings preference, aligned
-                        // with touch scrolling by default.
+                        .requestFocusOnHierarchyActive()
                         .rotaryScrollable(
                             RotaryScrollableDefaults.behavior(
                                 scrollState,
@@ -1057,12 +1163,7 @@ internal fun LyricsFullscreen(
                             lyricsRotaryFocus,
                             LocalRotaryDirectionInverted.current,
                         )
-                        .requestFocusOnHierarchyActive()
                         .pointerInput(track.id) {
-                            // Pull DOWN near the very top of the lyrics →
-                            // back to the player. Tunnel pass + own
-                            // consumption makes this deterministic even
-                            // while the scrollable is listening.
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                 var total = 0f
@@ -1091,11 +1192,6 @@ internal fun LyricsFullscreen(
                         val bodyHeight = with(density) { bodyPx.toDp() }
                         when {
                             lyricsState.isLoading -> {
-                                // Loading/placeholder fill the WHOLE body —
-                                // no half-body top pad (that pad belongs to
-                                // line modes only; stacking it here made the
-                                // content 1.5× the viewport and pinned the
-                                // text at the bottom edge).
                                 LyricsLoading(bodyHeight)
                             }
                             lyricsState.errorMessage != null -> {
@@ -1115,10 +1211,12 @@ internal fun LyricsFullscreen(
                                 )
                             }
                             lyricsState.mode == com.wearsic.app.model.LyricsMode.Plain -> {
+                                Spacer(modifier = Modifier.height(12.dp))
                                 lyricsState.lines.forEach { line ->
                                     Text(
                                         text = line.text,
                                         color = Color.White.copy(alpha = 0.80f),
+                                        fontFamily = WearsicBodyFont,
                                         fontSize = 13.sp,
                                         lineHeight = 18.sp,
                                         textAlign = TextAlign.Center,
@@ -1127,12 +1225,13 @@ internal fun LyricsFullscreen(
                                             .padding(bottom = 8.dp),
                                     )
                                 }
+                                Spacer(modifier = Modifier.height(48.dp))
                             }
                             else -> {
                                 Spacer(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(with(density) { halfBodyPx.toDp() })
+                                        .height(with(density) { topSpacerPx.toDp() })
                                 )
                                 lyricsState.lines.forEachIndexed { index, line ->
                                     SyncedLyricLine(
@@ -1141,17 +1240,9 @@ internal fun LyricsFullscreen(
                                         activeColor = activeColor,
                                         modifier = if (index == activeIndex) {
                                             Modifier.onGloballyPositioned { c ->
-                                                // Placement is per-frame during
-                                                // scroll; equal-value writes are
-                                                // free, so this is nothing.
-                                                val b = c.boundsInRoot()
-                                                activeRowCenterY = b.center.y
-                                                activeRowHeightPx = b.height.toFloat()
-                                                // The epoch tells the
-                                                // auto-center THAT THIS ROW's
-                                                // fresh report has landed: with
-                                                // it, anchoring never reads the
-                                                // previous row's stale value.
+                                                val h = c.size.height.toFloat()
+                                                activeRowCenterInContentY = c.positionInParent().y + h / 2f
+                                                activeRowHeightPx = h
                                                 activeRowEpoch = index
                                             }
                                         } else {
@@ -1159,14 +1250,13 @@ internal fun LyricsFullscreen(
                                         },
                                     )
                                 }
+                                Spacer(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(with(density) { bottomSpacerPx.toDp() })
+                                )
                             }
                         }
-
-                        Spacer(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(with(density) { halfBodyPx.toDp() })
-                        )
                     }
                 }
             }
@@ -1196,6 +1286,7 @@ private fun SyncedLyricLine(
         Text(
             text = text,
             color = if (active) activeColor else Color.White.copy(alpha = 0.55f),
+            fontFamily = if (active) WearsicDisplayFont else WearsicBodyFont,
             fontSize = (if (active) 16 else 13).sp,
             fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Normal,
             lineHeight = if (active) 19.sp else 15.5.sp,
@@ -1509,6 +1600,7 @@ private fun ActionsPage(
                 icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 label = if (isFavorite) "Favorited" else "Favorite",
                 enabled = hasTrack,
+                highlighted = isFavorite,
                 onClick = onToggleFavorite,
                 testTag = "player_favorite_button"
             )
@@ -1526,6 +1618,7 @@ private fun ActionsPage(
                     else -> "Download"
                 },
                 enabled = hasTrack && !isDownloaded && !isDownloading,
+                highlighted = isDownloaded || isDownloading,
                 onClick = onDownloadTrack,
                 testTag = "player_download_button"
             )
@@ -1557,6 +1650,7 @@ private fun ActionsPage(
                 },
                 enabled = hasTrack && onSaveAccent != null &&
                     artworkAccent != Color.Transparent,
+                highlighted = savedFlash,
                 onClick = {
                     onSaveAccent?.invoke(artworkAccent)
                     savedFlash = true
@@ -1578,7 +1672,7 @@ private fun ActionsPage(
 /**
  * The artwork backdrop: one full-bleed crop under a fixed dark scrim, darkened
  * further behind the disc so the artwork itself stays readable as the art.
- * Decoded once per artwork at 256 px — cheap on memory, no blur passes.
+ * Decoded once per artwork at 224 px — cheap on memory, no blur passes.
  */
 @Composable
 private fun ArtworkBackdrop(
@@ -1595,10 +1689,10 @@ private fun ArtworkBackdrop(
         return
     }
     val context = LocalContext.current
-    val request = remember(context, artworkUrl) {
+    val request = remember(artworkUrl) {
         ImageRequest.Builder(context)
             .data(artworkUrl)
-            .size(256)
+            .size(224)
             .allowHardware(false)
             .crossfade(180)
             .build()
@@ -1794,32 +1888,62 @@ private fun ActionRow(
     label: String,
     enabled: Boolean,
     onClick: () -> Unit,
-    testTag: String
+    testTag: String,
+    highlighted: Boolean = false
 ) {
+    val accent = LocalWearsicAccent.current
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = WearsicDimens.SheetRowMinHeight)
-            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-            .background(Color.White.copy(alpha = 0.10f))
-            .border(1.dp, WearsicSurfaceBorder, RoundedCornerShape(WearsicDimens.CardRadius))
+            .clip(cardShape)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        WearsicSurfaceRaised.copy(alpha = 0.85f),
+                        WearsicSurface.copy(alpha = 0.90f)
+                    )
+                )
+            )
+            .border(
+                1.dp,
+                if (highlighted) accent.copy(alpha = 0.35f) else WearsicSurfaceBorder,
+                cardShape
+            )
             .wearsicClickable(enabled = enabled, pressedScale = 0.98f, onClick = onClick)
             .testTag(testTag)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = if (enabled) Color.White.copy(alpha = 0.92f) else WearsicTextMuted,
-            modifier = Modifier.size(21.dp)
-        )
-        Spacer(modifier = Modifier.width(12.dp))
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(if (highlighted) accent.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.07f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = when {
+                    highlighted -> accent
+                    enabled -> Color.White.copy(alpha = 0.92f)
+                    else -> WearsicTextMuted
+                },
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
         Text(
             text = label,
-            color = if (enabled) Color.White.copy(alpha = 0.94f) else WearsicTextMuted,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
+            color = if (enabled || highlighted) Color.White.copy(alpha = 0.94f) else WearsicTextMuted,
+            style = TextStyle(
+                fontFamily = WearsicBodyFont,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                fontFeatureSettings = "tnum"
+            ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

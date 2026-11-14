@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
@@ -57,11 +58,13 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import com.wearsic.app.model.Playlist
 import com.wearsic.app.model.Track
+import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
+import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.util.wearsicClickable
 
 /**
@@ -113,7 +116,7 @@ fun WearsicTrackActionSheet(
                 .heightIn(max = maxHeight * 0.86f)
                 .wearsicEntrance(riseDp = 12f)
                 .clip(RoundedCornerShape(32.dp))
-                .background(WearsicSurfaceRaised)
+                .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
                 .border(1.dp, WearsicGlassBorder, RoundedCornerShape(32.dp))
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 10.dp, vertical = 12.dp)
@@ -127,7 +130,8 @@ fun WearsicTrackActionSheet(
             Text(
                 text = track.title,
                 color = LocalWearsicAccent.current,
-                fontSize = 10.sp,
+                fontFamily = WearsicDisplayFont,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -136,6 +140,7 @@ fun WearsicTrackActionSheet(
             Text(
                 text = track.artist,
                 color = wearsicSecondaryText(),
+                fontFamily = WearsicBodyFont,
                 fontSize = 11.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -209,6 +214,7 @@ fun WearsicTrackActionSheet(
                             singleLine = true,
                             textStyle = androidx.compose.ui.text.TextStyle(
                                 color = WearsicTextPrimary,
+                                fontFamily = WearsicBodyFont,
                                 fontSize = 12.sp
                             ),
                             cursorBrush = SolidColor(LocalWearsicAccent.current),
@@ -277,6 +283,7 @@ private fun SheetAction(
         Text(
             text = label,
             color = WearsicTextPrimary,
+            fontFamily = WearsicBodyFont,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1,

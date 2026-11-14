@@ -10,13 +10,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.runtime.Composable
@@ -24,8 +24,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,6 +47,12 @@ import com.wearsic.app.network.model.ServerHealthDto
 import com.wearsic.app.network.model.ServerUpdateStatusDto
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.WearsicAccentSky
+import com.wearsic.app.ui.theme.WearsicBodyFont
+import com.wearsic.app.ui.theme.WearsicDisplayFont
+import com.wearsic.app.ui.theme.WearsicSurface
+import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
+import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.WearsicTabularStyle
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicDimens
@@ -55,7 +63,6 @@ import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicSuccess
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.wearsicClickable
@@ -232,12 +239,13 @@ fun ServerDashboardScreen(
 /** Status hero: dot + one word + latency, or the transport error. */
 @Composable
 private fun StatusCard(state: ServerDashboardState) {
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-            .background(WearsicGlassFill)
-            .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
+            .clip(cardShape)
+            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+            .border(1.dp, WearsicSurfaceBorderSubtle, cardShape)
             .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 12.dp)
             .testTag("server_dashboard_status"),
         contentAlignment = Alignment.Center
@@ -247,7 +255,7 @@ private fun StatusCard(state: ServerDashboardState) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Probing server…", color = WearsicTextPrimary, fontSize = 12.sp)
+                    Text("Probing server…", color = WearsicTextPrimary, fontFamily = WearsicBodyFont, fontSize = 12.sp)
                 }
             }
 
@@ -264,6 +272,7 @@ private fun StatusCard(state: ServerDashboardState) {
                         Text(
                             text = "Offline",
                             color = WearsicError,
+                            fontFamily = WearsicDisplayFont,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -272,6 +281,7 @@ private fun StatusCard(state: ServerDashboardState) {
                     Text(
                         text = state.error,
                         color = wearsicSecondaryText(),
+                        fontFamily = WearsicBodyFont,
                         fontSize = 10.sp,
                         textAlign = TextAlign.Center,
                         maxLines = 3,
@@ -297,6 +307,7 @@ private fun StatusCard(state: ServerDashboardState) {
                                 state.health.status
                             },
                             color = WearsicSuccess,
+                            fontFamily = WearsicDisplayFont,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -305,7 +316,7 @@ private fun StatusCard(state: ServerDashboardState) {
                             Text(
                                 text = "· ${latency} ms",
                                 color = WearsicTextMuted,
-                                fontSize = 10.sp
+                                style = WearsicTabularStyle.merge(TextStyle(fontSize = 10.sp))
                             )
                         }
                     }
@@ -314,13 +325,13 @@ private fun StatusCard(state: ServerDashboardState) {
                     }
                     if (checked.isNotBlank()) {
                         Spacer(modifier = Modifier.height(2.dp))
-                        Text(text = checked, color = WearsicTextMuted, fontSize = 9.sp)
+                        Text(text = checked, color = WearsicTextMuted, fontFamily = WearsicBodyFont, fontSize = 9.sp)
                     }
                 }
             }
 
             else -> {
-                Text("Not checked yet", color = WearsicTextMuted, fontSize = 12.sp)
+                Text("Not checked yet", color = WearsicTextMuted, fontFamily = WearsicBodyFont, fontSize = 12.sp)
             }
         }
     }
@@ -330,6 +341,7 @@ private fun StatusCard(state: ServerDashboardState) {
 private fun RefreshChip(loading: Boolean, onRefresh: () -> Unit) {
     Box(
         modifier = Modifier
+            .heightIn(min = WearsicDimens.TouchTarget)
             .clip(CircleShape)
             .background(WearsicGlassFill)
             .border(1.dp, WearsicGlassBorder, CircleShape)
@@ -349,6 +361,7 @@ private fun RefreshChip(loading: Boolean, onRefresh: () -> Unit) {
             Text(
                 text = if (loading) "Refreshing…" else "Refresh",
                 color = if (loading) WearsicTextMuted else WearsicTextPrimary,
+                fontFamily = WearsicDisplayFont,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold
             )
@@ -356,15 +369,16 @@ private fun RefreshChip(loading: Boolean, onRefresh: () -> Unit) {
     }
 }
 
-/** Glass card grouping label→value rows. */
+/** Midnight OLED card grouping label→value rows. */
 @Composable
 private fun DashboardCard(content: @Composable () -> Unit) {
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-            .background(WearsicGlassFill)
-            .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
+            .clip(cardShape)
+            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+            .border(1.dp, WearsicSurfaceBorderSubtle, cardShape)
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
@@ -385,14 +399,19 @@ private fun ValueRow(
         Text(
             text = label,
             color = WearsicTextMuted,
+            fontFamily = WearsicBodyFont,
             fontSize = 11.sp,
             modifier = Modifier.weight(1f)
         )
         Text(
             text = value,
             color = valueColor,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
+            style = WearsicTabularStyle.merge(
+                TextStyle(
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -415,12 +434,14 @@ private fun ReadyRow(label: String, ok: Boolean) {
         Text(
             text = label,
             color = WearsicTextPrimary,
+            fontFamily = WearsicBodyFont,
             fontSize = 11.sp,
             modifier = Modifier.weight(1f)
         )
         Text(
             text = if (ok) "Ready" else "Unavailable",
             color = if (ok) WearsicSuccess else WearsicError,
+            fontFamily = WearsicDisplayFont,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold
         )
@@ -433,8 +454,9 @@ private fun SectionLabel(text: String) {
     Text(
         text = text.uppercase(),
         color = WearsicTextMuted,
+        fontFamily = WearsicDisplayFont,
         fontSize = 10.sp,
-        fontWeight = FontWeight.Medium,
+        fontWeight = FontWeight.SemiBold,
         letterSpacing = 1.2.sp,
         textAlign = TextAlign.Center
     )

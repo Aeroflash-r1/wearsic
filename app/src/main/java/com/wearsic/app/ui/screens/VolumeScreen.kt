@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -60,13 +61,15 @@ import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
+import com.wearsic.app.ui.theme.WearsicTabularStyle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
-import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.watchScaled
@@ -250,9 +253,13 @@ fun VolumeScreen(
                         Text(
                             text = "Sleep in ${sleepRemainingMs / 60000}m ${(sleepRemainingMs % 60000) / 1000}s",
                             color = wearsicSecondaryText(),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center,
+                            style = WearsicTabularStyle.merge(
+                                TextStyle(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    textAlign = TextAlign.Center
+                                )
+                            ),
                             modifier = Modifier.padding(horizontal = 16.dp)
                         )
                     }
@@ -313,8 +320,9 @@ private fun SectionLabel(text: String) {
     Text(
         text = text.uppercase(),
         color = WearsicTextMuted,
+        fontFamily = WearsicDisplayFont,
         fontSize = 10.sp,
-        fontWeight = FontWeight.Medium,
+        fontWeight = FontWeight.SemiBold,
         letterSpacing = 1.2.sp,
         textAlign = TextAlign.Center
     )
@@ -400,12 +408,17 @@ private fun VolumeDial(
                     else -> "${(fraction * 100f).roundToInt()}%"
                 },
                 color = if (enabled) WearsicTextPrimary else WearsicTextMuted,
-                fontSize = if (isMuted || !enabled) 17.sp else 24.sp,
-                fontWeight = FontWeight.Bold
+                style = TextStyle(
+                    fontFamily = WearsicDisplayFont,
+                    fontSize = if (isMuted || !enabled) 17.sp else 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFeatureSettings = "tnum"
+                )
             )
             Text(
                 text = if (isMuted && enabled) "TAP TO RESUME" else "VOLUME",
                 color = WearsicTextMuted,
+                fontFamily = WearsicBodyFont,
                 fontSize = 8.sp,
                 letterSpacing = 1.sp,
                 fontWeight = FontWeight.Medium
@@ -437,7 +450,7 @@ private fun DeviceChip(
 
     Box(
         modifier = modifier
-            .heightIn(min = 42.dp)
+            .heightIn(min = WearsicDimens.TouchTarget)
             .clip(CircleShape)
             .background(fill)
             .border(
@@ -463,6 +476,7 @@ private fun DeviceChip(
             Text(
                 text = label,
                 color = contentTint,
+                fontFamily = WearsicDisplayFont,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1
@@ -504,6 +518,7 @@ private fun OptionChip(
         Text(
             text = label,
             color = if (isActive) WearsicTextPrimaryDark else WearsicTextPrimary,
+            fontFamily = WearsicDisplayFont,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold
         )

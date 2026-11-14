@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
@@ -36,12 +37,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,6 +69,10 @@ import com.wearsic.app.ui.components.WearsicSecondaryPillButton
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicBodyFont
+import com.wearsic.app.ui.theme.WearsicDisplayFont
+import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.WearsicTabularStyle
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.LocalWearsicAccent
@@ -79,7 +86,6 @@ import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import java.util.Locale
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 
 import com.wearsic.app.ui.util.wearsicClickable
@@ -100,6 +106,10 @@ fun DownloadsScreen(
     val listState = rememberScalingLazyListState()
     var trackToDeleteId by remember { mutableStateOf<String?>(null) }
     var showClearAllConfirmation by remember { mutableStateOf(false) }
+    val completedTracks = remember(downloads) {
+        downloads.filter { it.isCompleted() }.map { it.toDomainTrack() }
+    }
+    val completedCount = completedTracks.size
 
     ScreenScaffold(
         scrollState = listState,
@@ -121,20 +131,18 @@ fun DownloadsScreen(
             item {
                 WearsicScreenHeader(
                     title = "Downloads",
-                    subtitle = "${downloads.count { it.isCompleted() }} Offline Tracks"
+                    subtitle = "$completedCount Offline Tracks"
                 )
             }
 
             // Play all: one tap to run the whole offline library.
-            val completedCount = downloads.count { it.isCompleted() }
             if (completedCount > 0) {
                 item {
                     WearsicSecondaryPillButton(
                         label = "Play all",
                         icon = Icons.Rounded.PlayArrow,
                         onClick = {
-                            val tracks = downloads.filter { it.isCompleted() }.map { it.toDomainTrack() }
-                            if (tracks.isNotEmpty()) onPlayAll(tracks)
+                            if (completedTracks.isNotEmpty()) onPlayAll(completedTracks)
                         },
                         modifier = Modifier.fillMaxWidth(),
                         testTag = "downloads_play_all"
@@ -374,12 +382,13 @@ private fun DownloadingItemCard(
     modifier: Modifier = Modifier
 ) {
     val accent = LocalWearsicAccent.current
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(CircleShape)
-            .background(WearsicSurface)
-            .border(1.dp, accent.copy(alpha = 0.4f), CircleShape)
+            .clip(cardShape)
+            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+            .border(1.dp, accent.copy(alpha = 0.4f), cardShape)
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag("downloading_track_${entity.trackId}")
     ) {
@@ -443,6 +452,7 @@ private fun DownloadingItemCard(
                     Text(
                         text = entity.title,
                         color = WearsicTextPrimary,
+                        fontFamily = WearsicDisplayFont,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
@@ -450,9 +460,13 @@ private fun DownloadingItemCard(
                     )
                     Text(
                         text = "Downloading ${entity.progress}%",
-                        color = LocalWearsicAccent.current,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
+                        color = accent,
+                        style = WearsicTabularStyle.merge(
+                            TextStyle(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        )
                     )
                 }
             }
@@ -474,12 +488,14 @@ private fun FailedDownloadItemCard(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
+    val accent = LocalWearsicAccent.current
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(CircleShape)
-            .background(WearsicSurface)
-            .border(1.dp, WearsicError.copy(alpha = 0.4f), CircleShape)
+            .clip(cardShape)
+            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+            .border(1.dp, WearsicError.copy(alpha = 0.4f), cardShape)
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Row(
@@ -502,6 +518,7 @@ private fun FailedDownloadItemCard(
                     Text(
                         text = entity.title,
                         color = WearsicTextPrimary,
+                        fontFamily = WearsicDisplayFont,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
@@ -510,6 +527,7 @@ private fun FailedDownloadItemCard(
                     Text(
                         text = entity.errorMessage ?: "Download failed",
                         color = WearsicError,
+                        fontFamily = WearsicBodyFont,
                         fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -518,43 +536,22 @@ private fun FailedDownloadItemCard(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Retry button
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(CircleShape)
-                        .background(LocalWearsicAccent.current.copy(alpha = 0.15f))
-                        .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.4f), CircleShape)
-                        .wearsicClickable(onClick = onRetry)
-                        .testTag("retry_download_${entity.trackId}"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Download,
-                        contentDescription = "Retry",
-                        tint = LocalWearsicAccent.current,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
+                WearsicSongRowActionButton(
+                    icon = Icons.Rounded.Download,
+                    contentDescription = "Retry",
+                    onClick = onRetry,
+                    testTag = "retry_download_${entity.trackId}",
+                    tint = accent,
+                    background = accent.copy(alpha = 0.16f),
+                    borderColor = accent.copy(alpha = 0.4f)
+                )
 
-                Spacer(modifier = Modifier.width(6.dp))
-
-                // Delete button
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(CircleShape)
-                        .background(WearsicSurface)
-                        .wearsicClickable(onClick = onDelete),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Delete,
-                        contentDescription = "Remove",
-                        tint = WearsicError,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
+                WearsicSongRowActionButton(
+                    icon = Icons.Rounded.Delete,
+                    contentDescription = "Remove",
+                    onClick = onDelete,
+                    tint = WearsicError
+                )
             }
         }
     }

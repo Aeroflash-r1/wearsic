@@ -90,11 +90,14 @@ import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicBodyFont
+import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicSurfaceActive
 import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
+import com.wearsic.app.ui.theme.WearsicTabularStyle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
@@ -274,6 +277,7 @@ fun SearchScreen(
                                 Text(
                                     text = "Type artist/song...",
                                     color = WearsicTextMuted,
+                                    fontFamily = WearsicBodyFont,
                                     fontSize = 11.sp,
                                     maxLines = 1
                                 )
@@ -285,6 +289,7 @@ fun SearchScreen(
                                 singleLine = true,
                                 textStyle = TextStyle(
                                     color = WearsicTextPrimary,
+                                    fontFamily = WearsicBodyFont,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Normal
                                 ),
@@ -400,6 +405,7 @@ fun SearchScreen(
                             Text(
                                 text = suggestion,
                                 color = WearsicTextPrimary,
+                                fontFamily = WearsicBodyFont,
                                 fontSize = 12.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -489,10 +495,22 @@ fun SearchScreen(
                 }
             }
 
-            if (mode == 0 && searchState.results.isNotEmpty()) {
-                item { WearsicSectionTitle(label = "Songs", trailing = {
-                    Text("${searchState.results.size}", color = WearsicTextMuted, fontSize = 10.sp)
-                }) }
+            // "Songs" is only one of the three tri-mode tabs (Songs / Albums /
+            // Artists); the other two render their own section headers, so the
+            // title must be gated on the songs mode.
+            if (mode == 0 && distinctResults.isNotEmpty()) {
+                item {
+                    WearsicSectionTitle(
+                        label = "Songs",
+                        trailing = {
+                            Text(
+                                text = "${distinctResults.size}",
+                                color = WearsicTextMuted,
+                                style = WearsicTabularStyle.merge(TextStyle(fontSize = 10.sp))
+                            )
+                        }
+                    )
+                }
             }
             // Defend against duplicate IDs returned by older servers.
             if (mode == 0) items(distinctResults, key = { it.id }) { track ->
@@ -632,6 +650,7 @@ fun SearchScreen(
                         Text(
                             text = "Show more",
                             color = LocalWearsicAccent.current,
+                            fontFamily = WearsicDisplayFont,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )

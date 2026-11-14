@@ -53,10 +53,13 @@ import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicLibraryTrackRow
 import com.wearsic.app.ui.components.WearsicLoadingState
 import com.wearsic.app.ui.components.WearsicScreenHeader
+import androidx.compose.ui.graphics.Brush
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicBodyFont
+import com.wearsic.app.ui.theme.WearsicDisplayFont
+import com.wearsic.app.ui.theme.WearsicSurface
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -73,6 +76,7 @@ fun ArtistsScreen(
 ) {
     val listState = rememberScalingLazyListState()
     var selected by remember { mutableStateOf<ArtistGroup?>(null) }
+    val distinctSongs = remember(selected) { selected?.songs?.distinctBy { it.id }.orEmpty() }
 
     LaunchedEffect(Unit) { onRefresh() }
 
@@ -114,7 +118,7 @@ fun ArtistsScreen(
 
             val group = selected
             if (group != null) {
-                itemsIndexed(group.songs.distinctBy { it.id }, key = { _, song -> song.id }) { index, song ->
+                itemsIndexed(distinctSongs, key = { _, song -> song.id }) { index, song ->
                     WearsicLibraryTrackRow(
                         track = song,
                         onPlay = { onPlayArtistSongs(group, index) }
@@ -131,12 +135,13 @@ fun ArtistsScreen(
                 }
             } else {
                 items(artistsState.artists, key = { it.name }) { artist ->
+                    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-                            .background(WearsicSurfaceRaised)
-                            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
+                            .clip(cardShape)
+                            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+                            .border(1.dp, WearsicSurfaceBorderSubtle, cardShape)
                             .wearsicClickable { selected = artist }
                             .padding(horizontal = 12.dp, vertical = 10.dp)
                             .testTag("artist_${artist.name}")
@@ -157,6 +162,7 @@ fun ArtistsScreen(
                                 Text(
                                     text = artist.name,
                                     color = WearsicTextPrimary,
+                                    fontFamily = WearsicDisplayFont,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 2,
@@ -165,6 +171,7 @@ fun ArtistsScreen(
                                 Text(
                                     text = "${artist.songs.size} saved songs",
                                     color = wearsicSecondaryText(),
+                                    fontFamily = WearsicBodyFont,
                                     fontSize = 12.sp
                                 )
                             }

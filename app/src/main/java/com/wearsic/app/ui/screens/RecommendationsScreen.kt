@@ -6,8 +6,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -20,10 +23,12 @@ import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import com.wearsic.app.model.Track
+import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSearchShimmerRow
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.util.wearsicEntrance
@@ -44,6 +49,9 @@ fun RecommendationsScreen(
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberScalingLazyListState()
+    val distinctTracks = remember(recommendationsState.tracks) {
+        recommendationsState.tracks.distinctBy { it.id }
+    }
     LaunchedEffect(Unit) { onRefresh() }
 
     ScreenScaffold(
@@ -80,35 +88,34 @@ fun RecommendationsScreen(
                         }
                     }
                 }
-                recommendationsState.errorMessage != null && recommendationsState.tracks.isEmpty() -> {
+                recommendationsState.errorMessage != null && distinctTracks.isEmpty() -> {
                     item {
                         Text(
                             text = recommendationsState.errorMessage,
                             color = WearsicTextMuted,
+                            fontFamily = WearsicBodyFont,
                             fontSize = 13.sp,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 24.dp)
                         )
                     }
                 }
-                recommendationsState.tracks.isEmpty() -> {
+                distinctTracks.isEmpty() -> {
                     item {
-                        Text(
-                            text = "Nothing to recommend yet — favorite a few songs first.",
-                            color = WearsicTextMuted,
-                            fontSize = 13.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 24.dp)
+                        WearsicEmptyState(
+                            title = "Nothing to recommend yet",
+                            message = "Favorite a few songs first to build your personal mix.",
+                            icon = Icons.Rounded.Star
                         )
                     }
                 }
                 else -> {
-                    itemsIndexed(recommendationsState.tracks.distinctBy { it.id }, key = { _, track -> track.id }) { index, track ->
+                    itemsIndexed(distinctTracks, key = { _, track -> track.id }) { index, track ->
                         WearsicSongRow(
                             title = track.title,
                             artist = track.artist,
                             artworkUrl = track.artworkUrl,
-                            onClick = { onPlayTrack(recommendationsState.tracks, index) },
+                            onClick = { onPlayTrack(distinctTracks, index) },
                             testTag = "recommendation_${track.id}"
                         )
                     }

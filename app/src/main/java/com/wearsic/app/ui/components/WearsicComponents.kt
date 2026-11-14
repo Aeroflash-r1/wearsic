@@ -31,10 +31,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.unit.IntOffset
 import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.wearsicSecondaryText
+import com.wearsic.app.ui.theme.WearsicBodyFont
+import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.watchScaled
@@ -50,7 +52,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -70,11 +71,11 @@ import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
 import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
-import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTextWhite60
 import com.wearsic.app.ui.theme.WearsicTextWhite80
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.util.WearsicMotion
+import com.wearsic.app.ui.util.wearsicClickable
 /**
  * High-contrast vibrant primary pill button (e.g. "Downloads")
  * Styled with solid vibrant lavender #D0BCFF, dark icon container, and bold black text.
@@ -148,6 +149,7 @@ fun WearsicPrimaryPillButton(
                     Text(
                         text = label,
                         color = contentColor,
+                        fontFamily = WearsicDisplayFont,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
@@ -157,6 +159,7 @@ fun WearsicPrimaryPillButton(
                         Text(
                             text = subtitle,
                             color = contentColor.copy(alpha = 0.7f),
+                            fontFamily = WearsicBodyFont,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
@@ -175,6 +178,7 @@ fun WearsicPrimaryPillButton(
                     Text(
                         text = badgeText,
                         color = contentColor,
+                        fontFamily = WearsicBodyFont,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -185,8 +189,63 @@ fun WearsicPrimaryPillButton(
 }
 
 /**
+ * Compact elevated Midnight OLED tile for 2×2 navigation grids on round faces.
+ * Places an accent-tinted icon medallion over a crisp label with a 48dp+ tap target.
+ */
+@Composable
+fun WearsicActionTile(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    accentColor: Color = LocalWearsicAccent.current,
+    testTag: String = "action_tile"
+) {
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
+    Column(
+        modifier = modifier
+            .heightIn(min = 66.dp)
+            .clip(cardShape)
+            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+            .border(1.dp, WearsicSurfaceBorderSubtle, cardShape)
+            .wearsicClickable(pressedScale = 0.94f, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp)
+            .testTag(testTag),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(accentColor.copy(alpha = 0.16f))
+                .border(1.dp, accentColor.copy(alpha = 0.24f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = accentColor,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = label,
+            color = WearsicTextPrimary,
+            fontFamily = WearsicDisplayFont,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+/**
  * Compact pill button for secondary actions (e.g. "Playlists", "Artists")
- * Styled with #1C1B1F surface, subtle border, vibrant lavender icon, and crisp white text.
+ * Styled with Midnight OLED layered surface, subtle border, vibrant accent icon, and crisp text.
  */
 @Composable
 fun WearsicSecondaryPillButton(
@@ -204,6 +263,7 @@ fun WearsicSecondaryPillButton(
         animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
         label = "secondaryPillPress"
     )
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
 
     Box(
         modifier = modifier
@@ -212,9 +272,9 @@ fun WearsicSecondaryPillButton(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-            .background(WearsicSurfaceRaised)
-            .border(1.dp, WearsicSurfaceBorderSubtle, RoundedCornerShape(WearsicDimens.CardRadius))
+            .clip(cardShape)
+            .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised, WearsicSurface)))
+            .border(1.dp, WearsicSurfaceBorderSubtle, cardShape)
             .clickable(interactionSource = interaction, indication = null) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
@@ -237,8 +297,9 @@ fun WearsicSecondaryPillButton(
             Text(
                 text = label,
                 color = WearsicTextPrimary,
+                fontFamily = WearsicDisplayFont,
                 fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -298,6 +359,7 @@ fun WearsicSettingsActionPill(
             Text(
                 text = label.uppercase(),
                 color = WearsicTextWhite80,
+                fontFamily = WearsicDisplayFont,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 1.sp
@@ -408,13 +470,18 @@ fun WearsicScreenHeader(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            Modifier.width(22.dp).height(3.dp).clip(CircleShape).background(accent)
+            Modifier
+                .width(26.dp)
+                .height(3.dp)
+                .clip(CircleShape)
+                .background(Brush.horizontalGradient(listOf(accent.copy(alpha = 0.7f), accent, accent.copy(alpha = 0.7f))))
         )
         Spacer(Modifier.height(6.dp))
         Text(
             text = title,
             color = WearsicTextPrimary,
-            fontSize = 24.sp,
+            fontFamily = WearsicDisplayFont,
+            fontSize = 23.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
             letterSpacing = (-0.4).sp,
@@ -427,12 +494,13 @@ fun WearsicScreenHeader(
             Text(
                 text = subtitle,
                 color = WearsicTextWhite60,
+                fontFamily = WearsicBodyFont,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Normal,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 3.dp)
             )
         }
     }
@@ -471,9 +539,10 @@ fun WearsicSectionTitle(
         Text(
             text = label.uppercase(),
             color = WearsicTextWhite60,
+            fontFamily = WearsicDisplayFont,
             fontSize = 10.sp,
             fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.6.sp,
+            letterSpacing = 0.8.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
@@ -524,6 +593,7 @@ fun WearsicEmptyState(
         Text(
             text = title,
             color = WearsicTextPrimary,
+            fontFamily = WearsicDisplayFont,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center
@@ -531,6 +601,7 @@ fun WearsicEmptyState(
         Text(
             text = message,
             color = WearsicTextMuted,
+            fontFamily = WearsicBodyFont,
             fontSize = 10.sp,
             lineHeight = 14.sp,
             textAlign = TextAlign.Center,
@@ -587,6 +658,7 @@ fun WearsicMarqueeText(
     Text(
         text = text,
         color = color,
+        fontFamily = WearsicDisplayFont,
         fontSize = fontSize,
         lineHeight = lineHeight,
         fontWeight = fontWeight,
@@ -618,6 +690,7 @@ fun WearsicLoadingState(
         Text(
             text = label,
             color = wearsicSecondaryText(),
+            fontFamily = WearsicBodyFont,
             fontSize = 11.sp
         )
     }
@@ -626,48 +699,45 @@ fun WearsicLoadingState(
 /**
  * Expressive search loading: a shimmer placeholder shaped like a song row.
  *
- * A soft highlight sweeps across the row while the whole card breathes
- * (pulsing glow) — deliberately NOT a spinning ring. While a search is in
- * flight the list stays in place and these placeholders fill the result
- * area; the real rows then fade in over the same spot.
+ * Reads animation state strictly in draw (`drawBehind`) and layer (`graphicsLayer`)
+ * phases so shimmer ticks cost zero composition or layout passes.
  */
 @Composable
 fun WearsicSearchShimmerRow(
     modifier: Modifier = Modifier
 ) {
     val transition = rememberInfiniteTransition(label = "searchShimmer")
-    val sweep by transition.animateFloat(
+    val sweep = transition.animateFloat(
         initialValue = -1f,
-        targetValue = 1f,
+        targetValue = 2f,
         animationSpec = infiniteRepeatable(tween(1150, easing = LinearEasing), RepeatMode.Restart),
         label = "searchShimmerSweep"
     )
-    val pulse by transition.animateFloat(
+    val pulse = transition.animateFloat(
         initialValue = 0.4f,
         targetValue = 0.75f,
         animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
         label = "searchShimmerPulse"
     )
     val base = wearsicAccentContainer()
-    val density = LocalDensity.current
+    val highlightBrush = remember {
+        Brush.horizontalGradient(
+            listOf(Color.Transparent, Color.White.copy(alpha = 0.08f), Color.Transparent)
+        )
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
             .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-            .background(base.copy(alpha = pulse))
+            .drawBehind { drawRect(base.copy(alpha = pulse.value)) }
     ) {
-        // Sweeping highlight band, clipped to the card.
         Box(
             modifier = Modifier
                 .fillMaxHeight()
                 .width(140.dp)
-                .offset { IntOffset(x = (sweep * 800f * density.density).toInt(), y = 0) }
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(Color.Transparent, Color.White.copy(alpha = 0.08f), Color.Transparent)
-                    )
-                )
+                .graphicsLayer { translationX = sweep.value * size.width * 1.4f }
+                .background(highlightBrush)
         )
         Row(
             modifier = Modifier
@@ -705,33 +775,36 @@ fun WearsicSearchShimmerRow(
 
 /**
  * Album-shaped shimmer card — matches the AlbumCard layout (large centred
- * artwork, name line, uploader line) so album loading previews look like
- * albums, not song rows. Same sweep + pulse animation language as search.
+ * artwork, name line, uploader line). Driven in draw + layer phases only.
  */
 @Composable
 fun WearsicAlbumShimmerCard(
     modifier: Modifier = Modifier
 ) {
     val transition = rememberInfiniteTransition(label = "albumShimmer")
-    val sweep by transition.animateFloat(
+    val sweep = transition.animateFloat(
         initialValue = -1f,
-        targetValue = 1f,
+        targetValue = 2f,
         animationSpec = infiniteRepeatable(tween(1150, easing = LinearEasing), RepeatMode.Restart),
         label = "albumShimmerSweep"
     )
-    val pulse by transition.animateFloat(
+    val pulse = transition.animateFloat(
         initialValue = 0.4f,
         targetValue = 0.75f,
         animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
         label = "albumShimmerPulse"
     )
     val base = wearsicAccentContainer()
-    val density = LocalDensity.current
+    val highlightBrush = remember {
+        Brush.horizontalGradient(
+            listOf(Color.Transparent, Color.White.copy(alpha = 0.08f), Color.Transparent)
+        )
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-            .background(base.copy(alpha = pulse)),
+            .drawBehind { drawRect(base.copy(alpha = pulse.value)) },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
@@ -741,12 +814,8 @@ fun WearsicAlbumShimmerCard(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(140.dp)
-                    .offset { IntOffset(x = (sweep * 800f * density.density).toInt(), y = 0) }
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(Color.Transparent, Color.White.copy(alpha = 0.08f), Color.Transparent)
-                        )
-                    )
+                    .graphicsLayer { translationX = sweep.value * size.width * 1.4f }
+                    .background(highlightBrush)
             )
         }
         Box(
@@ -776,44 +845,44 @@ fun WearsicAlbumShimmerCard(
 }
 
 /**
- * Compact shimmer bar — the pagination ("load more") state, matching the
- * search shimmer language instead of the old mini spinner.
+ * Compact shimmer bar — pagination ("load more") state, running in draw + layer phases only.
  */
 @Composable
 fun WearsicCompactShimmer(
     modifier: Modifier = Modifier
-) {    val transition = rememberInfiniteTransition(label = "compactShimmer")
-    val sweep by transition.animateFloat(
+) {
+    val transition = rememberInfiniteTransition(label = "compactShimmer")
+    val sweep = transition.animateFloat(
         initialValue = -1f,
-        targetValue = 1f,
+        targetValue = 2f,
         animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
         label = "compactShimmerSweep"
     )
-    val pulse by transition.animateFloat(
+    val pulse = transition.animateFloat(
         initialValue = 0.35f,
         targetValue = 0.7f,
         animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
         label = "compactShimmerPulse"
     )
     val base = wearsicAccentContainer()
-    val density = LocalDensity.current
+    val highlightBrush = remember {
+        Brush.horizontalGradient(
+            listOf(Color.Transparent, Color.White.copy(alpha = 0.08f), Color.Transparent)
+        )
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 36.dp)
             .clip(CircleShape)
-            .background(base.copy(alpha = pulse))
+            .drawBehind { drawRect(base.copy(alpha = pulse.value)) }
     ) {
         Box(
             modifier = Modifier
                 .fillMaxHeight()
                 .width(120.dp)
-                .offset { IntOffset(x = (sweep * 700f * density.density).toInt(), y = 0) }
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(Color.Transparent, Color.White.copy(alpha = 0.08f), Color.Transparent)
-                    )
-                )
+                .graphicsLayer { translationX = sweep.value * size.width * 1.5f }
+                .background(highlightBrush)
         )
     }
 }

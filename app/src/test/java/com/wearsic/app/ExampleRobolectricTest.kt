@@ -185,7 +185,19 @@ class ExampleRobolectricTest {
         // screen's unique list and buttons instead of the ambiguous text.)
         composeTestRule.onNodeWithTag("library_lazy_column", useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).assertExists()
-        composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true).assertExists()
+
+        // Downloads lives in the Browse grid, which can sit below the fold on
+        // a 44mm round viewport. A lazy list does not compose off-screen
+        // items, so scroll it into view before asserting it exists.
+        val downloadsTile =
+            composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true)
+        var scrolls = 5
+        while (scrolls > 0 && runCatching { downloadsTile.assertIsDisplayed() }.isFailure) {
+            composeTestRule.onRoot().performTouchInput { swipeUp() }
+            composeTestRule.waitForIdle()
+            scrolls--
+        }
+        downloadsTile.assertExists()
 
         // Navigate to Search
         composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).performClick()

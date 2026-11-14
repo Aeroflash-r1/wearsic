@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
@@ -54,7 +55,9 @@ import com.wearsic.app.ui.components.WearsicSecondaryPillButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.wearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicSurface
@@ -151,14 +154,12 @@ fun PlaylistsScreen(
             }
 
             // Playlist rows
-            playlistsState.playlists.forEach { playlist ->
-                item(key = playlist.id) {
-                    PlaylistRow(
-                        playlist = playlist,
-                        onClick = { onOpenPlaylist(playlist) },
-                        onLongPress = { hideCandidate = playlist }
-                    )
-                }
+            items(playlistsState.playlists, key = { it.id }) { playlist ->
+                PlaylistRow(
+                    playlist = playlist,
+                    onClick = { onOpenPlaylist(playlist) },
+                    onLongPress = { hideCandidate = playlist }
+                )
             }
 
             item {
@@ -187,6 +188,7 @@ fun PlaylistsScreen(
                     Text(
                         text = "New Playlist",
                         color = WearsicTextPrimary,
+                        fontFamily = WearsicDisplayFont,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -198,7 +200,8 @@ fun PlaylistsScreen(
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.35f))
                             .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.4f), CircleShape)
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.CenterStart
                     ) {
                         androidx.compose.foundation.text.BasicTextField(
                             value = newPlaylistName,
@@ -206,13 +209,14 @@ fun PlaylistsScreen(
                             singleLine = true,
                             textStyle = androidx.compose.ui.text.TextStyle(
                                 color = WearsicTextPrimary,
+                                fontFamily = WearsicBodyFont,
                                 fontSize = 12.sp
                             ),
                             cursorBrush = androidx.compose.ui.graphics.SolidColor(LocalWearsicAccent.current),
                             modifier = Modifier.fillMaxWidth(),
                             decorationBox = { innerTextField ->
                                 if (newPlaylistName.isEmpty()) {
-                                    Text("Playlist name...", color = WearsicTextMuted, fontSize = 12.sp)
+                                    Text("Playlist name...", color = WearsicTextMuted, fontFamily = WearsicBodyFont, fontSize = 12.sp)
                                 }
                                 innerTextField()
                             }

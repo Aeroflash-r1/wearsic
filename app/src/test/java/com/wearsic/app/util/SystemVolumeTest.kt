@@ -1,5 +1,6 @@
 package com.wearsic.app.util
 
+import com.wearsic.app.ui.util.RotaryVolumeAccumulator
 import com.wearsic.app.ui.util.SystemVolumeState
 import com.wearsic.app.ui.util.rotaryVolumeStep
 import org.junit.Assert.assertEquals
@@ -80,5 +81,22 @@ class SystemVolumeTest {
         assertEquals(1, rotaryVolumeStep(0.5f))
         assertEquals(-1, rotaryVolumeStep(-24f))
         assertEquals(0, rotaryVolumeStep(0f))
+    }
+
+    @Test
+    fun `accumulator smooths micro-deltas and responds cleanly to reversals`() {
+        val acc = RotaryVolumeAccumulator(stepThresholdPx = 16f, maxStepsPerEvent = 2)
+        // Micro touch-bezel drag events accumulate cleanly to 1 step at 18f.
+        assertEquals(0, acc.onRotaryDelta(6f))
+        assertEquals(0, acc.onRotaryDelta(6f))
+        assertEquals(1, acc.onRotaryDelta(6f)) // 18f -> 1 step, 2f remainder
+
+        // Immediate reversal discards positive 2f remainder and steps at -16f.
+        assertEquals(0, acc.onRotaryDelta(-10f))
+        assertEquals(-1, acc.onRotaryDelta(-8f))
+
+        // Respects inverted setting and per-event clamp.
+        acc.reset()
+        assertEquals(-2, acc.onRotaryDelta(120f, inverted = true))
     }
 }

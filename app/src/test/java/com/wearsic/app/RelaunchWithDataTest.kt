@@ -3,6 +3,9 @@ package com.wearsic.app
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -230,16 +233,19 @@ class RelaunchWithDataTest {
         }
 
         // The exact interaction that freezes an ANR'd main thread blocks here.
-        // The restored pill library keeps Downloads visible near the top, so
-        // no swipe is needed (and swiping could scroll it off-screen). Just
-        // wait for the node, then click it.
-        composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag(
-                "library_downloads_button", useUnmergedTree = true
-            ).fetchSemanticsNodes().isNotEmpty()
+        // Downloads now lives in the Browse grid, which can sit below the fold
+        // on a 44mm round viewport — and a lazy list does not compose
+        // off-screen items, so scroll it into view before clicking. (With the
+        // old pill layout it was already visible, so this was a no-op.)
+        val downloadsTile =
+            composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true)
+        var scrolls = 5
+        while (scrolls > 0 && runCatching { downloadsTile.assertIsDisplayed() }.isFailure) {
+            composeTestRule.onRoot().performTouchInput { swipeUp() }
+            composeTestRule.waitForIdle()
+            scrolls--
         }
-        composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true)
-            .performClick()
+        downloadsTile.performClick()
         composeTestRule.onNodeWithText("Downloads").assertIsDisplayed()
 
         // And the persisted downloads render on top of the reconciled DB.

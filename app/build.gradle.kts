@@ -161,6 +161,7 @@ val robolectricOnlyClasses = listOf(
   "com.wearsic.app.OfflinePersistenceTest",
   "com.wearsic.app.PairingImportTest",
   "com.wearsic.app.PlayerInteractionTest",
+  "com.wearsic.app.QueueDragTest",
   "com.wearsic.app.RecentPlaybackIdentityTest",
   "com.wearsic.app.RelaunchWithDataTest",
   "com.wearsic.app.ScreenGalleryTest",

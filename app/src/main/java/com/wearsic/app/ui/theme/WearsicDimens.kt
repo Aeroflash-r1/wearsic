@@ -188,6 +188,7 @@ fun rememberWearsicListContentPadding(scaffoldPadding: PaddingValues): PaddingVa
     // reserve are provided at their final dp, so never re-scale them.
     val topChrome = LocalWearsicTopChromeReserve.current
     val miniPlayer = LocalWearsicMiniPlayerReserve.current
+    println("DEBUG-WEARSIC-PAD topChrome=" + topChrome + " miniPlayer=" + miniPlayer + " designV=" + designV)
 
     return remember(scaffoldPadding, density, designH, designV, topChrome, miniPlayer) {
         object : PaddingValues {

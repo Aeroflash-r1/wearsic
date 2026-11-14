@@ -75,7 +75,7 @@ fun FavoritesScreen(
     onShuffleAll: (List<Track>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     var actionTrack by remember { mutableStateOf<Track?>(null) }
     val distinctTracks = remember(favoritesState.tracks) { favoritesState.tracks.distinctBy { it.id } }
 

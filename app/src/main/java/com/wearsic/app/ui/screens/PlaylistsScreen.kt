@@ -81,7 +81,7 @@ fun PlaylistsScreen(
     onRemovePlaylist: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     var hideCandidate by remember { mutableStateOf<Playlist?>(null) }
     var showCreateDialog by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }

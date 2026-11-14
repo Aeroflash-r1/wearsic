@@ -99,7 +99,7 @@ fun AlbumsScreen(
     onOpenAlbum: (Album) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val keyboardController = LocalSoftwareKeyboardController.current
     val distinctAlbums = remember(albumsState.albums) { albumsState.albums.distinctBy { it.id } }
     // Initialised ONCE from the ViewModel query — keying this on

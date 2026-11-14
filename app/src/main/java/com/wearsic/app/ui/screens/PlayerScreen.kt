@@ -1585,7 +1585,7 @@ private fun ActionsPage(
     artworkAccent: Color = Color.Transparent,
     onSaveAccent: ((Color) -> Unit)? = null
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     var savedFlash by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     ScalingLazyColumn(

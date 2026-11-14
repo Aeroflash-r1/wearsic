@@ -74,7 +74,7 @@ fun ArtistsScreen(
     onPlayArtistSongs: (ArtistGroup, Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     var selected by remember { mutableStateOf<ArtistGroup?>(null) }
     val distinctSongs = remember(selected) { selected?.songs?.distinctBy { it.id }.orEmpty() }
 

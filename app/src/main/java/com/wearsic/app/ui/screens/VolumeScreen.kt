@@ -105,7 +105,7 @@ fun VolumeScreen(
     val context = LocalContext.current
     val volume = rememberSystemVolumeState()
     val haptic = LocalHapticFeedback.current
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
 
     // The playback state reports the real Bluetooth product name when one is
     // connected ("Pixel Buds Pro"); anything that is not the built-in speaker

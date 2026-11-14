@@ -152,7 +152,7 @@ fun SettingsScreen(
     var portField by remember { mutableStateOf("") }
     val currentPort: String = remember(serverUrl) { extractPort(serverUrl) }
 
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val keyboardController = LocalSoftwareKeyboardController.current
 
     // ── Editor state ─────────────────────────────────────────────────────

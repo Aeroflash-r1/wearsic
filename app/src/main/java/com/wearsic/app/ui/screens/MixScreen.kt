@@ -80,7 +80,7 @@ fun MixScreen(
     onRefreshRecommendations: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
 
     ScreenScaffold(
         scrollState = listState,

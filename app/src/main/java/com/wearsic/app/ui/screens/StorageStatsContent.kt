@@ -70,7 +70,7 @@ fun StorageStatsContent(
     modifier: Modifier = Modifier
 ) {
     val totalMb = autoMb + manualMb
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
 
     ScreenScaffold(

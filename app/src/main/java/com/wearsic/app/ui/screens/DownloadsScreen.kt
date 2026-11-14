@@ -103,7 +103,7 @@ fun DownloadsScreen(
     onPlayAll: (List<Track>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     var trackToDeleteId by remember { mutableStateOf<String?>(null) }
     var showClearAllConfirmation by remember { mutableStateOf(false) }
     val completedTracks = remember(downloads) {

@@ -134,7 +134,7 @@ fun SearchScreen(
     onPlayArtistTracks: (List<Track>, Int) -> Unit = { tracks, _ -> tracks.firstOrNull()?.let(onTrackSelected) },
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val keyboardController = LocalSoftwareKeyboardController.current
     // Single source of truth: the ViewModel state. The field writes straight
     // back through onSearchTextChanged, so no local remember-mirror is needed.

@@ -48,7 +48,7 @@ fun RecommendationsScreen(
     onQueue: (Track) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val distinctTracks = remember(recommendationsState.tracks) {
         recommendationsState.tracks.distinctBy { it.id }
     }

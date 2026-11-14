@@ -82,7 +82,7 @@ fun PlaylistDetailScreen(
     onDownloadAllTracks: (List<Track>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     var actionTrack by remember { mutableStateOf<Track?>(null) }
     val distinctTracks = remember(detailState.tracks) { detailState.tracks.distinctBy { it.id } }
     val notDownloaded = remember(distinctTracks, downloadedTrackIds) {

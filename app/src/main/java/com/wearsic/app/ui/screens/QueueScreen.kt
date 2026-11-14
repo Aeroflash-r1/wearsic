@@ -119,7 +119,7 @@ fun QueueScreen(
     onStartRadio: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val queue = playbackState.playlist
     val currentIndex = playbackState.currentTrackIndex
     val upcoming = queue.drop(currentIndex + 1)

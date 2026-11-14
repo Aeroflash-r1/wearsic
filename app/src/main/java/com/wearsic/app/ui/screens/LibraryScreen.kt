@@ -116,7 +116,7 @@ fun LibraryScreen(
     mostPlayed: List<Track> = emptyList(),
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val offlinePreview = remember(offlineDownloads) { offlineDownloads.take(8) }
     val recentPreview = remember(recentTracks) { recentTracks.take(5) }
 

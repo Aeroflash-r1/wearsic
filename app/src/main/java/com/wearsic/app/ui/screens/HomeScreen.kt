@@ -100,7 +100,7 @@ fun HomeScreen(
     onRefreshRecommendations: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     // Recommendations: fetch ONCE when the tab is first shown with an empty
     // list (the server holds a 30-min cache, so this is one cheap POST).
     // A previous FAILED fetch pins errorMessage — the guard keeps that state

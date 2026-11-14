@@ -6,7 +6,7 @@ import androidx.compose.ui.unit.dp
 
 /**
  * Screen-level chrome the Wear app floats over content — declared so
- * [wearsicListContentPadding] can reserve space for it in ONE place, and no
+ * [rememberWearsicListContentPadding] can reserve space for it in ONE place, and no
  * screen has to hardcode custom bottom/top insets.
  *
  * - [wearsicMiniPlayerReserve]: height of the persistent mini-player pill

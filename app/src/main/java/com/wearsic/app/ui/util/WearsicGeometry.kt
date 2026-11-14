@@ -57,4 +57,29 @@ object WearsicGeometry {
         val usable = edgeBarMaxWidth(widthPx, heightPx, edgeInsetPx) - 2f * safetyPx
         return usable.coerceAtLeast(0f)
     }
+
+    /**
+     * Horizontal inset a panel of [panelHeightPx], centred vertically on the
+     * face, needs so its bottom corners stay inside the bezel.
+     *
+     * The panel is centred, so it reaches `panelHeightPx / 2` below the
+     * vertical centre — and that is its narrowest row. The panel may be at
+     * most `chordWidth(widthPx, heightPx, panelHeightPx / 2)` wide, and the
+     * remainder of the diameter has to be handed back as a symmetric inset.
+     *
+     * The result is clamped into [[minPaddingPx], [maxPaddingPx]] so a very
+     * short panel does not end up implausibly wide and a very tall one does
+     * not collapse to a sliver.
+     */
+    fun panelHorizontalPadding(
+        widthPx: Int,
+        heightPx: Int,
+        panelHeightPx: Float,
+        minPaddingPx: Float = 32f,
+        maxPaddingPx: Float = 88f
+    ): Float {
+        val radius = radiusPx(widthPx, heightPx)
+        val half = chordWidth(widthPx, heightPx, panelHeightPx / 2f) / 2f
+        return (radius - half).coerceIn(minPaddingPx, maxPaddingPx)
+    }
 }

@@ -71,7 +71,7 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.util.rememberSystemVolumeState
 import com.wearsic.app.ui.util.wearsicRotaryScroll
@@ -105,7 +105,7 @@ fun VolumeScreen(
     val context = LocalContext.current
     val volume = rememberSystemVolumeState()
     val haptic = LocalHapticFeedback.current
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
 
     // The playback state reports the real Bluetooth product name when one is
     // connected ("Pixel Buds Pro"); anything that is not the built-in speaker
@@ -122,11 +122,16 @@ fun VolumeScreen(
     ) {
         ScalingLazyColumn(
             state = listState,
+            // No auto-centering: the framework otherwise anchors item 1 to the
+            // viewport centre, pushing the header (and the clock) off the top
+            // of the round face. We pin the list with an explicit content
+            // padding instead.
+            autoCentering = null,
             modifier = Modifier
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState),
-            contentPadding = wearsicListContentPadding(it),
+            contentPadding = rememberWearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -340,7 +345,7 @@ private fun VolumeDial(
     enabled: Boolean,
     onToggleMute: () -> Unit,
     modifier: Modifier = Modifier,
-    diameter: Dp = 108.dp
+    diameter: Dp = 88.dp
 ) {
     val animatedFraction by animateFloatAsState(
         targetValue = if (enabled) fraction.coerceIn(0f, 1f) else 0f,

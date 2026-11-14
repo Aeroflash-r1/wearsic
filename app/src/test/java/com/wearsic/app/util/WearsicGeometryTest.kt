@@ -79,4 +79,37 @@ class WearsicGeometryTest {
         assertEquals(0f, WearsicGeometry.edgeBarMaxWidthSafe(0, 0, 20f, 8f), 0.01f)
         assertEquals(0f, WearsicGeometry.chordWidth(0, 0, 0f), 0.01f)
     }
+    /** Galaxy Watch 7 44mm: 450x450 px face, 2.0 density. */
+    @Test
+    fun `centred panel keeps its bottom corners inside the circle`() {
+        // A panel that nearly fills the height must be narrowed hard...
+        val tall = WearsicGeometry.panelHorizontalPadding(450, 450, 400f)
+        // ...while a short panel hugging the centre may stay wide.
+        val short = WearsicGeometry.panelHorizontalPadding(450, 450, 120f)
+        assertTrue("a tall sheet needs a much larger inset ($tall vs $short)", tall > short)
+    }
+
+    @Test
+    fun `panel padding is clamped into sane bounds`() {
+        val tall = WearsicGeometry.panelHorizontalPadding(450, 450, 450f)
+        val short = WearsicGeometry.panelHorizontalPadding(450, 450, 10f)
+        assertTrue("tall panel inset stays within the clamp ($tall)", tall <= 88f)
+        assertTrue("short panel inset stays within the clamp ($short)", short >= 32f)
+    }
+
+    @Test
+    fun `panel width at its bottom edge equals the chord there`() {
+        val panelHeight = 300f
+        val padding = WearsicGeometry.panelHorizontalPadding(450, 450, panelHeight)
+        val panelWidth = 450f - 2f * padding
+        val chord = WearsicGeometry.chordWidth(450, 450, panelHeight / 2f)
+        // The panel may not exceed the chord at its bottom edge.
+        assertTrue("panel width ($panelWidth) must not exceed the chord ($chord)", panelWidth <= chord + 0.01f)
+    }
+
+    @Test
+    fun `a degenerate face yields the minimum padding rather than nonsense`() {
+        assertEquals(32f, WearsicGeometry.panelHorizontalPadding(0, 0, 100f), 0.01f)
+    }
+
 }

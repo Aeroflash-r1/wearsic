@@ -92,7 +92,7 @@ import com.wearsic.app.ui.components.WearsicSongRowActionButton
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDisplayFont
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.WearsicGlassBorder
 import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicSurfaceActive
@@ -134,7 +134,7 @@ fun SearchScreen(
     onPlayArtistTracks: (List<Track>, Int) -> Unit = { tracks, _ -> tracks.firstOrNull()?.let(onTrackSelected) },
     modifier: Modifier = Modifier
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val keyboardController = LocalSoftwareKeyboardController.current
     // Single source of truth: the ViewModel state. The field writes straight
     // back through onSearchTextChanged, so no local remember-mirror is needed.
@@ -222,12 +222,17 @@ fun SearchScreen(
     ) {
         ScalingLazyColumn(
             state = listState,
+            // No auto-centering: the framework otherwise anchors item 1 to the
+            // viewport centre, pushing the header (and the clock) off the top
+            // of the round face. We pin the list with an explicit content
+            // padding instead.
+            autoCentering = null,
             modifier = Modifier
                 .fillMaxSize()
                 .wearsicEntrance()
                 .testTag("search_lazy_column")
                 .wearsicRotaryScroll(listState),
-            contentPadding = wearsicListContentPadding(it),
+            contentPadding = rememberWearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

@@ -30,7 +30,7 @@ import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicTextMuted
-import com.wearsic.app.ui.theme.wearsicListContentPadding
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
 import com.wearsic.app.ui.viewmodel.LibraryViewModel
@@ -48,7 +48,7 @@ fun RecommendationsScreen(
     onQueue: (Track) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
     val distinctTracks = remember(recommendationsState.tracks) {
         recommendationsState.tracks.distinctBy { it.id }
     }
@@ -62,12 +62,17 @@ fun RecommendationsScreen(
     ) {
         ScalingLazyColumn(
             state = listState,
+            // No auto-centering: the framework otherwise anchors item 1 to the
+            // viewport centre, pushing the header (and the clock) off the top
+            // of the round face. We pin the list with an explicit content
+            // padding instead.
+            autoCentering = null,
             modifier = Modifier
                 .fillMaxSize()
                 .wearsicEntrance()
                 .wearsicRotaryScroll(listState)
                 .testTag("recommendations_lazy_column"),
-            contentPadding = wearsicListContentPadding(it),
+            contentPadding = rememberWearsicListContentPadding(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

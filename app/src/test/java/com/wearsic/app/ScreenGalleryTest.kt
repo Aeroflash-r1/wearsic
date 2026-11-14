@@ -6,6 +6,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import com.wearsic.app.data.db.DownloadState
 import com.wearsic.app.data.db.WearsicDownloadEntity
 import com.wearsic.app.model.Album
@@ -36,6 +38,8 @@ import com.wearsic.app.ui.screens.ServerDashboardScreen
 import com.wearsic.app.ui.screens.SettingsScreen
 import com.wearsic.app.ui.screens.StorageStatsContent
 import com.wearsic.app.ui.screens.VolumeScreen
+import com.wearsic.app.ui.screens.WearsicHubScreen
+import com.wearsic.app.ui.screens.RecommendationsScreen
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.AlbumsUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.ArtistsUiState
@@ -74,8 +78,10 @@ class ScreenGalleryTest {
 
     @get:Rule val composeTestRule = createComposeRule()
 
-    private fun shoot(name: String, content: @Composable () -> Unit) {
+    private fun shoot(name: String, before: () -> Unit = {}, content: @Composable () -> Unit) {
         composeTestRule.setContent { WearsicTheme { Box(Modifier.fillMaxSize()) { content() } } }
+        composeTestRule.waitForIdle()
+        before()
         composeTestRule.waitForIdle()
         composeTestRule.onRoot().captureRoboImage(filePath = "src/test/screenshots/$name.png")
     }
@@ -430,6 +436,273 @@ class ScreenGalleryTest {
             onStartRadio = {},
             onShuffleFavorites = {},
             onRefreshRecommendations = {}
+        )
+    }
+
+    // ── v1.9.49 shell + tri-mode sub-screens ─────────────────────────────
+
+    @Test
+    fun debug_chrome_reserve_probe() {
+        composeTestRule.setContent {
+            WearsicTheme {
+                WearsicHubScreen(
+                    playbackState = playback,
+                    recentTracks = tracks.take(3),
+                    mostPlayedTracks = tracks.take(4),
+                    favoritesState = FavoritesUiState(tracks = tracks.take(4)),
+                    playlistsState = PlaylistsUiState(favorites = tracks.take(3), playlists = playlists),
+                    playlistDetailState = PlaylistDetailUiState(),
+                    albumsState = AlbumsUiState(),
+                    artistsState = ArtistsUiState(),
+                    recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
+                    searchState = SearchUiState(),
+                    radioState = RadioState.Idle,
+                    serverReachable = true,
+                    failoverServerName = null,
+                    offlineDownloads = emptyList(),
+                    favoriteTrackIds = emptySet(),
+                    onPlay = { _, _ -> },
+                    onPlayFavorites = {},
+                    onShuffleFavorites = {},
+                    onStartRadio = {},
+                    onQueueTrack = {},
+                    onToggleFavoriteTrack = {},
+                    onStartDownload = {},
+                    onOpenPlayer = {},
+                    onOpenSearch = {},
+                    onOpenDownloads = {},
+                    onOpenPlaylists = {},
+                    onOpenAlbums = {},
+                    onOpenFavorites = {},
+                    onOpenArtists = {},
+                    onOpenRecommendations = {},
+                    onOpenSettings = {},
+                    onRefreshLibrary = {},
+                    onRefreshFavorites = {},
+                    onRefreshArtists = {},
+                    onRefreshRecommendations = {},
+                    onSearchQueryChanged = {},
+                    onSearchQuerySubmitted = {},
+                    onLoadMoreResults = {},
+                    searchPlaylists = playlists,
+                    onCreatePlaylistAndAdd = { _, _ -> },
+                    onAddTrackToPlaylist = { _, _ -> },
+                    onAlbumQueryChanged = {},
+                    onOpenAlbum = { _, _ -> },
+                    onPlayArtist = { _, _ -> }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+        kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(500) }
+        // Not an assertion about behavior — this intentionally fails so the
+        // produced ERROR MESSAGE dumps the value of the composition local to
+        // the CI log:
+        org.junit.Assert.fail("PROBE top=" + 1)
+    }
+
+    @Test
+    fun hub_home() = shoot("24-hub-home") {
+        WearsicHubScreen(
+            playbackState = playback,
+            recentTracks = tracks.take(3),
+            mostPlayedTracks = tracks.take(4),
+            favoritesState = FavoritesUiState(tracks = tracks.take(4)),
+            playlistsState = PlaylistsUiState(favorites = tracks.take(3), playlists = playlists),
+            playlistDetailState = PlaylistDetailUiState(playlistId = "p1", tracks = tracks),
+            albumsState = AlbumsUiState(
+                query = "coldplay",
+                albums = listOf(
+                    Album("a1", "Parachutes", "Coldplay"),
+                    Album("a2", "A Rush of Blood to the Head", "Coldplay")
+                )
+            ),
+            artistsState = ArtistsUiState(
+                artists = listOf(
+                    ArtistGroup("Coldplay", tracks.take(3)),
+                    ArtistGroup("Ed Sheeran", tracks.drop(3))
+                )
+            ),
+            recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
+            searchState = SearchUiState(),
+            radioState = RadioState.Idle,
+            serverReachable = true,
+            failoverServerName = null,
+            offlineDownloads = emptyList(),
+            favoriteTrackIds = emptySet(),
+            onPlay = { _, _ -> },
+            onPlayFavorites = {},
+            onShuffleFavorites = {},
+            onStartRadio = {},
+            onQueueTrack = {},
+            onToggleFavoriteTrack = {},
+            onStartDownload = {},
+            onOpenPlayer = {},
+            onOpenSearch = {},
+            onOpenDownloads = {},
+            onOpenPlaylists = {},
+            onOpenAlbums = {},
+            onOpenFavorites = {},
+            onOpenArtists = {},
+            onOpenRecommendations = {},
+            onOpenSettings = {},
+            onRefreshLibrary = {},
+            onRefreshFavorites = {},
+            onRefreshArtists = {},
+            onRefreshRecommendations = {},
+            onSearchQueryChanged = {},
+            onSearchQuerySubmitted = {},
+            onLoadMoreResults = {},
+            searchPlaylists = playlists,
+            onCreatePlaylistAndAdd = { _, _ -> },
+            onAddTrackToPlaylist = { _, _ -> },
+            onAlbumQueryChanged = {},
+            onOpenAlbum = { _, _ -> },
+            onPlayArtist = { _, _ -> }
+        )
+    }
+
+    @Test
+    fun hub_offline_failover() = shoot("24b-hub-offline") {
+        WearsicHubScreen(
+            playbackState = PlaybackUiState(),
+            recentTracks = tracks.take(2),
+            mostPlayedTracks = tracks.take(3),
+            favoritesState = FavoritesUiState(tracks = tracks.take(4)),
+            playlistsState = PlaylistsUiState(favorites = tracks.take(3), playlists = playlists),
+            playlistDetailState = PlaylistDetailUiState(),
+            albumsState = AlbumsUiState(),
+            artistsState = ArtistsUiState(),
+            recommendationsState = RecommendationsUiState(),
+            searchState = SearchUiState(),
+            radioState = RadioState.Idle,
+            serverReachable = false,
+            failoverServerName = "Home Tube",
+            offlineDownloads = tracks.take(2),
+            favoriteTrackIds = emptySet(),
+            onPlay = { _, _ -> },
+            onPlayFavorites = {},
+            onShuffleFavorites = {},
+            onStartRadio = {},
+            onQueueTrack = {},
+            onToggleFavoriteTrack = {},
+            onStartDownload = {},
+            onOpenPlayer = {},
+            onOpenSearch = {},
+            onOpenDownloads = {},
+            onOpenPlaylists = {},
+            onOpenAlbums = {},
+            onOpenFavorites = {},
+            onOpenArtists = {},
+            onOpenRecommendations = {},
+            onOpenSettings = {},
+            onRefreshLibrary = {},
+            onRefreshFavorites = {},
+            onRefreshArtists = {},
+            onRefreshRecommendations = {},
+            onSearchQueryChanged = {},
+            onSearchQuerySubmitted = {},
+            onLoadMoreResults = {},
+            searchPlaylists = playlists,
+            onCreatePlaylistAndAdd = { _, _ -> },
+            onAddTrackToPlaylist = { _, _ -> },
+            onAlbumQueryChanged = {},
+            onOpenAlbum = { _, _ -> },
+            onPlayArtist = { _, _ -> }
+        )
+    }
+
+    @Test
+    fun search_albums_tab() = shoot(
+        "25-search-albums",
+        before = { composeTestRule.onNodeWithTag("search_mode_Albums").performClick() }
+    ) {
+        SearchScreen(
+            searchState = SearchUiState(
+                query = "coldplay",
+                results = tracks,
+                hasSearched = true
+            ),
+            albumResults = listOf(
+                Album("a1", "Parachutes", "Coldplay"),
+                Album("a2", "A Rush of Blood to the Head", "Coldplay"),
+                Album("a3", "X&Y", "Coldplay")
+            ),
+            onQuerySelected = {},
+            onTrackSelected = {}
+        )
+    }
+
+    @Test
+    fun search_artists_tab() = shoot(
+        "26-search-artists",
+        before = { composeTestRule.onNodeWithTag("search_mode_Artists").performClick() }
+    ) {
+        SearchScreen(
+            searchState = SearchUiState(
+                query = "arjit singh",
+                results = tracks,
+                hasSearched = true
+            ),
+            onQuerySelected = {},
+            onTrackSelected = {}
+        )
+    }
+
+    @Test
+    fun player_action_page() = shoot(
+        "27-player-actions",
+        before = { composeTestRule.onNodeWithTag("player_page_switch").performClick() }
+    ) {
+        PlayerScreen(
+            playbackState = playback,
+            onTogglePlayPause = {}, onSkipNext = {}, onSkipPrevious = {},
+            onToggleFavorite = {}, onNavigateToVolume = {}
+        )
+    }
+
+    @Test
+    fun made_for_you() = shoot("28-made-for-you") {
+        RecommendationsScreen(
+            recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
+            onRefresh = {},
+            onPlayTrack = { _, _ -> }
+        )
+    }
+
+    @Test
+    fun made_for_you_loading() = shoot("29-made-for-you-loading") {
+        RecommendationsScreen(
+            recommendationsState = RecommendationsUiState(isLoading = true),
+            onRefresh = {},
+            onPlayTrack = { _, _ -> }
+        )
+    }
+
+    @Test
+    fun queue_empty() = shoot("30-queue-empty") {
+        QueueScreen(
+            playbackState = PlaybackUiState(),
+            onPlayItem = {}, onRemoveItem = {}, onClearQueue = {},
+            shuffleEnabled = false, repeatMode = 0,
+            onToggleShuffle = {}, onCycleRepeat = {}
+        )
+    }
+
+    @Test
+    fun favorites_empty() = shoot("31-favorites-empty") {
+        FavoritesScreen(
+            favoritesState = FavoritesUiState(),
+            onRefresh = {}, onPlayTrack = { _, _ -> },
+            onDownloadTrack = {}, onRemoveFavorite = {}
+        )
+    }
+
+    @Test
+    fun playlists_empty() = shoot("32-playlists-empty") {
+        PlaylistsScreen(
+            playlistsState = PlaylistsUiState(),
+            onRefresh = {}, onNavigateToFavorites = {}, onOpenPlaylist = {}
         )
     }
 }

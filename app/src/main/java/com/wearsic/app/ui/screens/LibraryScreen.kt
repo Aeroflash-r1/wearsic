@@ -233,9 +233,20 @@ fun LibraryScreen(
                 }
             }
 
-            // Browse 2×2 Grid FIRST — the four most-used destinations
-            // (Downloads / Playlists / Albums / Artists) used to sit below the
-            // fold on a 44mm face, unreachable without a blind swipe.
+            // Primary Search Action
+            item {
+                WearsicPrimaryPillButton(
+                    label = "Search Music",
+                    icon = Icons.Rounded.Search,
+                    onClick = onNavigateToSearch,
+                    backgroundColor = LocalWearsicAccent.current,
+                    contentColor = WearsicTextPrimaryDark,
+                    testTag = "library_search_button"
+                )
+            }
+
+            // Browse 2×2 Grid: compact round-screen destination tiles kept near
+            // the top so Downloads and Playlists are one tap from launch.
             // The grid is a fixed 2×2 so the layout never reflows when an
             // optional destination (Favorites) is present or absent.
             item {
@@ -280,18 +291,6 @@ fun LibraryScreen(
                         testTag = "library_artists_button"
                     )
                 }
-            }
-
-            // Primary Search Action
-            item {
-                WearsicPrimaryPillButton(
-                    label = "Search Music",
-                    icon = Icons.Rounded.Search,
-                    onClick = onNavigateToSearch,
-                    backgroundColor = LocalWearsicAccent.current,
-                    contentColor = WearsicTextPrimaryDark,
-                    testTag = "library_search_button"
-                )
             }
 
             // Made for you — recommendations from your local taste.

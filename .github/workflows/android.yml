@@ -492,6 +492,14 @@ jobs:
           echo "STORE_PASSWORD=ci-ephemeral" >> "$GITHUB_ENV"
           echo "KEY_PASSWORD=ci-ephemeral" >> "$GITHUB_ENV"
 
+      # R8 already crossed the 1 GiB daemon heap on the redesigned tree (the
+      # `-Xmx1024m` in gradle.properties exists because the ARM64 phone has
+      # only ~2 GiB). GitHub runners are x86_64 with plenty of RAM, so the
+      # release job bumps the daemon heap BEFORE assembling — the committed
+      # properties file stays device-friendly.
+      - name: Raise Gradle daemon heap for the release assembly
+        run: sed -i 's/-Xmx1024m/-Xmx4096m/' gradle.properties
+
       - name: Assemble release APK + server dist
         run: ./gradlew :app:assembleRelease :wearsic-server:installDist --stacktrace
 

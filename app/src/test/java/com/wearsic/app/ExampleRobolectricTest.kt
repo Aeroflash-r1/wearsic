@@ -177,8 +177,8 @@ class ExampleRobolectricTest {
             }
         }
 
-        // The app now opens on the Hub's Home tab — switch to Library first.
-        composeTestRule.onNodeWithContentDescription("Library tab").performClick()
+        // The app now opens on Home — open Library via the Home pill.
+        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
 
         // Verify Library content with unmerged tree. (The "Library" text
         // exists in both the rail label and the screen header, so assert the
@@ -213,8 +213,8 @@ class ExampleRobolectricTest {
             }
         }
 
-        // Switch to the Library tab (start = Home on the new Hub).
-        composeTestRule.onNodeWithContentDescription("Library tab").performClick()
+        // Switch to Library (start = Home on the new Hub).
+        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
 
         // Navigate to Downloads. The destination now lives in the Browse
         // grid, below the fold on the round default viewport — swipe until
@@ -241,12 +241,8 @@ class ExampleRobolectricTest {
             }
         }
 
-        // Navigate to Settings from Library. The Library tab is now the
-        // entry (the app opens on Hub → Home), and the Settings tile sits at
-        // the end of the Browse grid — it may sit below the fold even on
-        // the tall w480-h800 viewport, so swipe until it is on-screen, then
-        // tap (the loop exits immediately when it is already visible).
-        composeTestRule.onNodeWithContentDescription("Library tab").performClick()
+        // Navigate to Settings from Library (Home → Library pill → Settings).
+        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
         val settingsTile =
             composeTestRule.onNodeWithTag("library_settings_button", useUnmergedTree = true)
         var settingsScrolls = 5

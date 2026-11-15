@@ -553,34 +553,10 @@ class ScreenGalleryTest {
     }
 
     @Test
-    fun search_albums_tab() = shoot(
-        "25-search-albums",
-        before = { composeTestRule.onNodeWithTag("search_mode_Albums").performClick() }
-    ) {
+    fun search_songs() = shoot("25-search-songs") {
         SearchScreen(
             searchState = SearchUiState(
                 query = "coldplay",
-                results = tracks,
-                hasSearched = true
-            ),
-            albumResults = listOf(
-                Album("a1", "Parachutes", "Coldplay"),
-                Album("a2", "A Rush of Blood to the Head", "Coldplay"),
-                Album("a3", "X&Y", "Coldplay")
-            ),
-            onQuerySelected = {},
-            onTrackSelected = {}
-        )
-    }
-
-    @Test
-    fun search_artists_tab() = shoot(
-        "26-search-artists",
-        before = { composeTestRule.onNodeWithTag("search_mode_Artists").performClick() }
-    ) {
-        SearchScreen(
-            searchState = SearchUiState(
-                query = "arjit singh",
                 results = tracks,
                 hasSearched = true
             ),

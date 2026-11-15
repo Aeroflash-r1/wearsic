@@ -150,10 +150,10 @@ class RelaunchWithDataTest {
         // opens on the Hub's Home tab, so wait for the rail, switch to
         // Library, and confirm the Library list renders.
         composeTestRule.waitUntil(timeoutMillis = 15_000) {
-            composeTestRule.onAllNodesWithContentDescription("Library tab")
+            composeTestRule.onAllNodesWithTag("home_library_shortcut", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithContentDescription("Library tab").performClick()
+        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
         composeTestRule.waitUntil(timeoutMillis = 15_000) {
             composeTestRule.onAllNodesWithTag("library_lazy_column")
                 .fetchSemanticsNodes().isNotEmpty()
@@ -221,10 +221,10 @@ class RelaunchWithDataTest {
         // Switch to Library (the app opens on Hub → Home). Wait for the rail
         // chip first so the click never races the first composition.
         composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithContentDescription("Library tab")
+            composeTestRule.onAllNodesWithTag("home_library_shortcut", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithContentDescription("Library tab").performClick()
+        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
         composeTestRule.waitUntil(15_000) {
             composeTestRule.onAllNodesWithTag("library_lazy_column")
                 .fetchSemanticsNodes().isNotEmpty()
@@ -269,10 +269,10 @@ class RelaunchWithDataTest {
             WearsicTheme { WearsicApp(timeText = {}) }
         }
         composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithContentDescription("Library tab")
+            composeTestRule.onAllNodesWithTag("home_library_shortcut", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithContentDescription("Library tab").performClick()
+        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
         composeTestRule.waitUntil(15_000) {
             composeTestRule.onAllNodesWithTag("library_lazy_column")
                 .fetchSemanticsNodes().isNotEmpty()

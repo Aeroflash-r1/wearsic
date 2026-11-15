@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,12 +51,14 @@ import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicError
 import com.wearsic.app.ui.theme.WearsicGlassBorder
+import com.wearsic.app.ui.theme.WearsicGlassFill
 import com.wearsic.app.ui.theme.WearsicHeroCardBrush
 import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.util.wearsicEntrance
+import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicRotaryScroll
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.RecommendationsUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.RadioState
@@ -76,6 +79,8 @@ fun MixScreen(
     radioState: RadioState,
     onPlay: (List<Track>, Int) -> Unit,
     onStartRadio: () -> Unit,
+    onPlayRadio: (List<Track>) -> Unit = { onPlay(it, 0) },
+    onDismissRadio: () -> Unit = {},
     onShuffleFavorites: () -> Unit,
     onRefreshRecommendations: () -> Unit,
     modifier: Modifier = Modifier
@@ -118,6 +123,73 @@ fun MixScreen(
                     hasHistory = recentTracks.isNotEmpty() || favorites.isNotEmpty(),
                     onStartRadio = onStartRadio
                 )
+            }
+
+            // The generated radio list — show what is about to play BEFORE
+            // anything starts; the user taps the row to play it.
+            if (radioState is RadioState.Ready) {
+                item {
+                    WearsicSectionTitle(
+                        label = "Radio mix",
+                        icon = Icons.Rounded.GraphicEq,
+                        iconContentDescription = "Radio mix",
+                        trailing = {
+                            Text(
+                                text = "${radioState.tracks.size} tracks",
+                                color = wearsicSecondaryText(),
+                                fontSize = 10.sp
+                            )
+                        }
+                    )
+                }
+                itemsIndexed(
+                    radioState.tracks,
+                    key = { i, t -> "radio_${t.id}_$i" }
+                ) { index, track ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
+                            .background(WearsicGlassFill)
+                            .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
+                            .wearsicClickable(onClick = { onPlayRadio(radioState.tracks) })
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = (index + 1).toString(),
+                            color = wearsicSecondaryText(),
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(end = 10.dp)
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = track.title,
+                                color = WearsicTextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = track.artist,
+                                color = wearsicSecondaryText(),
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+                item {
+                    Text(
+                        text = "Tap any track to play the whole mix",
+                        color = wearsicSecondaryText(),
+                        fontSize = 9.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    )
+                }
             }
 
             // ---- Favorites shuffle card ----

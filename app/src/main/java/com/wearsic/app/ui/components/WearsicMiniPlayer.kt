@@ -85,7 +85,7 @@ fun WearsicMiniPlayer(
     val reserve = wearsicMiniPlayerReserve()
     if (!hasTrack) return
 
-    BoxWithConstraints(modifier = modifier) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val density = LocalDensity.current
         val accent = LocalWearsicAccent.current
         val barHeight = watchScaled(WearsicDimens.MiniPlayerBarHeight)

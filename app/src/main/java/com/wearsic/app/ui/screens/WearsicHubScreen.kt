@@ -141,9 +141,19 @@ fun WearsicHubScreen(
     onAlbumQueryChanged: (String) -> Unit,
     onOpenAlbum: (String, String) -> Unit,
     onPlayArtist: (com.wearsic.app.model.ArtistGroup, Int) -> Unit,
+    /**
+     * The selected rail section. Hoisted so the nav host can switch tabs
+     * INSTEAD of pushing the legacy standalone Library/Search/Made-For-You
+     * routes — those still existed next to the Hub and made the OLD layout
+     * come back mid-session.
+     */
+    section: WearsicHubSection = WearsicHubSection.Home,
+    onSelectSection: ((WearsicHubSection) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    var activeTab by rememberSaveable { mutableIntStateOf(WearsicHubSection.Home.ordinal) }
+    var internalTab by rememberSaveable { mutableIntStateOf(WearsicHubSection.Home.ordinal) }
+    // An externally driven section wins; otherwise the screen keeps its own.
+    val activeTab = if (onSelectSection != null) section.ordinal else internalTab
     // The rail block (24 top pad + chip row + label + 4 bottom pad) — the
     // exact vertical span the floating rail occupies; provided pre-scaled.
     // 24dp of top pad is deliberate: it drops the chip row below the system
@@ -176,7 +186,10 @@ fun WearsicHubScreen(
                         onOpenSearch()
                     },
                     onOpenSearch = onOpenSearch,
-                    onOpenMix = { activeTab = WearsicHubSection.Mix.ordinal },
+                    onOpenMix = {
+                        internalTab = WearsicHubSection.Mix.ordinal
+                        onSelectSection?.invoke(WearsicHubSection.Mix)
+                    },
                     onRefreshRecommendations = onRefreshRecommendations
                 )
 
@@ -234,7 +247,10 @@ fun WearsicHubScreen(
         // ---- Section rail (floating, scrims, round-safe) ----
         WearsicHubRail(
             active = WearsicHubSection.entries[activeTab],
-            onSelect = { section -> activeTab = section.ordinal },
+            onSelect = { picked ->
+                internalTab = picked.ordinal
+                onSelectSection?.invoke(picked)
+            },
             modifier = Modifier.align(Alignment.TopCenter)
         )
     }

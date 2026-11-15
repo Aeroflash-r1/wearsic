@@ -7,9 +7,11 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -43,6 +45,7 @@ import com.wearsic.app.ui.screens.SettingsScreen
 import com.wearsic.app.ui.screens.StorageStatsContent
 import com.wearsic.app.ui.screens.VolumeScreen
 import com.wearsic.app.ui.screens.WearsicHubScreen
+import com.wearsic.app.ui.screens.WearsicHubSection
 import com.wearsic.app.ui.components.WearsicMiniPlayer
 import com.wearsic.app.ui.components.wearsicMiniPlayerReserve
 import com.wearsic.app.ui.theme.LocalWearsicAccent
@@ -67,6 +70,10 @@ fun WearsicApp(
     }
 ) {
     val navController = rememberSwipeDismissableNavController()
+    // Which Hub section (Home / Library / Search / Mix) is showing. Hoisted
+    // so a tap inside the Hub switches the TAB instead of pushing the legacy
+    // standalone Library/Search/Made-For-You routes.
+    var hubSection by rememberSaveable { mutableStateOf(WearsicHubSection.Home) }
     val playbackVM = playerViewModel.playbackViewModel
     val libraryVM = playerViewModel.libraryViewModel
     val downloadsVM = playerViewModel.downloadsViewModel
@@ -185,6 +192,8 @@ fun WearsicApp(
                                 val offlineDownloads by downloadsVM.completedTracks.collectAsStateWithLifecycle()
 
                                 WearsicHubScreen(
+                                    section = hubSection,
+                                    onSelectSection = { hubSection = it },
                                     playbackState = stablePlaybackState,
                                     recentTracks = recentTracks,
                                     mostPlayedTracks = mostPlayedTracks,
@@ -219,13 +228,13 @@ fun WearsicApp(
                                     onToggleFavoriteTrack = { playerViewModel.toggleFavoriteFor(it) },
                                     onStartDownload = { downloadsVM.startDownload(it) },
                                     onOpenPlayer = { navController.navigate(Screen.Player.route) },
-                                    onOpenSearch = { navController.navigate(Screen.Search.route) },
+                                    onOpenSearch = { hubSection = WearsicHubSection.Search },
                                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
                                     onOpenPlaylists = { navController.navigate(Screen.Playlists.route) },
                                     onOpenAlbums = { navController.navigate(Screen.Albums.route) },
                                     onOpenFavorites = { navController.navigate(Screen.Favorites.route) },
                                     onOpenArtists = { navController.navigate(Screen.Artists.route) },
-                                    onOpenRecommendations = { navController.navigate(Screen.MadeForYou.route) },
+                                    onOpenRecommendations = { hubSection = WearsicHubSection.Mix },
                                     onOpenSettings = { navController.navigate(Screen.Settings.route) },
                                     onRefreshLibrary = { libraryVM.refreshLibrary() },
                                     onRefreshFavorites = { libraryVM.refreshFavorites() },
@@ -276,7 +285,7 @@ fun WearsicApp(
                                         navController.navigate(Screen.Player.route)
                                     },
                                     onNavigateToSearch = {
-                                        navController.navigate(Screen.Search.route)
+                                        hubSection = WearsicHubSection.Search
                                     },
                                     onNavigateToDownloads = {
                                         navController.navigate(Screen.Downloads.route)
@@ -294,7 +303,7 @@ fun WearsicApp(
                                         navController.navigate(Screen.Artists.route)
                                     },
                                     onNavigateToRecommendations = {
-                                        navController.navigate(Screen.MadeForYou.route)
+                                        hubSection = WearsicHubSection.Mix
                                     },
                                     onNavigateToSettings = {
                                         navController.navigate(Screen.Settings.route)
@@ -781,7 +790,8 @@ fun WearsicApp(
                             onOpenPlayer = {
                                 navController.navigate(Screen.Player.route) { launchSingleTop = true }
                             },
-                            onTogglePlayPause = { playbackVM.togglePlayPause() }
+                            onTogglePlayPause = { playbackVM.togglePlayPause() },
+                            modifier = Modifier.align(Alignment.BottomCenter)
                         )
                     }
                         }

@@ -1865,7 +1865,20 @@ internal fun rankAlbums(query: String, albums: List<AlbumDto>): List<AlbumDto> {
     val best = pool.maxOf { scoreOf(it) }
     if (best <= 0) return albums
 
+    // When the query carries an artist-ish token (people names usually are
+    // the LAST tokens), break score ties by how much of the uploader matches
+    // — that is what separates the real "Kesariya" album by Arijit Singh
+    // from same-named uploads by random publishers.
+    fun uploaderShareOf(a: AlbumDto): Float {
+        val u = uploaderTokensOf(a)
+        if (u.isEmpty()) return 0f
+        return qTokens.count { it in u }.toFloat() / u.size
+    }
+
     return pool
         .filter { scoreOf(it) > 0 }
-        .sortedByDescending { scoreOf(it) } // stable: ties keep search order
+        .sortedWith(
+            compareByDescending<AlbumDto> { scoreOf(it) }
+                .thenByDescending { uploaderShareOf(it) }
+        )
 }

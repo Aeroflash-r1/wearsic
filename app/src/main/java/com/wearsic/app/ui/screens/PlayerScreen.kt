@@ -821,10 +821,12 @@ private fun NowPlayingVolumeOverlay(
         val edgeMargin = (if (compact) 5.dp else 6.dp) * scale
         val strokeDp = (if (compact) 4.5.dp else 5.5.dp) * scale
         val sweepDegrees = if (compact) 94f else 106f
-        val startTopAngle = -sweepDegrees / 2f
-        val startBottomAngle = sweepDegrees / 2f
+        // Mirrored to the LEFT bezel: the thumb/finger works the right bezel,
+        // so the HUD must be visible on the opposite side.
+        val startTopAngle = 180f - sweepDegrees / 2f
+        val startBottomAngle = 180f + sweepDegrees / 2f
 
-        // Curved right-bezel volume arc — mathematically inset by edgeMargin +
+        // Curved LEFT-bezel volume arc — mathematically inset by edgeMargin +
         // stroke/2 inside minDim so rounded caps never clip at any watch edge.
         Canvas(
             modifier = Modifier
@@ -914,6 +916,7 @@ private fun NowPlayingVolumeOverlay(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = pillTopPadding)
+                .padding(horizontal = 24.dp)
                 .graphicsLayer {
                     val alphaClamped = hudProgress.coerceIn(0f, 1f)
                     alpha = alphaClamped

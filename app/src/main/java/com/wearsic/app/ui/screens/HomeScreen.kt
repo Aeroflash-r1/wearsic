@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,8 +67,10 @@ import com.wearsic.app.ui.theme.WearsicHeroCardBrush
 import com.wearsic.app.ui.theme.wearsicAccentBloomBrush
 import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.wearsicSecondaryText
+import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.watchScaled
+import com.wearsic.app.ui.util.wearsicClickable
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicRotaryScroll
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.RecommendationsUiState
@@ -151,6 +154,37 @@ fun HomeScreen(
                     title = greetingForHour(hour),
                     subtitle = "Your music on your wrist"
                 )
+            }
+
+            // ---- Search bar: one tap jumps to the Hub's Search tab ----
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                        .wearsicClickable(onClick = onOpenSearch)
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .testTag("home_search_bar"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Search,
+                        contentDescription = null,
+                        tint = LocalWearsicAccent.current,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Search songs, artists, albums…",
+                        color = WearsicTextMuted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             if (!isServerReachable) {

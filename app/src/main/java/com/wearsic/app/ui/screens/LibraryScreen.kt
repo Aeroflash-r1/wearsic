@@ -338,7 +338,7 @@ fun LibraryScreen(
                         }
                     )
                 }
-                itemsIndexed(offlinePreview, key = { _, track -> track.id }) { index, track ->
+                itemsIndexed(offlinePreview, key = { _, track -> "offline_${track.id}" }) { index, track ->
                     WearsicSongRow(
                         title = track.title,
                         artist = track.artist,
@@ -369,7 +369,7 @@ fun LibraryScreen(
                     )
                 }
 
-                itemsIndexed(recentPreview, key = { _, track -> track.id }) { _, track ->
+                itemsIndexed(recentPreview, key = { _, track -> "recent_${track.id}" }) { _, track ->
                     RecentTrackRow(
                         track = track,
                         onClick = {
@@ -398,7 +398,7 @@ fun LibraryScreen(
                         }
                     )
                 }
-                items(mostPlayed.take(6), key = { it.id }) { track ->
+                items(mostPlayed.take(6), key = { "most_${it.id}" }) { track ->
                     RecentTrackRow(
                         track = track,
                         onClick = {

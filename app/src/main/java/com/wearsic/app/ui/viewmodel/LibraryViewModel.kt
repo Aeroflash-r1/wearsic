@@ -502,8 +502,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             var album: Album? = null
             musicRepository.resolveTrackAlbum(track).onSuccess { album = it }
             if (album == null) {
+                val albumLooksReal = track.album.isNotBlank() &&
+                    track.album != "Single" &&
+                    track.album.trim().lowercase() != track.title.trim().lowercase()
                 val query = when {
-                    track.album.isNotBlank() && track.album != "Single" -> track.album
+                    albumLooksReal -> track.album
                     track.title.isNotBlank() && track.artist.isNotBlank() -> "${track.title} ${track.artist}"
                     track.title.isNotBlank() -> track.title
                     else -> ""
@@ -791,6 +794,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     sealed interface RadioState {
         data object Idle : RadioState
         data object Loading : RadioState
+        /** The generated radio list, ready to play (shown on the Mix tab). */
+        data class Ready(val tracks: List<Track>) : RadioState
         data class Error(val message: String) : RadioState
     }
 
@@ -853,8 +858,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 _radioState.value = RadioState.Idle
                 return@launch
             }
-            playbackViewModel.addToQueue(final)
-            _radioState.value = RadioState.Idle
+            // Show the generated list on the Mix tab FIRST — the radio card
+            // previously added it straight to the queue and returned to Idle,
+            // so the user never saw what it was about to play.
+            _radioState.value = RadioState.Ready(final)
         }
     }
 }

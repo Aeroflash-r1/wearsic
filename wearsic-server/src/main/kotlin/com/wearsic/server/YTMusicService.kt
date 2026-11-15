@@ -386,6 +386,14 @@ class YTMusicService(
                 ?.getObject("browseEndpointContextMusicConfig")
                 ?.getString("pageType") == "MUSIC_PAGE_TYPE_ALBUM"
         }?.getString("text")
+        // YouTube Music marks standalone singles with "album" text that just
+        // repeats the SONG TITLE (auto-generated single pages). Treating
+        // that as an album makes the watch's "open the album" flow search
+        // for the song title and land on same-named junk from other artists.
+        // A real album name is never literally the song title, so strip the
+        // echo and let the client fall back to "title artist" resolution.
+        val realAlbum = album
+            ?.takeIf { it.trim().lowercase() != title.trim().lowercase() }
         val thumbnailUrl = renderer.getObject("thumbnail")
             ?.getObject("musicThumbnailRenderer")?.getObject("thumbnail")
             ?.getArray("thumbnails")?.mapNotNull { el ->
@@ -402,7 +410,7 @@ class YTMusicService(
             artist = artist,
             durationMs = durationMs,
             thumbnailUrl = thumbnailUrl,
-            album = album,
+            album = realAlbum,
         )
     }
 

@@ -1,0 +1,108 @@
+# Fast APK-only build — the "quick iteration" lane.
+#
+# The main `android.yml` runs the full suite (unit tests, Robolectric,
+# screen gallery, server + CLI shell tests, JDK 25 boot checks) and only
+# then assembles APKs. That is thorough but slow when the goal is just to
+# get a fresh APK on the watch to try a change.
+#
+# This workflow deliberately does NONE of that: one job, compile the app,
+# sign the release variant (real keystore when secrets exist, throwaway
+# otherwise), upload both APKs as artifacts. No tests, no server build, no
+# release publishing.
+#
+# Triggers:
+#   - manual (workflow_dispatch) — the usual "build me an APK now" action
+#   - pushes to main that touch the app or Gradle build files
+#
+# Required repo secrets (same as android.yml release job):
+#   KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD
+name: APK Fast Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - 'gradle.properties'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradlew'
+      - 'gradlew.bat'
+
+jobs:
+  build-apk:
+    name: Compile app (debug + release APK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify signing secrets are configured
+        id: check_secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::warning::Missing release signing secrets. Release APK will be signed with a THROWAWAY key (not installable over the released app)."
+            echo "has_secrets=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_secrets=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Decode signing keystore
+        if: steps.check_secrets.outputs.has_secrets == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
+          echo "STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Generate throwaway signing key (no repository secrets)
+        if: steps.check_secrets.outputs.has_secrets != 'true'
+        run: |
+          keytool -genkeypair -v \
+            -keystore my-upload-key.jks \
+            -storepass ci-ephemeral -keypass ci-ephemeral \
+            -alias upload -keyalg RSA -keysize 2048 -validity 30 \
+            -dname "CN=Wearsic CI (throwaway), O=Wearsic, C=US"
+          echo "STORE_PASSWORD=ci-ephemeral" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=ci-ephemeral" >> "$GITHUB_ENV"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Raise Gradle daemon heap for R8
+        run: sed -i 's/-Xmx1024m/-Xmx4096m/' gradle.properties
+
+      - name: Assemble debug + release APKs
+        run: ./gradlew :app:assembleDebug :app:assembleRelease --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wearsic-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wearsic-release-${{ github.sha }}
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error

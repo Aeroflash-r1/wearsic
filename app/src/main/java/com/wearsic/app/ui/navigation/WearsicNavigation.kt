@@ -242,6 +242,7 @@ fun WearsicApp(
                             composable(Screen.Library.route) {
                                 val recentTracks by libraryVM.recentTracks.collectAsStateWithLifecycle()
                                 val mostPlayedTracks by libraryVM.mostPlayedTracks.collectAsStateWithLifecycle()
+                                val favoritesState by libraryVM.favoritesState.collectAsStateWithLifecycle()
                                 val serverReachable by libraryVM.serverReachable.collectAsStateWithLifecycle()
                                 val failoverServerName by libraryVM.failoverServerName.collectAsStateWithLifecycle()
                                 val offlineDownloads by downloadsVM.completedTracks.collectAsStateWithLifecycle()
@@ -276,6 +277,10 @@ fun WearsicApp(
                                     onNavigateToFavorites = {
                                         navController.navigate(Screen.Favorites.route)
                                     },
+                                    onShuffleFavorites = {
+                                        playerViewModel.playTracksShuffled(favoritesState.tracks)
+                                        navController.navigate(Screen.Player.route)
+                                    },
                                     onNavigateToArtists = {
                                         navController.navigate(Screen.Artists.route)
                                     },
@@ -307,6 +312,7 @@ fun WearsicApp(
                                         navController.navigate(Screen.Player.route)
                                     },
                                     onStartRadio = { playerViewModel.startRadio() },
+                                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                                     onShuffleFavorites = {
                                         playerViewModel.playTracksShuffled(favoritesState.tracks)
                                         navController.navigate(Screen.Player.route)

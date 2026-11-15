@@ -27,8 +27,8 @@ import androidx.wear.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.components.WearsicEmptyState
+import com.wearsic.app.ui.components.WearsicPrimaryPillButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSectionTitle
 import com.wearsic.app.ui.components.WearsicSongRowArtwork
@@ -57,6 +58,7 @@ import com.wearsic.app.ui.theme.WearsicHeroCardBrush
 import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.WearsicTextPrimary
+import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.util.wearsicEntrance
 import com.wearsic.app.ui.util.wearsicClickable
@@ -82,7 +84,8 @@ fun MixScreen(
     onStartRadio: () -> Unit,
     onPlayRadio: (List<Track>) -> Unit = { onPlay(it, 0) },
     onDismissRadio: () -> Unit = {},
-    onShuffleFavorites: () -> Unit,
+    onNavigateToSearch: () -> Unit = {},
+    onShuffleFavorites: () -> Unit = {},
     onRefreshRecommendations: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -114,6 +117,18 @@ fun MixScreen(
                 WearsicScreenHeader(
                     title = "Mix",
                     subtitle = "Discovery, tuned to you"
+                )
+            }
+
+            // ---- Search pill — parity with Home/Library ----
+            item {
+                WearsicPrimaryPillButton(
+                    label = "Search Music",
+                    icon = Icons.Rounded.Search,
+                    onClick = onNavigateToSearch,
+                    backgroundColor = LocalWearsicAccent.current,
+                    contentColor = WearsicTextPrimaryDark,
+                    testTag = "mix_search_button"
                 )
             }
 
@@ -189,18 +204,6 @@ fun MixScreen(
                         fontSize = 9.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                    )
-                }
-            }
-
-            // ---- Favorites shuffle card ----
-            if (favorites.isNotEmpty()) {
-                item {
-                    WearsicMixActionCard(
-                        label = "Shuffle favorites",
-                        icon = Icons.Rounded.Shuffle,
-                        onClick = onShuffleFavorites,
-                        testTag = "mix_shuffle_favorites"
                     )
                 }
             }

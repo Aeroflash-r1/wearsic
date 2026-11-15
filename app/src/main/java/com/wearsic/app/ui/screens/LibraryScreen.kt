@@ -39,6 +39,7 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -101,6 +102,7 @@ fun LibraryScreen(
     onNavigateToPlaylists: () -> Unit,
     onNavigateToAlbums: () -> Unit = {},
     onNavigateToFavorites: (() -> Unit)? = null,
+    onShuffleFavorites: (() -> Unit)? = null,
     onNavigateToArtists: () -> Unit,
     onNavigateToRecommendations: () -> Unit = {},
     onNavigateToSettings: () -> Unit,
@@ -299,15 +301,31 @@ fun LibraryScreen(
                 }
             }
 
-            if (onNavigateToFavorites != null) {
+            if (onNavigateToFavorites != null || onShuffleFavorites != null) {
                 item {
-                    WearsicSecondaryPillButton(
-                        label = "Favorites",
-                        icon = Icons.Rounded.Favorite,
-                        onClick = onNavigateToFavorites,
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        testTag = "library_favorites_button"
-                    )
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (onNavigateToFavorites != null) {
+                            WearsicSecondaryPillButton(
+                                label = "Favorites",
+                                icon = Icons.Rounded.Favorite,
+                                onClick = onNavigateToFavorites,
+                                modifier = Modifier.weight(1f),
+                                testTag = "library_favorites_button"
+                            )
+                        }
+                        if (onShuffleFavorites != null) {
+                            WearsicSecondaryPillButton(
+                                label = "Shuffle",
+                                icon = Icons.Rounded.Shuffle,
+                                onClick = onShuffleFavorites,
+                                modifier = Modifier.weight(1f),
+                                testTag = "library_shuffle_favorites_button"
+                            )
+                        }
+                    }
                 }
             }
 

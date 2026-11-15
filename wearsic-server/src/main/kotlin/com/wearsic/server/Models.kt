@@ -43,6 +43,12 @@ data class AlbumDto(
     val name: String,
     val uploader: String,
     val thumbnailUrl: String? = null,
+    /** Number of tracks in the album (0 = unknown) — real albums have many,
+     * auto-generated single "albums" have exactly 1. Used to rank
+     * same-named album search results so a real LP beats publisher junk. */
+    val trackCount: Long = 0,
+    /** Whether YT Music marks the album's channel as verified/artist-owned. */
+    val uploaderVerified: Boolean = false,
 )
 
 @Serializable

@@ -806,7 +806,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     fun startRadio(playbackViewModel: PlaybackViewModel) {
         val current = playbackViewModel.uiState.value.currentTrack
-        if (current.id.isBlank()) return
         radioJob?.cancel()
         radioJob = viewModelScope.launch {
             _radioState.value = RadioState.Loading
@@ -814,16 +813,25 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             val existingIds = playbackViewModel.uiState.value.playlist.map { it.id }.toSet()
             val targetCount = 10
 
-            // Seeds: the current track first, then the two most recent tracks
-            // (different tracks) — a single seed's related set is often thin,
-            // so blending a couple of seeds gives a fuller, more relevant set.
+            // Seeds: the current track first (when something is playing),
+            // then recent tracks, then favorites — so radio works even when
+            // nothing is playing right now. Previously it returned silently
+            // when the queue was idle, which is why and Auto radio appeared
+            // to do nothing.
             val recents = runCatching {
                 recentRepository.recentTracksFlow.first()
             }.getOrDefault(emptyList())
+            val favs = _favoritesState.value.tracks
             val seeds = buildList {
-                add(current)
+                if (!current.id.isBlank()) add(current)
                 addAll(recents.filter { it.id != current.id }.take(2))
+                addAll(favs.filter { it.id != current.id && it.id !in recents.map { r -> r.id } }.take(2))
             }.distinctBy { it.id }.take(3)
+
+            if (seeds.isEmpty()) {
+                _radioState.value = RadioState.Error("Play a song first, then start radio")
+                return@launch
+            }
 
             val gathered = mutableListOf<Track>()
             for (seed in seeds) {
@@ -855,7 +863,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             }
 
             if (final.isEmpty()) {
-                _radioState.value = RadioState.Idle
+                _radioState.value = RadioState.Error("Couldn't build a radio mix — try again")
                 return@launch
             }
             // Show the generated list on the Mix tab FIRST — the radio card

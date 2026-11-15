@@ -65,6 +65,40 @@ class AlbumRankingTest {
     }
 
     @Test
+    fun `dominant artist promotes the real album over auto-singles`() {
+        // The exact "Kesariya" failure: a bare song-title query returns a
+        // page of same-named auto-generated singles by random publishers. The
+        // official album is buried below them; the track-search dominant
+        // artist must lift it to the top.
+        val official = album("Kesariya (From \"Brahmastra\")", "Arijit Singh")
+        val single1 = album("Kesariya", "Arjun Ahir")
+        val single2 = album("Kesariya", "Apex Music")
+        val single3 = album("Kesariya", "Sohil Bloch")
+
+        val ranked = rankAlbums("Kesariya", listOf(single1, single2, official, single3), dominantArtist = "Arijit Singh")
+
+        assertEquals(official, ranked.first())
+        assertTrue(single1 in ranked)
+        assertTrue(single2 in ranked)
+        assertTrue(single3 in ranked)
+    }
+
+
+    @Test
+    fun `shared-surname uploader does not win the artist tier`() {
+        val official = album("Kesariya (From \"Brahmastra\")", "Arijit Singh")
+        val surnameCollision = album("Kesariya", "Suraaj Singh")
+        val junk = album("Kesariya", "Arjun Ahir")
+
+        val ranked = rankAlbums(
+            "Kesariya",
+            listOf(junk, surnameCollision, official),
+            dominantArtist = "Arijit Singh",
+        )
+        assertEquals(official, ranked.first())
+    }
+
+    @Test
     fun `empty input passes through`() {
         assertEquals(emptyList(), rankAlbums("anything", emptyList()))
         val a = album("Album A", "Artist A")

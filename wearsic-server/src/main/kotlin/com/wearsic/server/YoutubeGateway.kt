@@ -115,6 +115,10 @@ class YoutubeGateway(
 
     companion object {
         private const val MAX_RESULTS = 10
+        // Album search depth: must exceed single-page count so multi-track
+        // albums buried among auto-singles are seen by the ranker. The page
+        // is fetched once; ranking trims to a handful of good candidates.
+        private const val MAX_ALBUM_RESULTS = 30
         // Albums/playlists: 10 tracks felt like a truncated album on the watch
         // (most deluxe editions run 15-30 songs). One YouTube playlist page
         // typically carries ~100 items, so 50 is cheap and covers full albums.
@@ -884,32 +888,76 @@ class YoutubeGateway(
         val now = System.currentTimeMillis()
         albumsCache.get(key)?.let { if (it.expiresAt > now) return@withContext it.value }
         val result = runCatching {
-            val extractor = ServiceList.YouTube.getSearchExtractor(key, listOf("music_albums"), "")
-            extractor.fetchPage()
-            extractor.initialPage.items
-                .filterIsInstance<PlaylistInfoItem>()
-                .mapNotNull { item ->
-                    AlbumDto(
-                        id = item.url ?: return@mapNotNull null,
-                        name = item.name ?: return@mapNotNull null,
-                        uploader = item.uploaderName ?: "Unknown",
-                        thumbnailUrl = bestThumbnailUrl(item.thumbnails),
-                    )
-                }
-                .take(MAX_RESULTS)
-                // YouTube's album search is name-fuzzy: "Thriller Michael
-                // Jackson" happily returns same-named albums by unrelated
-                // artists. Rank by how well each result matches the query's
-                // name AND publisher tokens so the right album from the
-                // right artist leads, and matching-but-wrong-artist junk is
-                // trimmed (see rankAlbums).
-                .let { rankAlbums(key, it) }
+            val candidates = fetchAlbumPage(key)
+            // If NOTHING in the candidate set matches the query's own tokens
+            // on the uploader side (bare song-title queries are exactly this
+            // case: every hit is a same-named auto-single by a random
+            // publisher), cross-reference the track search for the same
+            // query and extract its dominant artist. The official album is
+            // usually by that artist, so we ALSO run a targeted album search
+            // for "<query> <artist>" — the only form that reliably surfaces
+            // it — and merge the two sets before ranking.
+            val keyTokens = queryTokens(key)
+            val anyUploaderMatch = candidates.any { a ->
+                val u = queryTokens(a.uploader)
+                u.isNotEmpty() && keyTokens.any { it in u }
+            }
+            val dominant = if (anyUploaderMatch) null else dominantArtistFromTrackSearch(key)
+            val merged = if (dominant != null) {
+                (candidates + fetchAlbumPage("$key $dominant"))
+                    .distinctBy { it.id }
+            } else {
+                candidates
+            }
+            rankAlbums(key, merged, dominant)
         }
             .onSuccess { healthMeter?.recordSuccess() }
             .onFailure { healthMeter?.recordFailure("albums: ${it.message}") }
             .getOrDefault(emptyList())
         if (result.isNotEmpty()) albumsCache.put(key, Timed(result, now + ALBUMS_TTL_MS))
         result
+    }
+
+    /**
+     * One YouTube Music album-search page, extracted to AlbumDto list. Deep
+     * (MAX_ALBUM_RESULTS) because bare song-title queries are dominated by
+     * auto-generated single pages; the ranker then separates real albums.
+     */
+    private suspend fun fetchAlbumPage(query: String): List<AlbumDto> {
+        val extractor = ServiceList.YouTube.getSearchExtractor(query, listOf("music_albums"), "")
+        extractor.fetchPage()
+        return extractor.initialPage.items
+            .filterIsInstance<PlaylistInfoItem>()
+            .mapNotNull { item ->
+                AlbumDto(
+                    id = item.url ?: return@mapNotNull null,
+                    name = item.name ?: return@mapNotNull null,
+                    uploader = item.uploaderName ?: "Unknown",
+                    thumbnailUrl = bestThumbnailUrl(item.thumbnails),
+                    trackCount = item.streamCount.coerceAtLeast(0),
+                    uploaderVerified = item.isUploaderVerified,
+                )
+            }
+            .take(MAX_ALBUM_RESULTS)
+    }
+
+    /**
+     * The most common uploader among the track-search results for [query] —
+     * the likely real artist. Used as the final tiebreak when an album
+     * search page is nothing but same-named auto-singles by random
+     * publishers. Uses the same cached track search, so when search is warm
+     * this adds no network round trip.
+     */
+    private suspend fun dominantArtistFromTrackSearch(query: String): String? {
+        return runCatching {
+            // Cached, music-gated search; 6 results is plenty to tally.
+            search(query, limit = 6)
+                .mapNotNull { it.uploader?.takeIf(String::isNotBlank) }
+                .groupingBy { it.lowercase() }
+                .eachCount()
+                .maxByOrNull { it.value }
+                ?.key
+        }.getOrNull()
     }
 
     // ---------------- Playlist by URL (also used for albums) ----------------
@@ -1843,7 +1891,11 @@ private fun queryTokens(text: String): Set<String> =
  *  3. If NOTHING matches the query (fuzzy/other-script queries), keep the
  *     original order — never nuke the result page over an imperfect query.
  */
-internal fun rankAlbums(query: String, albums: List<AlbumDto>): List<AlbumDto> {
+internal fun rankAlbums(
+    query: String,
+    albums: List<AlbumDto>,
+    dominantArtist: String? = null,
+): List<AlbumDto> {
     val qTokens = queryTokens(query)
     if (albums.isEmpty() || qTokens.isEmpty()) return albums
 
@@ -1875,10 +1927,40 @@ internal fun rankAlbums(query: String, albums: List<AlbumDto>): List<AlbumDto> {
         return qTokens.count { it in u }.toFloat() / u.size
     }
 
+    // YouTube Music album search returns auto-generated SINGLE pages for a
+    // bare song-title query: the album name equals the song, there is ONE
+    // track, and the publisher is unverified. A real album is a multi-track
+    // page (and usually artist-channel verified). So among equal-score
+    // candidates: multi-track albums first, then track count, then verified
+    // uploader, then uploader-token share.
+    fun multiTrackTier(a: AlbumDto): Int = if (a.trackCount > 1) 1 else 0
+
+    // When the track search found a dominant artist, albums whose uploader
+    // carries that artist's tokens are tier 1 — that is how the REAL
+    // "Kesariya" album by Arijit Singh beats a dozen same-named auto-singles.
+    val artistTokens = dominantArtist?.let(::queryTokens).orEmpty()
+    fun artistTier(a: AlbumDto): Int {
+        if (artistTokens.isEmpty()) return 0
+        val u = uploaderTokensOf(a)
+        // ALL artist tokens must be present in the uploader: "Arijit Singh"
+        // should match the official album but NOT "Suraaj Singh" or
+        // "Shashwat Singh" (shared surname token only).
+        return if (u.isNotEmpty() && artistTokens.all { it in u }) 1 else 0
+    }
+
     return pool
         .filter { scoreOf(it) > 0 }
         .sortedWith(
-            compareByDescending<AlbumDto> { scoreOf(it) }
+            // When a dominant artist was found (bare song-title query where
+            // every candidate is an unverified auto-single), that artist's
+            // album must lead regardless of name-length scoring — the exact-
+            // name bonus would otherwise keep letting one-track publisher
+            // junk beat the real multi-track album.
+            compareByDescending<AlbumDto> { artistTier(it) }
+                .thenByDescending { scoreOf(it) }
+                .thenByDescending { multiTrackTier(it) }
+                .thenByDescending { it.trackCount }
+                .thenByDescending { it.uploaderVerified }
                 .thenByDescending { uploaderShareOf(it) }
         )
 }

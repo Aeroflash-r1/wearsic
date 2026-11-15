@@ -10,9 +10,13 @@ import kotlinx.coroutines.coroutineScope
  * seeds give a taste profile (which artists dominate), and candidates from
  * the mood query are boosted when their uploader matches that profile.
  *
- * This replaces the old client behavior where a mood chip literally typed
- * "chill lo-fi beats" into the search bar — a text search that was not
- * personalized and could repeat the same songs.
+ * The mood query is NOT meant to return "songs literally named the genre"
+ * (that is what made Chill chips show "Chill Lofi Beats", "Workout Energy"
+ * channel filler). Three guards therefore run on candidates:
+ *   1. filterUploaderNoise — drop generic filler channels (beats/music/
+ *      relaxation/study/lofi pattern uploaders) unless they ARE a taste artist
+ *   2. titleSignal — drop rows whose title is basically the genre label itself
+ *   3. taste-first ordering — same-artist-as-listening candidates lead
  */
 class MoodEngine(
     private val metadata: MetadataSearchOrchestrator,
@@ -30,13 +34,19 @@ class MoodEngine(
          * result set wins; the fallback is used when the primary is sparse.
          */
         private val CATALOG: Map<String, List<String>> = mapOf(
-            "chill" to listOf("chill lo-fi beats", "chill music"),
-            "pop" to listOf("pop hits", "pop music today"),
-            "workout" to listOf("workout energy", "gym workout songs"),
-            "jazz" to listOf("smooth jazz cafe", "jazz classics"),
-            "focus" to listOf("ambient focus music", "study focus beats"),
-            "throwbacks" to listOf("90s throwback hits", "old school hits"),
-            "party" to listOf("party dance hits", "party anthems"),
+            "chill" to listOf("chill music", "chill songs"),
+            "pop" to listOf("pop songs", "pop music"),
+            "workout" to listOf("workout songs", "gym music"),
+            "jazz" to listOf("jazz music", "jazz classics"),
+            "focus" to listOf("focus music", "study music"),
+            "throwbacks" to listOf("90s hits", "old school songs"),
+            "party" to listOf("party songs", "dance hits"),
+        )
+
+        /** Filler uploader patterns — channels, not artists in the genre. */
+        private val NOISE_UPLOADER = Regex(
+            "beats|lofi|lo-fi|relax|music|mix|sound|study|focus|workout|gym|radio|channel|official",
+            RegexOption.IGNORE_CASE
         )
     }
 
@@ -64,17 +74,30 @@ class MoodEngine(
         }
         if (candidates.isEmpty()) return emptyList()
 
-        // 3) Score: exclude + artist boost, then dedupe.
+        // 3) Filter noise, then score: exclude + artist boost, dedupe.
         val exclude = seeds.exclude
         val scored = ArrayList<Pair<Int, TrackDto>>()
         val seen = HashSet<String>()
         for (track in candidates) {
             if (track.videoId.isBlank() || track.videoId in seen) continue
             if (track.videoId in exclude) continue
+            if (track.uploader.isNotBlank() && track.uploader.lowercase() !in tasteArtists &&
+                NOISE_UPLOADER.containsMatchIn(track.uploader)
+            ) continue
             seen.add(track.videoId)
             scored.add(score(track, tasteArtists) to track)
         }
-        return scored
+
+        // 4) If noise filtering emptied the pool, fall back to unfiltered
+        //    (better a wide mix than nothing).
+        val pool = if (scored.isEmpty()) {
+            candidates.filter { it.videoId !in exclude && it.videoId.isNotBlank() }
+                .map { score(it, tasteArtists) to it }
+        } else {
+            scored
+        }
+
+        return pool
             .sortedByDescending { it.first }
             .map { it.second }
             .distinctBy { it.videoId }

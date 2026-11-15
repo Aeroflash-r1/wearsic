@@ -494,6 +494,11 @@ class WearsicPlayerViewModel(
         libraryViewModel.startRadio(playbackViewModel)
     }
 
+    /** Queue-screen radio: build + play the mix immediately. */
+    fun startRadioAndPlay() {
+        libraryViewModel.startRadioAndPlay(playbackViewModel)
+    }
+
     fun startMood(moodId: String) {
         libraryViewModel.startMood(moodId, playbackViewModel)
     }

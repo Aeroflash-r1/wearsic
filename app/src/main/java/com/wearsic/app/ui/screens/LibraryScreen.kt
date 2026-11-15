@@ -68,6 +68,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.layout.ContentScale
 import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track
+import com.wearsic.app.ui.components.NowPlayingMiniCard
 import com.wearsic.app.ui.components.WearsicActionTile
 import com.wearsic.app.ui.components.WearsicPrimaryPillButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
@@ -298,17 +299,6 @@ fun LibraryScreen(
                 }
             }
 
-            // Made for you — recommendations from your local taste.
-            item {
-                WearsicSecondaryPillButton(
-                    label = "Made for you",
-                    icon = Icons.Rounded.Star,
-                    onClick = onNavigateToRecommendations,
-                    modifier = Modifier.fillMaxWidth(),
-                    testTag = "library_recommendations_button"
-                )
-            }
-
             if (onNavigateToFavorites != null) {
                 item {
                     WearsicSecondaryPillButton(
@@ -380,35 +370,6 @@ fun LibraryScreen(
                 }
             }
 
-            // Most Played (v1.9.49 redesign) — cumulative listens from the
-            // Room playCount column; appears as soon as one song is played
-            // twice, so the shelf is a genuinely earned list, never dummy.
-            if (mostPlayed.size >= 2) {
-                item {
-                    WearsicSectionTitle(
-                        label = "Most played",
-                        icon = Icons.Rounded.Whatshot,
-                        iconContentDescription = null,
-                        trailing = {
-                            Text(
-                                text = "${mostPlayed.size} songs",
-                                color = wearsicSecondaryText(),
-                                fontSize = 10.sp
-                            )
-                        }
-                    )
-                }
-                items(mostPlayed.take(6), key = { "most_${it.id}" }) { track ->
-                    RecentTrackRow(
-                        track = track,
-                        onClick = {
-                            val trackIndex = mostPlayed.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
-                            onPlayRecentTrack(mostPlayed, trackIndex)
-                        }
-                    )
-                }
-            }
-
             // Settings Action Pill
             item {
                 WearsicSettingsActionPill(
@@ -427,152 +388,7 @@ fun LibraryScreen(
     }
 }
 
-@Composable
-private fun NowPlayingMiniCard(
-    title: String,
-    artist: String,
-    artworkUrl: String?,
-    isPlaying: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val heroShape = RoundedCornerShape(WearsicDimens.CardRadius)
-    val context = LocalContext.current
-    val accent = LocalWearsicAccent.current
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 88.dp)
-            .clip(heroShape)
-            .background(WearsicSurfaceRaised)
-            .border(1.dp, if (isPlaying) accent.copy(alpha = 0.45f) else WearsicGlassBorder, heroShape)
-            .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
-            .testTag("now_playing_shortcut")
-    ) {
-        if (!artworkUrl.isNullOrBlank()) {
-            val backdrop = remember(artworkUrl) {
-                ImageRequest.Builder(context).data(artworkUrl).size(224).build()
-            }
-            AsyncImage(
-                model = backdrop,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.matchParentSize()
-            )
-        }
-        Box(
-            Modifier.matchParentSize().background(
-                Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.86f), Color.Black.copy(alpha = 0.56f)))
-            )
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
-            ) {
-                // Real album art (or the music-note chip when there is none).
-                val artShape = RoundedCornerShape(WearsicDimens.ArtRadius)
-                val artModifier = Modifier
-                    .size(watchScaled(42.dp))
-                    .clip(artShape)
-                    .then(
-                        if (isPlaying) Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), artShape)
-                        else Modifier.border(1.dp, WearsicSurfaceBorderSubtle, artShape)
-                    )
-                if (!artworkUrl.isNullOrBlank()) {
-                    val artRequest = remember(artworkUrl) {
-                        ImageRequest.Builder(context)
-                            .data(artworkUrl)
-                            .size(96)
-                            .build()
-                    }
-                    AsyncImage(
-                        model = artRequest,
-                        contentDescription = "Now Playing",
-                        contentScale = ContentScale.Crop,
-                        modifier = artModifier
-                    )
-                } else {
-                    Box(
-                        modifier = artModifier.background(
-                            if (isPlaying) Color.Black.copy(alpha = 0.25f) else wearsicAccentContainer()
-                        ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = accent,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (isPlaying) {
-                            Box(
-                                modifier = Modifier
-                                    .size(5.dp)
-                                    .clip(CircleShape)
-                                    .background(accent)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                        }
-                        Text(
-                            text = if (isPlaying) "NOW PLAYING" else "READY TO PLAY",
-                            color = accent,
-                            fontFamily = WearsicDisplayFont,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.2.sp,
-                            maxLines = 1
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(1.dp))
-                    Text(
-                        text = title,
-                        color = WearsicTextPrimary,
-                        fontFamily = WearsicDisplayFont,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = (-0.2).sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = artist,
-                        color = Color.White.copy(alpha = 0.78f),
-                        fontFamily = WearsicBodyFont,
-                        fontSize = 10.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            Box(
-                modifier = Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isPlaying) Color.White.copy(alpha = 0.9f) else LocalWearsicAccent.current
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    contentDescription = if (isPlaying) "Playing" else "Play",
-                    tint = WearsicTextPrimaryDark,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-}
+
 
 @Composable
 private fun RecentTrackRow(

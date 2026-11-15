@@ -810,6 +810,59 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      * excludes the current queue + recently played ids so songs do not
      * repeat. Ready state renders on the Mix tab exactly like radio.
      */
+    /**
+     * Radio variant used from the QUEUE screen: build the mix, then start
+     * playing it immediately (the queue's radio button previously only set
+     * the Ready state, which Mix renders — from the queue nothing seemed to
+     * happen).
+     */
+    fun startRadioAndPlay(playbackViewModel: PlaybackViewModel) {
+        radioJob?.cancel()
+        radioJob = viewModelScope.launch {
+            _radioState.value = RadioState.Loading
+            val current = playbackViewModel.uiState.value.currentTrack
+            if (current.id.isBlank()) {
+                _radioState.value = RadioState.Error("Play a song first, then start radio")
+                return@launch
+            }
+            val repo = musicRepository
+            val existingIds = playbackViewModel.uiState.value.playlist.map { it.id }.toSet()
+            val targetCount = 10
+            val recents = runCatching {
+                recentRepository.recentTracksFlow.first()
+            }.getOrDefault(emptyList())
+            val seeds = buildList {
+                add(current)
+                addAll(recents.filter { it.id != current.id }.take(2))
+            }.distinctBy { it.id }.take(3)
+
+            val gathered = mutableListOf<Track>()
+            for (seed in seeds) {
+                if (gathered.size >= targetCount) break
+                val related = repo.getRelated(
+                    seed.id,
+                    artist = seed.artist.takeIf { it.isNotBlank() },
+                    title = seed.title.takeIf { it.isNotBlank() },
+                ).getOrDefault(emptyList())
+                gathered += related.filter { candidate ->
+                    candidate.id !in existingIds &&
+                        candidate.id !in gathered.map { it.id } &&
+                        (candidate.durationMs == 0L || candidate.durationMs in 30_000..900_000)
+                }
+            }
+            val seedArtist = current.artist.trim().lowercase()
+            val sameArtist = gathered.filter { it.artist.trim().lowercase() == seedArtist }
+            val rest = gathered.filter { it.artist.trim().lowercase() != seedArtist }
+            val fresh = (sameArtist + rest).distinctBy { it.id }.take(targetCount)
+            if (fresh.isEmpty()) {
+                _radioState.value = RadioState.Error("Couldn't build a radio mix — try again")
+                return@launch
+            }
+            _radioState.value = RadioState.Ready(fresh)
+            playbackViewModel.playTracksFromList(fresh, 0)
+        }
+    }
+
     fun startMood(moodId: String, playbackViewModel: PlaybackViewModel) {
         radioJob?.cancel()
         radioJob = viewModelScope.launch {

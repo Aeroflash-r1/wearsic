@@ -1,4 +1,12 @@
 package com.wearsic.app.ui.components
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
@@ -886,3 +894,152 @@ fun WearsicCompactShimmer(
         )
     }
 }
+
+
+@Composable
+fun NowPlayingMiniCard(
+    title: String,
+    artist: String,
+    artworkUrl: String?,
+    isPlaying: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val heroShape = RoundedCornerShape(WearsicDimens.CardRadius)
+    val context = LocalContext.current
+    val accent = LocalWearsicAccent.current
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 88.dp)
+            .clip(heroShape)
+            .background(WearsicSurfaceRaised)
+            .border(1.dp, if (isPlaying) accent.copy(alpha = 0.45f) else WearsicGlassBorder, heroShape)
+            .wearsicClickable(pressedScale = 0.97f, onClick = onClick)
+            .testTag("now_playing_shortcut")
+    ) {
+        if (!artworkUrl.isNullOrBlank()) {
+            val backdrop = remember(artworkUrl) {
+                ImageRequest.Builder(context).data(artworkUrl).size(224).build()
+            }
+            AsyncImage(
+                model = backdrop,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize()
+            )
+        }
+        Box(
+            Modifier.matchParentSize().background(
+                Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.86f), Color.Black.copy(alpha = 0.56f)))
+            )
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                // Real album art (or the music-note chip when there is none).
+                val artShape = RoundedCornerShape(WearsicDimens.ArtRadius)
+                val artModifier = Modifier
+                    .size(watchScaled(42.dp))
+                    .clip(artShape)
+                    .then(
+                        if (isPlaying) Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), artShape)
+                        else Modifier.border(1.dp, WearsicSurfaceBorderSubtle, artShape)
+                    )
+                if (!artworkUrl.isNullOrBlank()) {
+                    val artRequest = remember(artworkUrl) {
+                        ImageRequest.Builder(context)
+                            .data(artworkUrl)
+                            .size(96)
+                            .build()
+                    }
+                    AsyncImage(
+                        model = artRequest,
+                        contentDescription = "Now Playing",
+                        contentScale = ContentScale.Crop,
+                        modifier = artModifier
+                    )
+                } else {
+                    Box(
+                        modifier = artModifier.background(
+                            if (isPlaying) Color.Black.copy(alpha = 0.25f) else wearsicAccentContainer()
+                        ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MusicNote,
+                            contentDescription = null,
+                            tint = accent,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isPlaying) {
+                            Box(
+                                modifier = Modifier
+                                    .size(5.dp)
+                                    .clip(CircleShape)
+                                    .background(accent)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                        }
+                        Text(
+                            text = if (isPlaying) "NOW PLAYING" else "READY TO PLAY",
+                            color = accent,
+                            fontFamily = WearsicDisplayFont,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.2.sp,
+                            maxLines = 1
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(1.dp))
+                    Text(
+                        text = title,
+                        color = WearsicTextPrimary,
+                        fontFamily = WearsicDisplayFont,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.2).sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = artist,
+                        color = Color.White.copy(alpha = 0.78f),
+                        fontFamily = WearsicBodyFont,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (isPlaying) Color.White.copy(alpha = 0.9f) else LocalWearsicAccent.current
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    contentDescription = if (isPlaying) "Playing" else "Play",
+                    tint = WearsicTextPrimaryDark,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+

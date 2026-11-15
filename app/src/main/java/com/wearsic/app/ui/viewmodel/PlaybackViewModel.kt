@@ -33,6 +33,10 @@ class PlaybackViewModel(application: Application) : AndroidViewModel(application
         playbackController.playTracks(tracks, startIndex)
     }
 
+    fun playTracksFromList(tracks: List<Track>, startIndex: Int = 0) {
+        playTracks(tracks, startIndex)
+    }
+
     fun addToQueue(track: Track) {
         playbackController.addToQueue(listOf(track))
     }

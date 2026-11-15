@@ -10,11 +10,11 @@ import androidx.wear.compose.material3.Typography
 import com.wearsic.app.R
 
 val WearsicDisplayFont = FontFamily(
-    Font(R.font.outfit, FontWeight.Normal),
-    Font(R.font.outfit, FontWeight.Medium),
-    Font(R.font.outfit, FontWeight.SemiBold),
-    Font(R.font.outfit, FontWeight.Bold),
-    Font(R.font.outfit, FontWeight.ExtraBold)
+    Font(R.font.plus_jakarta_sans, FontWeight.Normal),
+    Font(R.font.plus_jakarta_sans, FontWeight.Medium),
+    Font(R.font.plus_jakarta_sans, FontWeight.SemiBold),
+    Font(R.font.plus_jakarta_sans, FontWeight.Bold),
+    Font(R.font.plus_jakarta_sans, FontWeight.ExtraBold)
 )
 
 val WearsicBodyFont = FontFamily(

@@ -562,7 +562,7 @@ fun WearsicApp(
                                     onToggleShuffle = { playbackVM.toggleShuffle() },
                                     onCycleRepeat = { playbackVM.cycleRepeatMode() },
                                     radioState = radioState,
-                                    onStartRadio = { playerViewModel.startRadio() }
+                                    onStartRadio = { playerViewModel.startRadioAndPlay() }
                                 )
                             }
 

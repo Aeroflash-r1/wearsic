@@ -56,6 +56,7 @@ import androidx.compose.material.icons.rounded.Radio
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import com.wearsic.app.model.Track
+import com.wearsic.app.ui.components.NowPlayingMiniCard
 import com.wearsic.app.ui.components.WearsicMoodChip
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSectionTitle
@@ -228,56 +229,15 @@ fun HomeScreen(
             if (recentTracks.isNotEmpty()) {
                 val last = recentTracks.first()
                 item {
-                    WearsicHeroCard(
-                        kicker = "LISTEN AGAIN",
+                    NowPlayingMiniCard(
                         title = last.title,
-                        subtitle = last.artist,
+                        artist = last.artist,
                         artworkUrl = last.artworkUrl,
+                        isPlaying = last.id == currentTrackId,
                         onClick = {
                             if (last.id == currentTrackId) onOpenPlayer() else onPlay(recentTracks, 0)
                         },
-                        testTag = "home_hero_last_played"
-                    )
-                }
-            }
-
-            // ---- Fresh picks (taste-ranked recommendations) ----
-            item {
-                WearsicSectionTitle(
-                    label = "Fresh for you",
-                    icon = Icons.Rounded.AutoAwesome,
-                    iconContentDescription = "Fresh picks",
-                )
-            }
-            if (recommendationsState.tracks.isEmpty() && !recommendationsState.isLoading) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Open Mix to discover something new",
-                            color = LocalWearsicAccent.current,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = onOpenMix
-                                )
-                                .padding(vertical = 6.dp)
-                        )
-                    }
-                }
-            } else {
-                item {
-                    WearsicTrackShelf(
-                        tracks = recommendationsState.tracks.take(12),
-                        onPlayTrack = onPlay,
-                        placeholderIcon = Icons.Rounded.Whatshot
+                        modifier = Modifier.testTag("home_hero_last_played")
                     )
                 }
             }
@@ -513,7 +473,9 @@ private fun WearsicActionCard(
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = true)
+            modifier = Modifier
+                .weight(1f, fill = true)
+                .padding(horizontal = 4.dp)
         )
     }
 }

@@ -729,24 +729,6 @@ private fun NowPlayingPage(
                         .weight(1f)
                         .padding(top = 3.dp),
                 )
-                if (hasTrack) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .padding(start = 2.dp)
-                            .wearsicClickable(onClick = onOpenLyrics)
-                            .testTag("lyrics_open_button"),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = "Open Lyrics",
-                            tint = if (colors.fromArtwork) colors.accent
-                            else Color.White.copy(alpha = 0.75f),
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.weight(1f))
@@ -838,48 +820,29 @@ private fun NowPlayingVolumeOverlay(
                 }
         ) {
             val strokePx = strokeDp.toPx()
-            val insetMarginPx = edgeMargin.toPx()
-            val haloExtraPx = 4.dp.toPx()
-            val diameterPx = (minDim.toPx() - (insetMarginPx * 2f) - strokePx - haloExtraPx)
+            // Hug the bezel: only a sliver of margin keeps rounded caps inside
+            // the round face — no inset gap, no track, no border.
+            val bezelGapPx = 1.5.dp.toPx()
+            val diameterPx = (minDim.toPx() - (bezelGapPx * 2f))
                 .coerceAtLeast(strokePx * 2f)
             val left = (size.width - diameterPx) / 2f
             val top = (size.height - diameterPx) / 2f
             val arcTopLeft = Offset(left, top)
             val arcSize = Size(diameterPx, diameterPx)
 
-            // Dark OLED backing so the curved track stays legible over bright artwork.
-            drawArc(
-                color = Color.Black.copy(alpha = 0.68f),
-                startAngle = startTopAngle,
-                sweepAngle = sweepDegrees,
-                useCenter = false,
-                topLeft = arcTopLeft,
-                size = arcSize,
-                style = Stroke(width = strokePx + haloExtraPx, cap = StrokeCap.Round)
-            )
-            // Subtle bezel track.
-            drawArc(
-                color = Color.White.copy(alpha = 0.16f),
-                startAngle = startTopAngle,
-                sweepAngle = sweepDegrees,
-                useCenter = false,
-                topLeft = arcTopLeft,
-                size = arcSize,
-                style = Stroke(width = strokePx, cap = StrokeCap.Round)
-            )
             val fillSweep = sweepDegrees * animatedFraction
             if (fillSweep > 0.5f) {
-                // Soft accent glow beneath active arc.
+                // Active volume arc — single borderless accent stroke at the
+                // bezel edge (Spotify-style), with a soft glow beneath.
                 drawArc(
-                    color = arcTint.copy(alpha = if (isMuted) 0.12f else 0.26f),
+                    color = arcTint.copy(alpha = if (isMuted) 0.12f else 0.22f),
                     startAngle = startBottomAngle,
                     sweepAngle = -fillSweep,
                     useCenter = false,
                     topLeft = arcTopLeft,
                     size = arcSize,
-                    style = Stroke(width = strokePx + 3.dp.toPx(), cap = StrokeCap.Round)
+                    style = Stroke(width = strokePx + 8.dp.toPx(), cap = StrokeCap.Round)
                 )
-                // Active volume arc sweeping bottom-right -> top-right.
                 drawArc(
                     color = arcTint,
                     startAngle = startBottomAngle,
@@ -928,12 +891,7 @@ private fun NowPlayingVolumeOverlay(
                 .height(pillHeight)
                 .widthIn(max = maxPillWidth)
                 .clip(CircleShape)
-                .background(WearsicSurfaceRaised.copy(alpha = 0.94f))
-                .border(
-                    width = 1.dp,
-                    color = if (isMuted) WearsicGlassBorder else arcTint.copy(alpha = 0.42f),
-                    shape = CircleShape
-                )
+                .background(Color.Black.copy(alpha = 0.35f))
                 .padding(horizontal = pillHorizontalPadding),
             contentAlignment = Alignment.Center
         ) {
@@ -1321,35 +1279,9 @@ private fun LyricsLoading(bodyHeight: Dp) {
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp),
         ) {
-            // Spinning accent arc — hand-drawn instead of the Wear-M3
-            // CircularProgressIndicator: themed color there needs the Brush
-            // colors API; a 2-line arc gives exactly the dynamic-accent look.
-            val spin = rememberInfiniteTransition(label = "lyricsSpin")
-            val angle by spin.animateFloat(
-                initialValue = 0f,
-                targetValue = 360f,
-                animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
-                label = "lyricsSpinAngle",
-            )
-            Box(modifier = Modifier.size(28.dp)) {
-                Canvas(modifier = Modifier.fillMaxSize().rotate(angle)) {
-                    drawArc(
-                        color = accent,
-                        startAngle = 0f,
-                        sweepAngle = 264f,
-                        useCenter = false,
-                        style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round),
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "Loading lyrics…",
-                color = accent,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(modifier = Modifier.height(18.dp))
+            // No spinner: just the shimmer rows (centered), promising the
+            // lyric layout instead of an abstract loader.
+            Spacer(modifier = Modifier.height(6.dp))
             // Shimmer placeholder rows: lyric-line-shaped bars breathing with
             // the app's shimmer language (staggered pulse). They promise the
             // layout the user is about to see instead of an abstract spinner
@@ -1393,6 +1325,7 @@ private fun LyricsLoading(bodyHeight: Dp) {
                 )
                 Box(
                     modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
                         .fillMaxWidth(fraction)
                         .height(15.dp)
                         .clip(RoundedCornerShape(7.dp))

@@ -339,47 +339,6 @@ fun SearchScreen(
                 }
             }
 
-            // MODE CHIPS — Songs / Albums / Artists. Compact glass pills so
-            // they never fight with the round chord below the search bar.
-            item(key = "search_modes") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 2.dp, bottom = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
-                ) {
-                    val modes = listOf("Songs", "Albums", "Artists")
-                    modes.forEachIndexed { index, label ->
-                        val selected = mode == index
-                        Box(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(
-                                    if (selected) LocalWearsicAccent.current.copy(alpha = 0.26f)
-                                    else WearsicGlassFill
-                                )
-                                .border(
-                                    1.dp,
-                                    if (selected) LocalWearsicAccent.current.copy(alpha = 0.5f)
-                                    else WearsicGlassBorder,
-                                    CircleShape
-                                )
-                                .wearsicClickable { mode = index }
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
-                                .testTag("search_mode_$label"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = label,
-                                color = if (selected) WearsicTextPrimary else WearsicTextMuted,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                }
-            }
-
             // Live Suggestions (while typing) — hidden while a search is in
             // flight so the shimmer placeholders stay visible.
             if (mode == 0 && searchState.suggestions.isNotEmpty() && typedQuery.isNotBlank() && !searchState.isSearching) {

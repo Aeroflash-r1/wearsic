@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -209,7 +210,33 @@ fun MixScreen(
                 WearsicSectionTitle(
                     label = "Made for you",
                     icon = Icons.Rounded.AutoAwesome,
-                    iconContentDescription = "Made for you"
+                    iconContentDescription = "Made for you",
+                    trailing = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(WearsicGlassFill)
+                                .border(1.dp, WearsicGlassBorder, CircleShape)
+                                .wearsicClickable(onClick = onRefreshRecommendations)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("mix_refresh_recommendations")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = "Refresh recommendations",
+                                tint = LocalWearsicAccent.current,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "Refresh",
+                                color = WearsicTextPrimary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
                 )
             }
             when {

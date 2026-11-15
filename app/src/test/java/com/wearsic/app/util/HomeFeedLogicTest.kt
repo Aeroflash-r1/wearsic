@@ -36,7 +36,7 @@ class HomeFeedLogicTest {
         assertEquals("labels unique", moods.map { it.label }.distinct().size, moods.size)
         for (mood in moods) {
             assertTrue("label not blank", mood.label.isNotBlank())
-            assertTrue("query not blank", mood.query.isNotBlank())
+            assertTrue("mood id not blank", mood.id.isNotBlank())
         }
     }
 }

@@ -804,6 +804,41 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     private var radioJob: Job? = null
 
+    /**
+     * Build a REAL mood mix (server /api/mood): the server combines a mood's
+     * genre catalog with the user's recent-listening taste profile and
+     * excludes the current queue + recently played ids so songs do not
+     * repeat. Ready state renders on the Mix tab exactly like radio.
+     */
+    fun startMood(moodId: String, playbackViewModel: PlaybackViewModel) {
+        radioJob?.cancel()
+        radioJob = viewModelScope.launch {
+            _radioState.value = RadioState.Loading
+            val repo = musicRepository
+            val current = playbackViewModel.uiState.value.currentTrack
+            val queueIds = playbackViewModel.uiState.value.playlist.map { it.id }.toSet()
+            val recents = runCatching {
+                recentRepository.recentTracksFlow.first()
+            }.getOrDefault(emptyList())
+            val seeds = buildList {
+                if (!current.id.isBlank()) add(current.id)
+                addAll(recents.map { it.id })
+            }.distinct().take(6)
+            val exclude = (queueIds + recents.map { it.id }).toSet()
+            val result = repo.getMood(moodId, seeds, exclude.toList())
+            result.onSuccess { tracks ->
+                val clean = tracks.filter { it.id !in queueIds }.take(20)
+                _radioState.value = if (clean.isEmpty()) {
+                    RadioState.Error("Couldn't build a mood mix — try again")
+                } else {
+                    RadioState.Ready(clean)
+                }
+            }.onFailure { e ->
+                _radioState.value = RadioState.Error("Mood mix failed: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
     fun startRadio(playbackViewModel: PlaybackViewModel) {
         val current = playbackViewModel.uiState.value.currentTrack
         radioJob?.cancel()

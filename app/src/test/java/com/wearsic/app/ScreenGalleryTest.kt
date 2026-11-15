@@ -418,7 +418,7 @@ class ScreenGalleryTest {
             favorites = tracks.take(3),
             isServerReachable = true,
             onPlay = { _, _ -> },
-            onOpenSearchForMood = { _ -> },
+            onOpenMood = { _ -> },
             onOpenSearch = {},
             onOpenMix = {},
             onRefreshRecommendations = {}

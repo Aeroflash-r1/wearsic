@@ -176,7 +176,22 @@ class WearsicMockApiClient(private val context: Context) : WearsicApiClient {
         return Result.success(if (query.isBlank()) emptyList() else listOf("$query hits", "${query} mix"))
     }
 
-    override suspend fun getRelated(baseUrl: String, videoId: String): Result<List<TrackDto>> {
+    override suspend fun getRelated(
+        baseUrl: String,
+        videoId: String,
+        artist: String?,
+        title: String?,
+    ): Result<List<TrackDto>> {
+        delay(300)
+        return Result.success(emptyList())
+    }
+
+    override suspend fun getMood(
+        baseUrl: String,
+        mood: String,
+        seedTrackIds: List<String>,
+        excludeTrackIds: List<String>,
+    ): Result<List<TrackDto>> {
         delay(300)
         return Result.success(emptyList())
     }

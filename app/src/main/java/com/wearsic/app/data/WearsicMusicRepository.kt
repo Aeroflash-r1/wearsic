@@ -200,6 +200,17 @@ class WearsicMusicRepository(
         return httpApiClient.getPlaylists(currentUrl).map { dtoList -> dtoList.map { it.toDomainPlaylist() } }
     }
 
+    /** Real mood mix: mood id + recent seeds + exclusion (server v1.9.50+). */
+    suspend fun getMood(
+        mood: String,
+        seedTrackIds: List<String>,
+        excludeTrackIds: List<String>,
+    ): Result<List<Track>> {
+        val currentUrl = getServerUrl()
+        return httpApiClient.getMood(currentUrl, mood, seedTrackIds, excludeTrackIds)
+            .map { dtoList -> dtoList.map { it.toDomainTrack() } }
+    }
+
     /** "Made for you": multi-seed taste-ranked recommendations (server v1.9.39+). */
     suspend fun getRecommendations(
         seedTrackIds: List<String>,
@@ -227,9 +238,10 @@ class WearsicMusicRepository(
         return httpApiClient.getSuggestions(currentUrl, query)
     }
 
-    suspend fun getRelated(videoId: String): Result<List<Track>> {
+    suspend fun getRelated(videoId: String, artist: String? = null, title: String? = null): Result<List<Track>> {
         val currentUrl = getServerUrl()
-        return httpApiClient.getRelated(currentUrl, videoId).map { dtoList -> dtoList.map { it.toDomainTrack() } }
+        return httpApiClient.getRelated(currentUrl, videoId, artist, title)
+            .map { dtoList -> dtoList.map { it.toDomainTrack() } }
     }
 
     suspend fun searchAlbums(query: String): Result<List<Album>> {

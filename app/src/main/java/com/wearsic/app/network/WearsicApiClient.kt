@@ -32,7 +32,20 @@ interface WearsicApiClient {
 
     // Discovery & library expansion
     suspend fun getSuggestions(baseUrl: String, query: String): Result<List<String>>
-    suspend fun getRelated(baseUrl: String, videoId: String): Result<List<TrackDto>>
+    suspend fun getRelated(
+        baseUrl: String,
+        videoId: String,
+        artist: String? = null,
+        title: String? = null,
+    ): Result<List<TrackDto>>
+
+    /** Real mood mix (server v1.9.50+): mood id + seeds + exclude. */
+    suspend fun getMood(
+        baseUrl: String,
+        mood: String,
+        seedTrackIds: List<String>,
+        excludeTrackIds: List<String>,
+    ): Result<List<TrackDto>>
 
     /** "Made for you": multi-seed taste-ranked recommendations. */
     suspend fun getRecommendations(

@@ -304,6 +304,43 @@ class WearsicPlayerViewModel(
     }
 
     /**
+     * Play ONE picked track and fill the queue with related music (same
+     * artist first — the server ranks with artist/title hints). This is the
+     * "search tap" path: it deliberately does NOT reuse the search result
+     * list as the queue, which is what made a searched song play random
+     * other-artist hits after it. Related loads in the background and is
+     * appended AFTER the current track so the picked song always plays first.
+     */
+    fun playTrackWithRelatedQueue(track: Track) {
+        viewModelScope.launch {
+            val container = (getApplication<WearsicApp>()).container
+            val localTrack = withContext(Dispatchers.IO) {
+                container.downloadRepository.getDownloadedTrack(track.id)
+            }
+            val trackToPlay = applyFavoriteFlags(localTrack ?: track)
+            // 1) Play the picked song immediately (single-track queue).
+            playbackViewModel.playTrack(trackToPlay)
+            warmUpTrack(trackToPlay)
+            // 2) Background-fill the queue with related music (optional — a
+            //    failure or empty set must never disturb what is playing).
+            val related = runCatching {
+                container.musicRepository.getRelated(
+                    trackToPlay.id,
+                    artist = trackToPlay.artist.takeIf { it.isNotBlank() },
+                    title = trackToPlay.title.takeIf { it.isNotBlank() },
+                )
+            }.getOrNull()?.getOrNull().orEmpty()
+            val filtered = related
+                .filter { it.id != trackToPlay.id }
+                .distinctBy { it.id }
+                .take(15)
+            if (filtered.isNotEmpty()) {
+                playbackViewModel.addToQueue(filtered)
+            }
+        }
+    }
+
+    /**
      * Queue ONE track with local-file resolution: a downloaded track is queued
      * as its file (instant later playback), never as a re-streamable http URI.
      */
@@ -455,6 +492,10 @@ class WearsicPlayerViewModel(
 
     fun startRadio() {
         libraryViewModel.startRadio(playbackViewModel)
+    }
+
+    fun startMood(moodId: String) {
+        libraryViewModel.startMood(moodId, playbackViewModel)
     }
 
     // ============================================================================

@@ -26,9 +26,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,7 +42,6 @@ import androidx.compose.ui.unit.sp
 import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.theme.LocalWearsicAccent
-import com.wearsic.app.ui.theme.LocalWearsicTopChromeReserve
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassBorder
@@ -157,6 +154,7 @@ fun WearsicHubScreen(
      */
     currentTrackId: String? = null,
     onOpenLibrary: () -> Unit = {},
+    onOpenMood: (WearsicMood) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -172,10 +170,8 @@ fun WearsicHubScreen(
             isServerReachable = serverReachable,
             currentTrackId = currentTrackId,
             onPlay = onPlay,
-            onOpenSearchForMood = { mood ->
-                onSearchQueryChanged(mood.query)
-                onSearchQuerySubmitted(mood.query)
-                onOpenSearch()
+            onOpenMood = { mood ->
+                onOpenMood(mood)
             },
             onOpenSearch = onOpenSearch,
             onOpenMix = onOpenRecommendations,

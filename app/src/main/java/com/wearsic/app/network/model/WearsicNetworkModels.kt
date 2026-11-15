@@ -239,6 +239,20 @@ data class RecommendationsRequestDto(
     val excludeTrackIds: List<String> = emptyList(),
 )
 
+/** POST /api/mood request (real mood mix, personalized from seeds). */
+@Serializable
+data class MoodRequestDto(
+    val mood: String,
+    val seedTrackIds: List<String> = emptyList(),
+    val excludeTrackIds: List<String> = emptyList(),
+)
+
+@Serializable
+data class MoodResponseDto(
+    val mood: String = "",
+    val results: List<TrackDto> = emptyList(),
+)
+
 sealed interface ConnectionTestState {
     data object Idle : ConnectionTestState
     data object Testing : ConnectionTestState

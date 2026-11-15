@@ -100,7 +100,7 @@ fun HomeScreen(
     favorites: List<Track>,
     isServerReachable: Boolean,
     onPlay: (List<Track>, Int) -> Unit,
-    onOpenSearchForMood: (WearsicMood) -> Unit,
+    onOpenMood: (WearsicMood) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenMix: () -> Unit,
     onOpenLibrary: () -> Unit = {},
@@ -310,7 +310,7 @@ fun HomeScreen(
                         WearsicMoodChip(
                             label = mood.label,
                             icon = icons[index % icons.size],
-                            onClick = { onOpenSearchForMood(mood) }
+                            onClick = { onOpenMood(mood) }
                         )
                     }
                 }

@@ -202,6 +202,10 @@ fun WearsicApp(
                                     onOpenPlayer = { navController.navigate(Screen.Player.route) },
                                     onOpenSearch = { navController.navigate(Screen.Search.route) },
                                     onOpenLibrary = { navController.navigate(Screen.Library.route) },
+                                    onOpenMood = { mood ->
+                                        playerViewModel.startMood(mood.id)
+                                        navController.navigate(Screen.MadeForYou.route)
+                                    },
                                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
                                     onOpenPlaylists = { navController.navigate(Screen.Playlists.route) },
                                     onOpenAlbums = { navController.navigate(Screen.Albums.route) },
@@ -329,7 +333,7 @@ fun WearsicApp(
                                         libraryVM.onSearchTextChanged(text)
                                     },
                                     onTrackSelected = { track ->
-                                        playerViewModel.playTrack(track)
+                                        playerViewModel.playTrackWithRelatedQueue(track)
                                         navController.navigate(Screen.Player.route)
                                     },
                                     onDownloadTrack = { track ->

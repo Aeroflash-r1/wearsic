@@ -11,6 +11,8 @@ import com.wearsic.app.network.model.AlbumDto
 import com.wearsic.app.network.model.AlbumResolveDto
 import com.wearsic.app.network.model.FavoritesResponseDto
 import com.wearsic.app.network.model.LyricsResponseDto
+import com.wearsic.app.network.model.MoodRequestDto
+import com.wearsic.app.network.model.MoodResponseDto
 import com.wearsic.app.network.model.PlaylistDto
 import com.wearsic.app.network.model.PlaylistWithTracksDto
 import com.wearsic.app.network.model.ReadyResponseDto
@@ -374,6 +376,48 @@ class WearsicHttpApiClient(
             Result.failure(UnknownError(e.message ?: "Could not load recommendations", e))
         }
     }
+    override suspend fun getMood(
+        baseUrl: String,
+        mood: String,
+        seedTrackIds: List<String>,
+        excludeTrackIds: List<String>,
+    ): Result<List<TrackDto>> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        try {
+            val body = MoodRequestDto(
+                mood = mood,
+                seedTrackIds = seedTrackIds,
+                excludeTrackIds = excludeTrackIds,
+            )
+            val request = Request.Builder()
+                .url("$sanitizedUrl/api/mood")
+                .post(json.encodeToString(MoodRequestDto.serializer(), body).toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError("$sanitizedUrl/api/mood", response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+                val bodyString = response.body?.string() ?: ""
+                val dto = try {
+                    json.decodeFromString<MoodResponseDto>(bodyString)
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    MoodResponseDto()
+                }
+                Result.success(dto.results.withStreamUrls(sanitizedUrl))
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not load mood mix", e))
+        }
+    }
+
 
     override suspend fun addFavorite(baseUrl: String, track: TrackDto): Result<Unit> = withContext(Dispatchers.IO) {
         val urlValidation = validateBaseUrl(baseUrl)
@@ -580,7 +624,12 @@ class WearsicHttpApiClient(
             }
         }
 
-    override suspend fun getRelated(baseUrl: String, videoId: String): Result<List<TrackDto>> =
+    override suspend fun getRelated(
+        baseUrl: String,
+        videoId: String,
+        artist: String?,
+        title: String?,
+    ): Result<List<TrackDto>> =
         withContext(Dispatchers.IO) {
             val urlValidation = validateBaseUrl(baseUrl)
             if (urlValidation.isFailure) {
@@ -594,8 +643,13 @@ class WearsicHttpApiClient(
                 return@withContext Result.failure(error ?: com.wearsic.app.model.InvalidTrackIdError(videoId))
             }
             try {
+                val urlBuilder = StringBuilder("$sanitizedUrl/api/related/${URLEncoder.encode(trackIdValidation.getOrThrow(), "UTF-8")}")
+                val params = mutableListOf<String>()
+                if (!artist.isNullOrBlank()) params += "artist=" + URLEncoder.encode(artist, "UTF-8")
+                if (!title.isNullOrBlank()) params += "title=" + URLEncoder.encode(title, "UTF-8")
+                if (params.isNotEmpty()) urlBuilder.append('?').append(params.joinToString("&"))
                 val request = Request.Builder()
-                    .url("$sanitizedUrl/api/related/${URLEncoder.encode(trackIdValidation.getOrThrow(), "UTF-8")}")
+                    .url(urlBuilder.toString())
                     .get()
                     .build()
 

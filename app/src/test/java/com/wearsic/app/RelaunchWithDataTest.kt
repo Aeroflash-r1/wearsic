@@ -195,13 +195,11 @@ class RelaunchWithDataTest {
         composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true)
             .performClick()
         composeTestRule.waitUntil(10_000) {
-            composeTestRule.onAllNodesWithTag("search_input", useUnmergedTree = true)
-                .fetchSemanticsNodes().isNotEmpty() ||
-                composeTestRule.onAllNodes(
-                    androidx.compose.ui.test.hasText("Search"), useUnmergedTree = true
-                ).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithTag("search_text_input", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithText("Search").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("search_text_input", useUnmergedTree = true)
+            .assertIsDisplayed()
     }
 
     @Test

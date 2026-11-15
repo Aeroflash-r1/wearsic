@@ -199,9 +199,10 @@ class ExampleRobolectricTest {
         }
         downloadsTile.assertExists()
 
-        // Navigate to Search
+        // Navigate to Search (the Hub's Search tab). The tab shows both a
+        // "Search" header AND the text input, so assert on the input's tag.
         composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).performClick()
-        composeTestRule.onNodeWithText("Search").assertExists()
+        composeTestRule.onNodeWithTag("search_text_input", useUnmergedTree = true).assertExists()
     }
 
     @Test

@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,8 +41,10 @@ import androidx.compose.material.icons.rounded.Celebration
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FitnessCenter
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalCafe
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.MusicNote
@@ -100,6 +103,11 @@ fun HomeScreen(
     onOpenSearchForMood: (WearsicMood) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenMix: () -> Unit,
+    onOpenLibrary: () -> Unit = {},
+    onOpenPlayer: () -> Unit = {},
+    /** The id of the track currently playing — lets the hero open the player
+     *  instead of RESTARTING an already-playing song on tap. */
+    currentTrackId: String? = null,
     onRefreshRecommendations: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -187,6 +195,29 @@ fun HomeScreen(
                 }
             }
 
+            // ---- Library + Mix shortcuts (the old floating rail is gone) ----
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    HomeShortcutPill(
+                        label = "Library",
+                        icon = Icons.Rounded.LibraryMusic,
+                        onClick = onOpenLibrary,
+                        testTag = "home_library_shortcut"
+                    )
+                    HomeShortcutPill(
+                        label = "Mix",
+                        icon = Icons.Rounded.GraphicEq,
+                        onClick = onOpenMix,
+                        testTag = "home_mix_shortcut"
+                    )
+                }
+            }
+
             if (!isServerReachable) {
                 item {
                     WearsicOfflineNote()
@@ -202,7 +233,9 @@ fun HomeScreen(
                         title = last.title,
                         subtitle = last.artist,
                         artworkUrl = last.artworkUrl,
-                        onClick = { onPlay(recentTracks, 0) },
+                        onClick = {
+                            if (last.id == currentTrackId) onOpenPlayer() else onPlay(recentTracks, 0)
+                        },
                         testTag = "home_hero_last_played"
                     )
                 }
@@ -511,6 +544,44 @@ private fun WearsicOfflineNote() {
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** Compact round pill used for Home section shortcuts. */
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.HomeShortcutPill(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    testTag: String,
+    modifier: Modifier = Modifier
+) {
+    val accent = LocalWearsicAccent.current
+    Row(
+        modifier = modifier
+            .weight(1f)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.06f))
+            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+            .wearsicClickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .testTag(testTag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = accent,
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            color = WearsicTextPrimary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold
         )
     }
 }

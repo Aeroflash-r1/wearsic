@@ -147,202 +147,41 @@ fun WearsicHubScreen(
      * routes — those still existed next to the Hub and made the OLD layout
      * come back mid-session.
      */
-    section: WearsicHubSection = WearsicHubSection.Home,
-    onSelectSection: ((WearsicHubSection) -> Unit)? = null,
+    /**
+     * The Hub shell renders the HOME surface only. Library, Search and Mix
+     * are real pushed routes (with right-swipe back), so this screen no
+     * longer hosts tab content or the floating section rail — that rail was
+     * clipped on the round bezel and duplicated navigation that routes do
+     * better. The scroll list avoids the default auto-centering so the top
+     * of the feed stays reachable.
+     */
+    currentTrackId: String? = null,
+    onOpenLibrary: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var internalTab by rememberSaveable { mutableIntStateOf(WearsicHubSection.Home.ordinal) }
-    // An externally driven section wins; otherwise the screen keeps its own.
-    val activeTab = if (onSelectSection != null) section.ordinal else internalTab
-    // The rail block (24 top pad + chip row + label + 4 bottom pad) — the
-    // exact vertical span the floating rail occupies; provided pre-scaled.
-    // 24dp of top pad is deliberate: it drops the chip row below the system
-    // time text AND buys chord room — the circle is ~141dp wide at that row
-    // (vs ~123dp at 18dp), so a 4×32dp chip row fits without bevel clipping.
-    val railReserve = watchScaled(
-        WearsicDimens.HubRailChip + WearsicDimens.HubRailLabelLine + 24.dp + 4.dp
-    )
-
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(WearsicAppBackground)
     ) {
-        // ---- Tab content (each tab manages its own ScreenScaffold) ----
-        CompositionLocalProvider(
-            LocalWearsicTopChromeReserve provides railReserve
-        ) {
-            when (WearsicHubSection.entries[activeTab]) {
-                WearsicHubSection.Home -> HomeScreen(
-                    recentTracks = recentTracks,
-                    mostPlayedTracks = mostPlayedTracks,
-                    recommendationsState = recommendationsState,
-                    favorites = favoritesState.tracks,
-                    isServerReachable = serverReachable,
-                    onPlay = onPlay,
-                    onOpenSearchForMood = { mood ->
-                        onSearchQueryChanged(mood.query)
-                        onSearchQuerySubmitted(mood.query)
-                        onOpenSearch()
-                    },
-                    onOpenSearch = onOpenSearch,
-                    onOpenMix = {
-                        internalTab = WearsicHubSection.Mix.ordinal
-                        onSelectSection?.invoke(WearsicHubSection.Mix)
-                    },
-                    onRefreshRecommendations = onRefreshRecommendations
-                )
-
-                WearsicHubSection.Library -> LibraryScreen(
-                    playbackState = playbackState,
-                    recentTracks = recentTracks,
-                    onPlayRecentTrack = onPlay,
-                    isServerReachable = serverReachable,
-                    failoverServerName = failoverServerName,
-                    offlineDownloads = offlineDownloads,
-                    onPlayOfflineTrack = onPlay,
-                    onNavigateToSearch = onOpenSearch,
-                    onNavigateToDownloads = onOpenDownloads,
-                    onNavigateToPlaylists = onOpenPlaylists,
-                    onNavigateToAlbums = onOpenAlbums,
-                    onNavigateToFavorites = onOpenFavorites,
-                    onNavigateToArtists = onOpenArtists,
-                    onNavigateToRecommendations = onOpenRecommendations,
-                    onNavigateToSettings = onOpenSettings,
-                    onNavigateToPlayer = onOpenPlayer,
-                    mostPlayed = mostPlayedTracks
-                )
-
-                WearsicHubSection.Search -> SearchScreen(
-                    searchState = searchState,
-                    onQuerySelected = onSearchQuerySubmitted,
-                    onSearchTextChanged = onSearchQueryChanged,
-                    onTrackSelected = { track -> onPlay(listOf(track), 0) },
-                    onDownloadTrack = onStartDownload,
-                    onAddToQueue = onQueueTrack,
-                    onToggleFavorite = onToggleFavoriteTrack,
-                    favoriteTrackIds = favoriteTrackIds,
-                    playlists = searchPlaylists,
-                    onCreatePlaylistAndAdd = onCreatePlaylistAndAdd,
-                    onLoadMore = onLoadMoreResults,
-                    onAddToPlaylist = onAddTrackToPlaylist,
-                    albumResults = albumsState.albums,
-                    onSearchAlbums = onAlbumQueryChanged,
-                    onOpenAlbum = { album -> onOpenAlbum(album.id, album.name) }
-                )
-
-                WearsicHubSection.Mix -> MixScreen(
-                    recommendationsState = recommendationsState,
-                    favorites = favoritesState.tracks,
-                    recentTracks = recentTracks,
-                    radioState = radioState,
-                    onPlay = onPlay,
-                    onStartRadio = onStartRadio,
-                    onShuffleFavorites = onShuffleFavorites,
-                    onRefreshRecommendations = onRefreshRecommendations
-                )
-            }
-        }
-
-        // ---- Section rail (floating, scrims, round-safe) ----
-        WearsicHubRail(
-            active = WearsicHubSection.entries[activeTab],
-            onSelect = { picked ->
-                internalTab = picked.ordinal
-                onSelectSection?.invoke(picked)
+        HomeScreen(
+            recentTracks = recentTracks,
+            mostPlayedTracks = mostPlayedTracks,
+            recommendationsState = recommendationsState,
+            favorites = favoritesState.tracks,
+            isServerReachable = serverReachable,
+            currentTrackId = currentTrackId,
+            onPlay = onPlay,
+            onOpenSearchForMood = { mood ->
+                onSearchQueryChanged(mood.query)
+                onSearchQuerySubmitted(mood.query)
+                onOpenSearch()
             },
-            modifier = Modifier.align(Alignment.TopCenter)
+            onOpenSearch = onOpenSearch,
+            onOpenMix = onOpenRecommendations,
+            onOpenLibrary = onOpenLibrary,
+            onOpenPlayer = onOpenPlayer,
+            onRefreshRecommendations = onRefreshRecommendations
         )
-    }
-}
-
-/**
- * The four-chip section rail. Round-screen aware: the chip row is centred
- * and narrow (4×26dp chips + gaps ≈ 128dp), so it always fits inside the
- * available chord just below the system time text; a fading black scrim
- * keeps scrolling content legible beneath it.
- */
-@Composable
-private fun WearsicHubRail(
-    active: WearsicHubSection,
-    onSelect: (WearsicHubSection) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val accent = LocalWearsicAccent.current
-    val chipSize = watchScaled(WearsicDimens.HubRailChip)
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(WearsicTopScrimBrush)
-            .padding(top = watchScaled(24.dp), bottom = watchScaled(4.dp))
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(watchScaled(2.dp)),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // 4 chips × 26dp visual inside (26+6)=32dp touch slots +
-                // 3×2dp gaps ≈ 134dp — still inside the ~123dp chord budget
-                // at the rail's top row... slots sized snugly below it:
-                for (section in WearsicHubSection.entries) {
-                    val selected = section == active
-                    // Touch slot: chip visual + an invisible margin so the
-                    // segmented control still meets a sane tap size without
-                    // growing the visible row out of the round chord.
-                    Box(
-                        modifier = Modifier
-                            .size(chipSize + WearsicDimens.HubRailChipPad * 2)
-                            .clip(CircleShape)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = { onSelect(section) }
-                            )
-                            .semantics {
-                                contentDescription = "${section.label} tab" +
-                                    if (selected) ", selected" else ""
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(chipSize)
-                                .clip(CircleShape)
-                                .background(
-                                    if (selected) accent.copy(alpha = 0.28f)
-                                    else WearsicGlassBorder.copy(alpha = 0.10f)
-                                )
-                                .border(
-                                    1.dp,
-                                    if (selected) accent.copy(alpha = 0.65f) else WearsicGlassBorder,
-                                    CircleShape
-                                )
-                                .then(
-                                    if (selected) Modifier.testTag("hub_rail_${section.name.lowercase()}_selected")
-                                    else Modifier
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = section.icon,
-                                contentDescription = null,
-                                tint = if (selected) WearsicTextPrimary else com.wearsic.app.ui.theme.WearsicTextWhite60,
-                                modifier = Modifier.size(watchScaled(14.dp))
-                            )
-                        }
-                    }
-                }
-            }
-            Text(
-                text = active.label,
-                color = accent,
-                fontSize = 8.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .height(WearsicDimens.HubRailLabelLine)
-                    .padding(top = watchScaled(1.dp))
-            )
-        }
     }
 }

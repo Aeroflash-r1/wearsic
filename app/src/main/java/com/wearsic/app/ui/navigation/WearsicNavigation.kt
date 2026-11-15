@@ -7,11 +7,9 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -34,6 +32,7 @@ import com.wearsic.app.ui.screens.ArtistsScreen
 import com.wearsic.app.ui.screens.DownloadsScreen
 import com.wearsic.app.ui.screens.FavoritesScreen
 import com.wearsic.app.ui.screens.LibraryScreen
+import com.wearsic.app.ui.screens.MixScreen
 import com.wearsic.app.ui.screens.PlayerScreen
 import com.wearsic.app.ui.screens.PlaylistDetailScreen
 import com.wearsic.app.ui.screens.PlaylistsScreen
@@ -45,12 +44,8 @@ import com.wearsic.app.ui.screens.SettingsScreen
 import com.wearsic.app.ui.screens.StorageStatsContent
 import com.wearsic.app.ui.screens.VolumeScreen
 import com.wearsic.app.ui.screens.WearsicHubScreen
-import com.wearsic.app.ui.screens.WearsicHubSection
-import com.wearsic.app.ui.components.WearsicMiniPlayer
-import com.wearsic.app.ui.components.wearsicMiniPlayerReserve
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.LocalWearsicDynamicAccent
-import com.wearsic.app.ui.theme.LocalWearsicMiniPlayerReserve
 import com.wearsic.app.ui.theme.WearsicTheme
 import com.wearsic.app.ui.theme.WearsicVibrantLavender
 import com.wearsic.app.ui.util.ArtworkColors
@@ -73,7 +68,6 @@ fun WearsicApp(
     // Which Hub section (Home / Library / Search / Mix) is showing. Hoisted
     // so a tap inside the Hub switches the TAB instead of pushing the legacy
     // standalone Library/Search/Made-For-You routes.
-    var hubSection by rememberSaveable { mutableStateOf(WearsicHubSection.Home) }
     val playbackVM = playerViewModel.playbackViewModel
     val libraryVM = playerViewModel.libraryViewModel
     val downloadsVM = playerViewModel.downloadsViewModel
@@ -147,29 +141,8 @@ fun WearsicApp(
                 // `rememberWearsicListContentPadding()` lifts its last row above the
                 // pill without per-screen changes.
                 val currentDestination by navController.currentBackStackEntryAsState()
-                val miniPlayerRoutes = remember {
-                    setOf(
-                        Screen.Hub.route,
-                        Screen.Library.route,
-                        Screen.Search.route,
-                        Screen.MadeForYou.route,
-                        Screen.Playlists.route,
-                        Screen.Favorites.route,
-                        Screen.PlaylistDetail.route,
-                        Screen.Artists.route,
-                        Screen.Albums.route,
-                        Screen.Downloads.route
-                    )
-                }
-                val hasActiveTrack = stablePlaybackState.currentTrack.id.isNotBlank()
-                val showMiniPlayer =
-                    currentDestination?.destination?.route in miniPlayerRoutes && hasActiveTrack
-                val miniPlayerReserve = if (showMiniPlayer) wearsicMiniPlayerReserve() else 0.dp
-                CompositionLocalProvider(
-                    LocalWearsicMiniPlayerReserve provides miniPlayerReserve
-                ) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        SwipeDismissableNavHost(
+                Box(modifier = Modifier.fillMaxSize()) {
+                    SwipeDismissableNavHost(
                             navController = navController,
                             startDestination = Screen.Hub.route
                         ) {
@@ -192,9 +165,8 @@ fun WearsicApp(
                                 val offlineDownloads by downloadsVM.completedTracks.collectAsStateWithLifecycle()
 
                                 WearsicHubScreen(
-                                    section = hubSection,
-                                    onSelectSection = { hubSection = it },
                                     playbackState = stablePlaybackState,
+                                    currentTrackId = stablePlaybackState.currentTrack.id.takeIf { it.isNotBlank() },
                                     recentTracks = recentTracks,
                                     mostPlayedTracks = mostPlayedTracks,
                                     favoritesState = favoritesState,
@@ -228,13 +200,14 @@ fun WearsicApp(
                                     onToggleFavoriteTrack = { playerViewModel.toggleFavoriteFor(it) },
                                     onStartDownload = { downloadsVM.startDownload(it) },
                                     onOpenPlayer = { navController.navigate(Screen.Player.route) },
-                                    onOpenSearch = { hubSection = WearsicHubSection.Search },
+                                    onOpenSearch = { navController.navigate(Screen.Search.route) },
+                                    onOpenLibrary = { navController.navigate(Screen.Library.route) },
                                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
                                     onOpenPlaylists = { navController.navigate(Screen.Playlists.route) },
                                     onOpenAlbums = { navController.navigate(Screen.Albums.route) },
                                     onOpenFavorites = { navController.navigate(Screen.Favorites.route) },
                                     onOpenArtists = { navController.navigate(Screen.Artists.route) },
-                                    onOpenRecommendations = { hubSection = WearsicHubSection.Mix },
+                                    onOpenRecommendations = { navController.navigate(Screen.MadeForYou.route) },
                                     onOpenSettings = { navController.navigate(Screen.Settings.route) },
                                     onRefreshLibrary = { libraryVM.refreshLibrary() },
                                     onRefreshFavorites = { libraryVM.refreshFavorites() },
@@ -285,7 +258,7 @@ fun WearsicApp(
                                         navController.navigate(Screen.Player.route)
                                     },
                                     onNavigateToSearch = {
-                                        hubSection = WearsicHubSection.Search
+                                        navController.navigate(Screen.Search.route)
                                     },
                                     onNavigateToDownloads = {
                                         navController.navigate(Screen.Downloads.route)
@@ -303,7 +276,7 @@ fun WearsicApp(
                                         navController.navigate(Screen.Artists.route)
                                     },
                                     onNavigateToRecommendations = {
-                                        hubSection = WearsicHubSection.Mix
+                                        navController.navigate(Screen.MadeForYou.route)
                                     },
                                     onNavigateToSettings = {
                                         navController.navigate(Screen.Settings.route)
@@ -317,15 +290,24 @@ fun WearsicApp(
                             // Recommendations ("Made for you") — taste-ranked, server-side.
                             composable(Screen.MadeForYou.route) {
                                 val recommendationsState by libraryVM.recommendationsState.collectAsStateWithLifecycle()
-                                RecommendationsScreen(
+                                val favoritesState by libraryVM.favoritesState.collectAsStateWithLifecycle()
+                                val recentTracks by libraryVM.recentTracks.collectAsStateWithLifecycle()
+                                val radioState by libraryVM.radioState.collectAsStateWithLifecycle()
+                                MixScreen(
                                     recommendationsState = recommendationsState,
-                                    onRefresh = {
-                                        libraryVM.refreshRecommendations()
-                                    },
-                                    onPlayTrack = { tracks, index ->
+                                    favorites = favoritesState.tracks,
+                                    recentTracks = recentTracks,
+                                    radioState = radioState,
+                                    onPlay = { tracks, index ->
                                         playerViewModel.playTracksFromList(tracks, index)
                                         navController.navigate(Screen.Player.route)
-                                    }
+                                    },
+                                    onStartRadio = { playerViewModel.startRadio() },
+                                    onShuffleFavorites = {
+                                        playerViewModel.playTracksShuffled(favoritesState.tracks)
+                                        navController.navigate(Screen.Player.route)
+                                    },
+                                    onRefreshRecommendations = { libraryVM.refreshRecommendations() }
                                 )
                             }
 
@@ -781,21 +763,7 @@ fun WearsicApp(
                                 )
                             }
                         }
-
-                    // Floating mini-player above everything (hidden on Player,
-                    // Queue, Volume, Settings, Storage, Server dashboard).
-                    if (showMiniPlayer) {
-                        WearsicMiniPlayer(
-                            playbackState = playbackStateHolder,
-                            onOpenPlayer = {
-                                navController.navigate(Screen.Player.route) { launchSingleTop = true }
-                            },
-                            onTogglePlayPause = { playbackVM.togglePlayPause() },
-                            modifier = Modifier.align(Alignment.BottomCenter)
-                        )
-                    }
-                        }
-                    }
+                }
             }
         }
     }

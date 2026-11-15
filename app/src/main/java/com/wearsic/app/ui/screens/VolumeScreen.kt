@@ -470,7 +470,10 @@ private fun DeviceChip(
             .testTag(testTag),
         contentAlignment = Alignment.Center
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
@@ -482,9 +485,10 @@ private fun DeviceChip(
                 text = label,
                 color = contentTint,
                 fontFamily = WearsicDisplayFont,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

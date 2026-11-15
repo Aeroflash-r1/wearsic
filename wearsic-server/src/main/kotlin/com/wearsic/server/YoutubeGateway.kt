@@ -115,6 +115,9 @@ class YoutubeGateway(
 
     companion object {
         private const val MAX_RESULTS = 10
+        // When at least this many related candidates share the seed's artist,
+        // off-artist candidates are dropped entirely (search/queue accuracy).
+        private const val MIN_SAME_ARTIST_FILTER = 5
         // Album search depth: must exceed single-page count so multi-track
         // albums buried among auto-singles are seen by the ranker. The page
         // is fetched once; ranking trims to a handful of good candidates.
@@ -830,17 +833,30 @@ class YoutubeGateway(
         return parts.fold(0L) { acc, p -> acc * 60 + p }
     }
 
-    override suspend fun related(videoId: String): List<TrackDto> = withContext(Dispatchers.IO) {
+    override suspend fun related(videoId: String): List<TrackDto> =
+        relatedWithHints(videoId, artist = null, title = null)
+
+    override suspend fun relatedWithHints(
+        videoId: String,
+        artist: String?,
+        title: String?,
+    ): List<TrackDto> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        relatedCache.get(videoId)?.let { if (it.expiresAt > now) return@withContext it.value }
+        val cacheKey = if (artist.isNullOrBlank() && title.isNullOrBlank()) {
+            videoId
+        } else {
+            "$videoId|${artist?.trim()?.lowercase() ?: ""}|${title?.trim()?.lowercase() ?: ""}"
+        }
+        relatedCache.get(cacheKey)?.let { if (it.expiresAt > now) return@withContext it.value }
 
         // Fast path first: one lean POST instead of a 10s watch-page fetch.
         val leanStarted = System.currentTimeMillis()
         val lean = runCatching { leanRelated(videoId) }.getOrNull()
-        if (lean != null) {
+        val rankedLean = if (lean != null) rankRelated(lean, artist, title) else null
+        if (rankedLean != null) {
             LatencyMetrics.record("related.lean", System.currentTimeMillis() - leanStarted)
-            if (lean.isNotEmpty()) relatedCache.put(videoId, Timed(lean, now + RELATED_TTL_MS))
-            return@withContext lean
+            if (rankedLean.isNotEmpty()) relatedCache.put(cacheKey, Timed(rankedLean, now + RELATED_TTL_MS))
+            return@withContext rankedLean
         }
 
         val extractStarted = System.currentTimeMillis()
@@ -854,21 +870,58 @@ class YoutubeGateway(
                 .mapNotNull { it.toTrackDtoOrNull() }
                 .distinctBy { it.videoId }
                 .take(MAX_RESULTS)
-            // Recommendations read better when they stay around the same
-            // artist: surface the artist that appears most in the related
-            // set first, keep the rest after (all in original order).
-            orderByDominantArtist(related)
+            rankRelated(related, artist, title)
         }
             .onSuccess { healthMeter?.recordSuccess() }
             .onFailure { healthMeter?.recordFailure("related: ${it.message}") }
             .getOrDefault(emptyList())
         LatencyMetrics.record("related.extract", System.currentTimeMillis() - extractStarted)
-        if (result.isNotEmpty()) relatedCache.put(videoId, Timed(result, now + RELATED_TTL_MS))
+        if (result.isNotEmpty()) relatedCache.put(cacheKey, Timed(result, now + RELATED_TTL_MS))
         result
     }
 
-    /** Stable reorder: most-common artist first, then the rest as-is. */
-    private fun orderByDominantArtist(tracks: List<TrackDto>): List<TrackDto> {
+    /**
+     * Artist-aware radio ranking. When the seed artist is known, candidates
+     * whose uploader matches are promoted to the top (same-artist-first);
+     * when at least [MIN_SAME_ARTIST_FILTER] strong same-artist matches are,
+     * off-artist candidates are dropped so a search/queue never plays a
+     * random other-artist song. Without hints this is the legacy dominant-
+     * artist grouping.
+     */
+fun rankRelated(
+    tracks: List<TrackDto>,
+    seedArtist: String?,
+    seedTitle: String?,
+): List<TrackDto> {
+    if (tracks.isEmpty()) return tracks
+    val artistTokens = seedArtist?.let(::queryTokens).orEmpty()
+    if (artistTokens.isEmpty()) return orderByDominantArtist(tracks)
+
+        fun artistMatch(t: TrackDto): Int {
+            val u = queryTokens(t.uploader)
+            if (u.isEmpty()) return 0
+            return if (artistTokens.all { it in u }) 2
+            else if (artistTokens.any { it in u }) 1 else 0
+        }
+        // Stable: sort by match strength, ties keep original order.
+        val scored = tracks.mapIndexed { i, t -> Triple(t, artistMatch(t), i) }
+            .sortedWith(compareByDescending<Triple<TrackDto, Int, Int>> { it.second }.thenBy { it.third })
+        val sameArtist = scored.filter { it.second >= 2 }
+        val partial = scored.filter { it.second == 1 }
+        val other = scored.filter { it.second == 0 }
+        val strongCount = sameArtist.size
+        val filtered = if (strongCount >= MIN_SAME_ARTIST_FILTER) {
+            // Enough same-artist matches — drop off-artist junk entirely.
+            (sameArtist + partial).map { it.first }
+        } else {
+            // Thin related rail: keep everyone, but same-artist still leads.
+            (sameArtist + partial + other).map { it.first }
+        }
+        return filtered.distinctBy { it.videoId }.take(MAX_RESULTS)
+    }
+
+/** Stable reorder: most-common artist first, then the rest as-is. */
+fun orderByDominantArtist(tracks: List<TrackDto>): List<TrackDto> {
         if (tracks.size < 4) return tracks
         val counts = HashMap<String, Int>()
         for (t in tracks) {

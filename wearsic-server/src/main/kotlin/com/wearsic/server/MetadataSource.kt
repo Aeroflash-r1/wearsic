@@ -67,7 +67,17 @@ interface YoutubeMetadataClient {
     suspend fun suggestions(prefix: String): List<String>
 
     /** Songs related to [videoId] (radio), filtered to <=10-minute tracks. */
-    suspend fun related(videoId: String): List<TrackDto>
+    suspend fun related(videoId: String): List<TrackDto> =
+        relatedWithHints(videoId, artist = null, title = null)
+
+    /**
+     * Songs related to [videoId], with the seed's artist/title hints so the
+     * server can rank same-artist candidates first and drop off-artist junk
+     * when enough strong matches exist (queue/radio accuracy). Implementers
+     * may override; the default falls back to plain [related].
+     */
+    suspend fun relatedWithHints(videoId: String, artist: String?, title: String?): List<TrackDto> =
+        related(videoId)
 
     /** Album search (returns playlist URLs as ids, per the API contract). */
     suspend fun searchAlbums(query: String): List<AlbumDto>

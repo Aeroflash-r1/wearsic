@@ -189,3 +189,20 @@ data class RecommendationsRequest(
 
 @Serializable
 data class RecommendationsResponse(val results: List<TrackDto>)
+
+/** `POST /api/mood` — a real mood mix, personalized from listening seeds. */
+@Serializable
+data class MoodRequest(
+    /** Canonical mood id ("chill", "pop", "workout", ...). */
+    val mood: String,
+    /** Recent/current listening seeds (up to 6) used for taste bias. */
+    val seedTrackIds: List<String> = emptyList(),
+    /** ids to never repeat (current queue + recently played). */
+    val excludeTrackIds: List<String> = emptyList(),
+)
+
+@Serializable
+data class MoodResponse(
+    val mood: String,
+    val results: List<TrackDto>,
+)

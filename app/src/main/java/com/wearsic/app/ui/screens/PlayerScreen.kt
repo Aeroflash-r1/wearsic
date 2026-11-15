@@ -1902,14 +1902,7 @@ private fun ActionRow(
             .fillMaxWidth()
             .heightIn(min = WearsicDimens.SheetRowMinHeight)
             .clip(cardShape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        WearsicSurfaceRaised.copy(alpha = 0.85f),
-                        WearsicSurface.copy(alpha = 0.90f)
-                    )
-                )
-            )
+            .background(Color.White.copy(alpha = 0.10f))
             .border(
                 1.dp,
                 if (highlighted) accent.copy(alpha = 0.35f) else WearsicSurfaceBorder,

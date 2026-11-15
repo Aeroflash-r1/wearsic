@@ -81,6 +81,7 @@ private const val CONTENT_CACHE_CONTROL_MAX_AGE_MS = 5 * 60 * 1000L
 private const val SUGGESTIONS_TTL_MS = 60_000L
 private const val RELATED_TTL_MS = CONTENT_CACHE_CONTROL_MAX_AGE_MS
 private const val ALBUM_SEARCH_TTL_MS = CONTENT_CACHE_CONTROL_MAX_AGE_MS
+private const val MOOD_TTL_MS = CONTENT_CACHE_CONTROL_MAX_AGE_MS
 
 /** Token inside the dashboard HTML that the live boot JSON replaces. */
 private const val DASHBOARD_BOOT_TOKEN = "\"__WEARSIC_BOOT__\""
@@ -780,6 +781,8 @@ fun Application.module(
             // the cache miss ever touches YouTube.
             val recommendationEngine = RecommendationEngine(gateway)
             val recommendationCache = RecommendationCache()
+            val moodEngine = MoodEngine(searchOrchestrator, gateway)
+            val moodCache = TtlLoaderCache<String, List<TrackDto>>(32)
 
             // Route-level metadata caches (TtlLoaderCache). These endpoints are
             // the cheap-to-repeat, upstream-costly-to-recompute reads: a watch
@@ -881,9 +884,19 @@ fun Application.module(
                     call.respond(HttpStatusCode.NotFound, ErrorResponse("Could not match '$requestedId' to a playable source"))
                     return@get
                 }
+                // Artist/title hints let the server rank same-artist tracks
+                // first and drop off-artist junk once enough strong matches
+                // exist (the queue/radio accuracy fix).
+                val hintArtist = call.request.queryParameters["artist"]?.trim()?.takeIf { it.isNotEmpty() }
+                val hintTitle = call.request.queryParameters["title"]?.trim()?.takeIf { it.isNotEmpty() }
+                val relatedKey = buildString {
+                    append(realVideoId)
+                    if (hintArtist != null) append('|').append(hintArtist.lowercase())
+                    if (hintTitle != null) append('|').append(hintTitle.lowercase())
+                }
                 val related = LatencyMetrics.time("related.total") {
-                    relatedCache.getOrLoad(realVideoId, RELATED_TTL_MS) {
-                        gateway.related(realVideoId)
+                    relatedCache.getOrLoad(relatedKey, RELATED_TTL_MS) {
+                        gateway.relatedWithHints(realVideoId, hintArtist, hintTitle)
                     }
                 }
                 // Radio plays its top results back-to-back: warm the first few
@@ -970,6 +983,30 @@ fun Application.module(
                 // Warm the top picks so tapping one is instant.
                 searchOrchestrator.prefetchVideoIds(tracks.take(3).map { it.videoId })
                 call.respond(RecommendationsResponse(tracks))
+            }
+
+            post("/mood") {
+                if (!call.checkRateLimited(metaLimiter, apiKey, "Too many mood requests; slow down and retry shortly")) {
+                    return@post
+                }
+                val req = call.receive<MoodRequest>()
+                val mood = moodEngine.knownMood(req.mood)
+                if (mood == null) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ErrorResponse("Unknown mood '${req.mood}' — try one of: chill, pop, workout, jazz, focus, throwbacks, party")
+                    )
+                    return@post
+                }
+                val seeds = req.seedTrackIds.filter { it.isNotBlank() }.distinct().take(MoodEngine.MAX_SEEDS)
+                val excluded = req.excludeTrackIds.filter { it.isNotBlank() }.toSet() +
+                    database.listFavorites().map { it.videoId }
+                val key = "$mood|${seeds.sorted().joinToString("|")}|${excluded.sorted().take(40).joinToString("|")}"
+                val tracks = moodCache.getOrLoad(key, MOOD_TTL_MS) {
+                    moodEngine.build(MoodEngine.MoodSeeds(mood, seeds, excluded))
+                }
+                searchOrchestrator.prefetchVideoIds(tracks.take(3).map { it.videoId })
+                call.respond(MoodResponse(mood = mood, results = tracks))
             }
 
             get("/playlist") {

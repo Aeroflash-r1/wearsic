@@ -489,7 +489,7 @@ fun WearsicScreenHeader(
             text = title,
             color = WearsicTextPrimary,
             fontFamily = WearsicDisplayFont,
-            fontSize = 23.sp,
+            fontSize = 26.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
             letterSpacing = (-0.4).sp,
@@ -539,8 +539,8 @@ fun WearsicSectionTitle(
             Icon(
                 imageVector = icon,
                 contentDescription = iconContentDescription,
-                tint = WearsicTextWhite60,
-                modifier = Modifier.size(12.dp)
+                tint = LocalWearsicAccent.current,
+                modifier = Modifier.size(14.dp)
             )
             Spacer(modifier = Modifier.width(6.dp))
         }
@@ -548,9 +548,9 @@ fun WearsicSectionTitle(
             text = label.uppercase(),
             color = WearsicTextWhite60,
             fontFamily = WearsicDisplayFont,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.8.sp,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)

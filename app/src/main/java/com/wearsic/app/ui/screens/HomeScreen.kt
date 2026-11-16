@@ -64,6 +64,11 @@ import com.wearsic.app.ui.components.WearsicSongRowArtwork
 import com.wearsic.app.ui.components.WearsicTrackShelf
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAccentAmber
+import com.wearsic.app.ui.theme.WearsicAccentMint
+import com.wearsic.app.ui.theme.WearsicAccentPeach
+import com.wearsic.app.ui.theme.WearsicAccentRose
+import com.wearsic.app.ui.theme.WearsicAccentSky
+import com.wearsic.app.ui.theme.WearsicAccentViolet
 import com.wearsic.app.ui.theme.WearsicAppBackground
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicGlassBorder
@@ -261,6 +266,14 @@ fun HomeScreen(
                     Icons.Rounded.History,
                     Icons.Rounded.Celebration
                 )
+                // One hue per mood so the chip row reads as a colourful mood
+                // strip (pop=rose, chill=sky, workout=mint, jazz=amber,
+                // focus=violet, throwbacks=peach, party=accent).
+                val moodTints = listOf(
+                    WearsicAccentRose, WearsicAccentSky, WearsicAccentMint,
+                    WearsicAccentAmber, WearsicAccentViolet, WearsicAccentPeach,
+                    LocalWearsicAccent.current
+                )
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = watchScaled(WearsicDimens.ScreenPaddingH)),
                     horizontalArrangement = Arrangement.spacedBy(watchScaled(6.dp))
@@ -270,6 +283,7 @@ fun HomeScreen(
                         WearsicMoodChip(
                             label = mood.label,
                             icon = icons[index % icons.size],
+                            tint = moodTints[index % moodTints.size],
                             onClick = { onOpenMood(mood) }
                         )
                     }

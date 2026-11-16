@@ -58,9 +58,13 @@ val WearsicGlassFill = Color(0x14FFFFFF)     // white 8%
 val WearsicGlassBorder = Color(0x2EFFFFFF)   // white 18%
 
 // Text Tokens
-val WearsicTextPrimary = Color(0xFFE6E1E5)
+// v1.9.50 "art-first" pass: pure white primary + neutral 70% white secondary.
+// The old lavender secondary read greyish at watch sizes and lowered
+// contrast against OLED black; the accent colour is now carried by
+// artwork-driven dynamic tint instead of the body text.
+val WearsicTextPrimary = Color(0xFFFFFFFF)
 val WearsicTextPrimaryDark = Color(0xFF000000)
-val WearsicTextSecondary = Color(0xFFC4B0FF)
+val WearsicTextSecondary = Color(0xB3FFFFFF)
 val WearsicTextWhite80 = Color(0xCCFFFFFF)
 val WearsicTextWhite60 = Color(0x99FFFFFF)
 val WearsicTextWhite40 = Color(0x66FFFFFF)

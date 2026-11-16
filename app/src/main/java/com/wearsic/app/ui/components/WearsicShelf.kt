@@ -27,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -155,14 +156,16 @@ fun WearsicMoodChip(
     label: String,
     icon: ImageVector,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    tint: Color = LocalWearsicAccent.current
 ) {
-    val accent = LocalWearsicAccent.current
+    // Each mood carries its own hue (passed in by the caller) so the chip
+    // row reads as a colorful mood strip instead of five identical pills.
     Box(
         modifier = modifier
             .clip(CircleShape)
-            .background(WearsicGlassFill)
-            .border(1.dp, WearsicGlassBorder, CircleShape)
+            .background(tint.copy(alpha = 0.22f))
+            .border(1.dp, tint.copy(alpha = 0.55f), CircleShape)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -175,7 +178,7 @@ fun WearsicMoodChip(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = accent,
+                tint = tint,
                 modifier = Modifier.size(watchScaled(12.dp))
             )
             Spacer(Modifier.width(watchScaled(4.dp)))

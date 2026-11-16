@@ -101,7 +101,7 @@ fun WearsicSongRow(
             .background(Brush.verticalGradient(listOf(WearsicSurfaceRaised.copy(alpha = 0.72f), WearsicSurface)))
             .border(1.dp, WearsicSurfaceBorderSubtle, cardShape)
             .wearsicClickable(pressedScale = 0.975f, onLongClick = onLongClick, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 10.dp)
+            .padding(horizontal = 12.dp, vertical = 12.dp)
             .testTag(testTag)
     ) {
         Row(
@@ -114,15 +114,15 @@ fun WearsicSongRow(
                 modifier = Modifier.weight(1f)
             ) {
                 WearsicSongRowArtwork(artworkUrl = artworkUrl, contentDescription = title)
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
                         text = title,
                         color = titleColor,
                         fontFamily = WearsicDisplayFont,
-                        fontSize = 14.sp,
-                        lineHeight = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                        lineHeight = 19.sp,
+                        fontWeight = FontWeight.Bold,
                         maxLines = titleMaxLines,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -132,7 +132,7 @@ fun WearsicSongRow(
                         color = artistColor,
                         fontFamily = WearsicBodyFont,
                         fontSize = 12.sp,
-                        lineHeight = 15.sp,
+                        lineHeight = 16.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -153,7 +153,7 @@ fun WearsicSongRowArtwork(
     artworkUrl: String?,
     contentDescription: String,
     modifier: Modifier = Modifier,
-    size: Dp = watchScaled(40.dp),
+    size: Dp = watchScaled(46.dp),
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current

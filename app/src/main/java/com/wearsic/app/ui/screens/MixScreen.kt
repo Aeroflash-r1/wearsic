@@ -47,6 +47,7 @@ import com.wearsic.app.ui.components.WearsicEmptyState
 import com.wearsic.app.ui.components.WearsicPrimaryPillButton
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSectionTitle
+import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowArtwork
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
@@ -162,40 +163,13 @@ fun MixScreen(
                     radioState.tracks,
                     key = { i, t -> "radio_${t.id}_$i" }
                 ) { index, track ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(WearsicDimens.CardRadius))
-                            .background(WearsicGlassFill)
-                            .border(1.dp, WearsicGlassBorder, RoundedCornerShape(WearsicDimens.CardRadius))
-                            .wearsicClickable(onClick = { onPlayRadio(radioState.tracks) })
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = (index + 1).toString(),
-                            color = wearsicSecondaryText(),
-                            fontSize = 10.sp,
-                            modifier = Modifier.padding(end = 10.dp)
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                text = track.title,
-                                color = WearsicTextPrimary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = track.artist,
-                                color = wearsicSecondaryText(),
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
+                    WearsicSongRow(
+                        title = track.title,
+                        artist = track.artist,
+                        artworkUrl = track.artworkUrl,
+                        onClick = { onPlayRadio(radioState.tracks) },
+                        testTag = "radio_track_${track.id}"
+                    )
                 }
                 item {
                     Text(
@@ -427,24 +401,24 @@ private fun MixTrackRow(
         WearsicSongRowArtwork(
             artworkUrl = track.artworkUrl,
             contentDescription = track.title,
-            size = watchScaled(38.dp)
+            size = watchScaled(46.dp)
         )
-        Spacer(Modifier.width(watchScaled(8.dp)))
+        Spacer(Modifier.width(watchScaled(10.dp)))
         Column(Modifier.weight(1f)) {
             Text(
                 text = track.title,
                 color = WearsicTextPrimary,
-                fontSize = 10.sp,
-                lineHeight = 11.sp,
-                fontWeight = FontWeight.Medium,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = track.artist,
                 color = wearsicSecondaryText(),
-                fontSize = 9.sp,
-                lineHeight = 10.sp,
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

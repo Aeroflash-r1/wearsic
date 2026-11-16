@@ -30,8 +30,7 @@ val LocalWearsicDynamicAccent = staticCompositionLocalOf { false }
  * the artwork hue already carries the colour, text should stay neutral.
  */
 @Composable
-fun wearsicSecondaryText(): Color =
-    if (LocalWearsicDynamicAccent.current) WearsicTextWhite80 else WearsicTextSecondary
+fun wearsicSecondaryText(): Color = WearsicTextWhite80
 
 /**
  * Build the full Material 3 scheme from an accent colour. When dynamic

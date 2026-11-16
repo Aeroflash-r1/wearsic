@@ -92,7 +92,7 @@ object WearsicDimens {
     val MiniPlayerBelowGap: Dp = 6.dp
 
     /** Artwork square on discovery shelves (Home/Mix/Most played). */
-    val ShelfCardArt: Dp = 64.dp
+    val ShelfCardArt: Dp = 84.dp
 
     // ---- Viewport-aware scaling ----
     /**

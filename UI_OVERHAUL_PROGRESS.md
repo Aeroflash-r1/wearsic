@@ -94,5 +94,10 @@ watch verification happens when the watch is charged & connected.
   - LIBRARY PAGE REMOVED from the pager (now 2 pages: Home/Search). Its functions
     (Downloads/Playlists/Albums/Artists/Favorites/offline shelf) folded into
     Home's new Browse section. Robolectric CUJ tests updated for new testTags.
-- NEXT: CI gate → watch port → visual verify → perimeter arc (deferred) →
-  version bump to 2.0.0 + release (tag wearsic only), sync wearsic-dev.
+- 2026-11-17: Full CI green (4/4) at 35f877b after test updates for the
+  2-page pager. APK at /tmp/opencode/solar2/Wearsic-v1.9.50.apk.
+- NOTE: In Robolectric the Home Browse tile click did not reach Downloads
+  (likely pager/layer touch quirk in the test harness) — must verify on hardware.
+- NEXT: watch port → install APK → verify 2-page pager, Home Browse tiles,
+  circular play button, no mic, clean server profiles → then perimeter arc
+  (deferred), version bump 2.0.0 + release (tag wearsic only), sync wearsic-dev.

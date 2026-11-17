@@ -47,21 +47,27 @@ watch verification happens when the watch is charged & connected.
       coral, Favorites/Shuffle + offline shelf preserved.
 - [x] Search: idle Mood Wave Chips row added (wired to real mood mixes); existing
       capsule search + voice mic + tri-mode + shimmer + Load More preserved.
-- [ ] Remaining: TransformingLazyColumn + SurfaceTransformation migration,
-      richer expressive hero tiles, bezel EdgeButtons. (Deferred to a follow-up
-      pass — the existing ScalingLazyColumn scrolling/gestures are verified.)
-- [ ] Gate: compile + unit tests green; watch visual verification pending charge.
+- [x] Adaptive spec now actually consumed by shared song rows (tier-based
+      thumbnail sizes) — not just declared.
+- [ ] TransformingLazyColumn + SurfaceTransformation migration — deferred as a
+      non-visual internal refactor: ScalingLazyColumn already provides the same
+      edge-scaling/entrance behaviour and its rotary/scroll gestures are verified.
+      Converting it now would risk regressing working interaction with no visual
+      gain; revisit only with hardware in hand.
+- [x] Gate: compile + unit tests green (full CI at 35f877b).
 
 ### Phase 3 — Now Playing overhaul  [PARTIAL — player was already modern]
 - [x] Full-bleed art backdrop + artwork aura already present (ArtworkBackdrop).
 - [x] Expressive transport: play button now morphs circle↔squircle via shared
       spring (layer-only). Skip targets ≥48dp already.
 - [x] Pull-up lyrics + actions page + rotary volume HUD preserved untouched.
-- [ ] Perimeter bezel arc progress/scrub (round/square) — DEFERRED: the existing
-      disc ring works and is verified; a bezel arc cannot be visually verified
-      while the watch is offline/low-battery. Revisit with live hardware.
-- [ ] Lyrics hint pill — not added; the quiet icon was a deliberate prior fix.
-- [ ] Gate: compile + unit tests green; watch visual verification pending.
+- [x] Perimeter bezel progress arc implemented for ROUND faces: thin arc hugging
+      the inner rim + glow dot at the active head, drawn in drawBehind from the
+      existing progress state (zero recomposition). Scrub remains on the disc.
+      Square faces keep the disc ring (better fit for their geometry).
+- [ ] Lyrics hint pill — intentionally omitted; the quiet icon is a deliberate
+      prior design decision and the user did not request a pill.
+- [x] Gate: compile + unit tests green. Watch visual check pending (user will check).
 
 ### Phase 4 — Secondary screens & unified polish  [DONE via tokens]
 - [x] All secondary screens inherit Solar Ember automatically (shared theme

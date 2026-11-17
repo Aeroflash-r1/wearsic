@@ -135,6 +135,7 @@ import coil.request.ImageRequest
 import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.theme.WearsicBlack
+import com.wearsic.app.ui.theme.LocalWearAdaptiveSpec
 import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicDisplayFont
@@ -606,6 +607,17 @@ private fun NowPlayingPage(
         // disc diameter is the cheapest guarantee that NOTHING clips.
         val discSize: Dp = (maxWidth * 0.34f).coerceIn(if (compact) 52.dp else 64.dp, if (compact) 64.dp else 80.dp)
         val playSize: Dp = if (compact) 48.dp else (maxWidth * 0.26f).coerceIn(50.dp, 60.dp)
+
+        // Perimeter bezel progress: a thin arc hugging the inner rim, drawn
+        // entirely in the draw phase from the existing animated progress (zero
+        // extra recompositions). Round faces only; square/rectangular faces
+        // keep the disc ring, which fits their geometry better.
+        PerimeterProgressArc(
+            progress = progress,
+            accent = colors.accent,
+            hasTrack = hasTrack,
+            modifier = Modifier.fillMaxSize()
+        )
 
         // ── Player block (full viewport; no outer scroll) ────────────────
         Column(
@@ -1378,6 +1390,61 @@ private fun LyricsPlaceholder(message: String, isError: Boolean, onRetry: (() ->
             }
         }
     }
+}
+
+/**
+ * Solar Ember perimeter progress: a thin arc hugging the inner bezel of a
+ * round watch, plus a soft glow dot at the active head. Everything is drawn
+ * in [drawBehind] from the existing animated progress — no recomposition per
+ * frame, no blur shader. Square watches return early (the disc ring there is
+ * the progress indicator, which matches their geometry).
+ */
+@Composable
+private fun PerimeterProgressArc(
+    progress: State<Float>,
+    accent: Color,
+    hasTrack: Boolean,
+    modifier: Modifier = Modifier
+) {
+    if (!LocalWearAdaptiveSpec.current.isRound) return
+    Box(
+        modifier = modifier.drawBehind {
+            val stroke = 3.5.dp.toPx()
+            val rimGap = 3.dp.toPx() + stroke / 2f
+            val radius = minOf(size.width, size.height) / 2f - rimGap
+            if (radius <= 0f) return@drawBehind
+            val arcSize = Size(radius * 2f, radius * 2f)
+            val topLeft = Offset((size.width - arcSize.width) / 2f, (size.height - arcSize.height) / 2f)
+            val arcStyle = Stroke(width = stroke, cap = StrokeCap.Round)
+            drawArc(
+                color = Color.White.copy(alpha = 0.10f),
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = arcStyle
+            )
+            val sweep = if (hasTrack) (progress.value.coerceIn(0f, 1f)) * 360f else 0f
+            if (sweep > 0.5f) {
+                drawArc(
+                    color = accent,
+                    startAngle = -90f,
+                    sweepAngle = sweep,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = stroke + 0.8.dp.toPx(), cap = StrokeCap.Round)
+                )
+                // Glow dot at the active head.
+                val radians = Math.toRadians((-90f + sweep).toDouble())
+                val cx = topLeft.x + radius + kotlin.math.cos(radians).toFloat() * radius
+                val cy = topLeft.y + radius + kotlin.math.sin(radians).toFloat() * radius
+                drawCircle(color = Color.White.copy(alpha = 0.9f), radius = stroke * 0.75f, center = Offset(cx, cy))
+                drawCircle(color = accent.copy(alpha = 0.35f), radius = stroke * 1.8f, center = Offset(cx, cy))
+            }
+        }
+    )
 }
 
 @Composable

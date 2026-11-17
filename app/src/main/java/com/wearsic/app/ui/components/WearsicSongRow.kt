@@ -59,6 +59,7 @@ import com.wearsic.app.ui.theme.WearsicTextMuted
 import com.wearsic.app.ui.theme.WearsicTextPrimary
 import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.LocalWearsicAccent
+import com.wearsic.app.ui.theme.LocalWearAdaptiveSpec
 import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.util.WearsicMotion
 import com.wearsic.app.ui.util.wearsicClickable
@@ -153,11 +154,16 @@ fun WearsicSongRowArtwork(
     artworkUrl: String?,
     contentDescription: String,
     modifier: Modifier = Modifier,
-    size: Dp = watchScaled(46.dp),
+    size: Dp = Dp.Unspecified,
 ) {
+    // Adaptive thumbnail per watch size tier (Compact 36 / Standard 40 /
+    // Large 52dp) — the blueprint's hardware-aware sizing, scaled to the face.
+    val adaptiveSize = if (size == Dp.Unspecified) {
+        watchScaled(LocalWearAdaptiveSpec.current.rowThumbnail)
+    } else size
     val context = LocalContext.current
     val density = LocalDensity.current
-    val requestPx = with(density) { size.roundToPx() }.coerceIn(72, 192)
+    val requestPx = with(density) { adaptiveSize.roundToPx() }.coerceIn(72, 192)
     val shape = RoundedCornerShape(WearsicDimens.ArtRadius)
     val ring = Modifier.border(1.dp, WearsicSurfaceBorderSubtle, shape)
     if (!artworkUrl.isNullOrBlank()) {
@@ -172,14 +178,14 @@ fun WearsicSongRowArtwork(
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
             modifier = modifier
-                .size(size)
+                .size(adaptiveSize)
                 .clip(shape)
                 .then(ring)
         )
     } else {
         Box(
             modifier = modifier
-                .size(size)
+                .size(adaptiveSize)
                 .clip(shape)
                 .background(wearsicAccentContainer())
                 .then(ring),

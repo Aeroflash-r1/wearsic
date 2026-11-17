@@ -238,29 +238,6 @@ fun HomeScreen(
                 }
             }
 
-            if (!isServerReachable) {
-                item {
-                    WearsicOfflineNote()
-                }
-            }
-
-            // ---- Listen again (last played hero) ----
-            if (recentTracks.isNotEmpty()) {
-                val last = recentTracks.first()
-                item {
-                    NowPlayingMiniCard(
-                        title = last.title,
-                        artist = last.artist,
-                        artworkUrl = last.artworkUrl,
-                        isPlaying = last.id == currentTrackId,
-                        onClick = {
-                            if (last.id == currentTrackId) onOpenPlayer() else onPlay(recentTracks, 0)
-                        },
-                        modifier = Modifier.testTag("home_hero_last_played")
-                    )
-                }
-            }
-
             // ---- Browse (former Library functions, folded into Home) ----
             item {
                 WearsicSectionTitle(
@@ -347,6 +324,29 @@ fun HomeScreen(
                         artworkUrl = track.artworkUrl,
                         onClick = { onPlay(listOf(track), 0) },
                         testTag = "home_offline_${track.id}"
+                    )
+                }
+            }
+
+            if (!isServerReachable) {
+                item {
+                    WearsicOfflineNote()
+                }
+            }
+
+            // ---- Listen again (last played hero) ----
+            if (recentTracks.isNotEmpty()) {
+                val last = recentTracks.first()
+                item {
+                    NowPlayingMiniCard(
+                        title = last.title,
+                        artist = last.artist,
+                        artworkUrl = last.artworkUrl,
+                        isPlaying = last.id == currentTrackId,
+                        onClick = {
+                            if (last.id == currentTrackId) onOpenPlayer() else onPlay(recentTracks, 0)
+                        },
+                        modifier = Modifier.testTag("home_hero_last_played")
                     )
                 }
             }

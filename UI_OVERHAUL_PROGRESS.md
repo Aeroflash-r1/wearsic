@@ -28,12 +28,16 @@ watch verification happens when the watch is charged & connected.
 - [x] New `WearsicMotion.kt`: spring specs (button squish 0.94f, pager, haptics)
 - [x] Gate: compile + app/server unit tests green
 
-### Phase 1 — Horizon Hub navigation shell
-- [ ] `HorizonHubScreen` with AppScaffold → HorizontalPagerScaffold (Home/Library/Search)
-  + AnimatedPage + page dots; Mix remains a secondary destination.
-- [ ] Wire as start destination in `WearsicNavigation`, preserve routes/testTags.
-- [ ] Rotary focus scoping between pager and per-page lists.
-- [ ] Gate: compile + tests + CUJ journey tests.
+### Phase 1 — Horizon Hub navigation shell  [DONE ✅]
+- [x] `WearsicHubScreen` now hosts HorizontalPagerScaffold → HorizontalPager (3 pages)
+      + AnimatedPage; page indicator handled by the scaffold. Mix stays a pushed route.
+- [x] Home/Library/Search reused as the three pages (no duplicated UI); shortcut taps
+      animate to a page instead of pushing a route; all deep-link routes preserved.
+- [x] Rotary page scrolling disabled so crown scrolls the active page's list.
+- [x] `onPlayTrackWithRelated` wired so hub search results keep the related queue.
+- [x] Gate: compile + local unit tests green (Robolectric CUJs run on CI x86_64).
+- NOTE: migrating the three page lists from ScalingLazyColumn → TransformingLazyColumn
+  is folded into Phase 2 (alongside the page UI redesign).
 
 ### Phase 2 — Three hub pages
 - [ ] Home: Live Spotlight hero, Mix/Shuffle ButtonGroup, recent art strip,

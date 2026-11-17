@@ -234,6 +234,10 @@ fun WearsicApp(
                                     onPlayArtist = { group, index ->
                                         playerViewModel.playTracksFromList(group.songs, index)
                                         navController.navigate(Screen.Player.route)
+                                    },
+                                    onPlayTrackWithRelated = { track ->
+                                        playerViewModel.playTrackWithRelatedQueue(track)
+                                        navController.navigate(Screen.Player.route)
                                     }
                                 )
                             }

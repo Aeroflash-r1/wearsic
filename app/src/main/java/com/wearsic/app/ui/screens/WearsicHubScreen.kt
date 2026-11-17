@@ -1,53 +1,20 @@
 package com.wearsic.app.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.Text
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.LibraryMusic
-import androidx.compose.material.icons.rounded.Search
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.pager.rememberPagerState
+import androidx.wear.compose.material3.AnimatedPage
+import androidx.wear.compose.material3.HorizontalPagerScaffold
+import androidx.wear.compose.material3.PagerScaffoldDefaults
+import androidx.wear.compose.foundation.pager.HorizontalPager
+import com.wearsic.app.model.ArtistGroup
 import com.wearsic.app.model.PlaybackUiState
+import com.wearsic.app.model.Playlist
 import com.wearsic.app.model.Track
-import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.WearsicAppBackground
-import com.wearsic.app.ui.theme.WearsicDimens
-import com.wearsic.app.ui.theme.WearsicGlassBorder
-import com.wearsic.app.ui.theme.WearsicTopScrimBrush
-import com.wearsic.app.ui.theme.WearsicTextPrimary
-import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.AlbumsUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.ArtistsUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.FavoritesUiState
@@ -56,41 +23,26 @@ import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistsUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.RadioState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.RecommendationsUiState
 import com.wearsic.app.ui.viewmodel.LibraryViewModel.SearchUiState
-import com.wearsic.app.model.Playlist
+import kotlinx.coroutines.launch
 
 /**
- * The four top-level destinations of the redesigned app. One enum, one rail,
- * one state — switching between them is a state flip inside the start
- * destination, so the mini player never recomposes navigation and every tab
- * survives bezel-across home screen detours.
+ * Top-level destinations of the Horizon Hub. The pager itself has three pages
+ * (Home / Library / Search); Mix stays a pushed secondary destination because
+ * it is a focused mix view rather than a browse tab.
  */
-enum class WearsicHubSection(val label: String) {
-    Home("Home"),
-    Library("Library"),
-    Search("Search"),
-    Mix("Mix");
-
-    val icon: ImageVector
-        get() = when (this) {
-            Home -> Icons.Rounded.Home
-            Library -> Icons.Rounded.LibraryMusic
-            Search -> Icons.Rounded.Search
-            Mix -> Icons.Rounded.Album
-        }
+enum class WearsicHubSection(val label: String, val page: Int) {
+    Home("Home", 0),
+    Library("Library", 1),
+    Search("Search", 2),
+    Mix("Mix", -1);
 }
 
 /**
- * WearsicHubScreen — the Wear "app shell".
- *
- * Four tabs (Home, Library, Search, Mix) reachable through the Wearsic
- * section rail — a compact chip row floating under the system time text,
- * drawn on a scrim so the lists scroll *under* it. Tab content is the
- * existing screens, reused as-is (LibraryScreen/SearchScreen) plus the new
- * HomeStation and Mix screens; nothing is duplicated.
- *
- * The top reserve is injected via [LocalWearsicTopChromeReserve] so every
- * tab's own `rememberWearsicListContentPadding()` lifts its first row below the
- * rail without per-screen changes.
+ * Wearsic 2.0 "Horizon Hub" — a 3-page horizontal pager (Home / Library /
+ * Search) inside the existing AppScaffold. Each page is an [AnimatedPage] with
+ * its own ScreenScaffold and independent scroll state; rotary scrolling stays
+ * with the active page's vertical list (rotary page fling is deliberately not
+ * enabled). Deep-link routes for Library/Search/Mix remain in the nav host.
  */
 @Composable
 fun WearsicHubScreen(
@@ -118,6 +70,7 @@ fun WearsicHubScreen(
     onStartDownload: (Track) -> Unit,
     onOpenPlayer: () -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenLibrary: () -> Unit = {},
     onOpenDownloads: () -> Unit,
     onOpenPlaylists: () -> Unit,
     onOpenAlbums: () -> Unit,
@@ -137,47 +90,91 @@ fun WearsicHubScreen(
     onAddTrackToPlaylist: (String, Track) -> Unit,
     onAlbumQueryChanged: (String) -> Unit,
     onOpenAlbum: (String, String) -> Unit,
-    onPlayArtist: (com.wearsic.app.model.ArtistGroup, Int) -> Unit,
-    /**
-     * The selected rail section. Hoisted so the nav host can switch tabs
-     * INSTEAD of pushing the legacy standalone Library/Search/Made-For-You
-     * routes — those still existed next to the Hub and made the OLD layout
-     * come back mid-session.
-     */
-    /**
-     * The Hub shell renders the HOME surface only. Library, Search and Mix
-     * are real pushed routes (with right-swipe back), so this screen no
-     * longer hosts tab content or the floating section rail — that rail was
-     * clipped on the round bezel and duplicated navigation that routes do
-     * better. The scroll list avoids the default auto-centering so the top
-     * of the feed stays reachable.
-     */
+    onPlayArtist: (ArtistGroup, Int) -> Unit,
     currentTrackId: String? = null,
-    onOpenLibrary: () -> Unit = {},
     onOpenMood: (WearsicMood) -> Unit = {},
+    /** Plays a single search result with its artist-aware related queue. */
+    onPlayTrackWithRelated: (Track) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(WearsicAppBackground)
+    val pagerState = rememberPagerState(pageCount = { 3 })
+    val scope = rememberCoroutineScope()
+
+    // Shortcuts that used to push standalone routes now glide to the page.
+    fun goTo(page: Int) {
+        scope.launch { pagerState.animateScrollToPage(page) }
+    }
+
+    HorizontalPagerScaffold(
+        pagerState = pagerState,
+        modifier = modifier.background(WearsicAppBackground)
     ) {
-        HomeScreen(
-            recentTracks = recentTracks,
-            mostPlayedTracks = mostPlayedTracks,
-            recommendationsState = recommendationsState,
-            favorites = favoritesState.tracks,
-            isServerReachable = serverReachable,
-            currentTrackId = currentTrackId,
-            onPlay = onPlay,
-            onOpenMood = { mood ->
-                onOpenMood(mood)
-            },
-            onOpenSearch = onOpenSearch,
-            onOpenMix = onOpenRecommendations,
-            onOpenLibrary = onOpenLibrary,
-            onOpenPlayer = onOpenPlayer,
-            onRefreshRecommendations = onRefreshRecommendations
-        )
+        HorizontalPager(
+            state = pagerState,
+            flingBehavior = PagerScaffoldDefaults.snapWithSpringFlingBehavior(state = pagerState),
+            // Rotary page scrolling deliberately disabled so the crown keeps
+            // scrolling the active page's vertical list (blueprint §3).
+            rotaryScrollableBehavior = null,
+        ) { page ->
+            AnimatedPage(pageIndex = page, pagerState = pagerState) {
+                when (page) {
+                    0 -> HomeScreen(
+                        recentTracks = recentTracks,
+                        mostPlayedTracks = mostPlayedTracks,
+                        recommendationsState = recommendationsState,
+                        favorites = favoritesState.tracks,
+                        isServerReachable = serverReachable,
+                        currentTrackId = currentTrackId,
+                        onPlay = onPlay,
+                        onOpenMood = onOpenMood,
+                        onOpenSearch = { goTo(WearsicHubSection.Search.page) },
+                        onOpenMix = onOpenRecommendations,
+                        onOpenLibrary = { goTo(WearsicHubSection.Library.page) },
+                        onOpenPlayer = onOpenPlayer,
+                        onRefreshRecommendations = onRefreshRecommendations
+                    )
+
+                    1 -> LibraryScreen(
+                        playbackState = playbackState,
+                        recentTracks = recentTracks,
+                        mostPlayed = mostPlayedTracks,
+                        onPlayRecentTrack = onPlay,
+                        isServerReachable = serverReachable,
+                        failoverServerName = failoverServerName,
+                        offlineDownloads = offlineDownloads,
+                        onPlayOfflineTrack = onPlay,
+                        onNavigateToSearch = { goTo(WearsicHubSection.Search.page) },
+                        onNavigateToDownloads = onOpenDownloads,
+                        onNavigateToPlaylists = onOpenPlaylists,
+                        onNavigateToAlbums = onOpenAlbums,
+                        onNavigateToFavorites = onOpenFavorites,
+                        onShuffleFavorites = onShuffleFavorites,
+                        onNavigateToArtists = onOpenArtists,
+                        onNavigateToRecommendations = onOpenRecommendations,
+                        onNavigateToSettings = onOpenSettings,
+                        onNavigateToPlayer = onOpenPlayer
+                    )
+
+                    2 -> SearchScreen(
+                        searchState = searchState,
+                        onQuerySelected = onSearchQuerySubmitted,
+                        onSearchTextChanged = onSearchQueryChanged,
+                        onTrackSelected = { track ->
+                            if (onPlayTrackWithRelated != null) onPlayTrackWithRelated(track)
+                            else onPlay(listOf(track), 0)
+                        },
+                        onDownloadTrack = onStartDownload,
+                        onAddToQueue = onQueueTrack,
+                        onToggleFavorite = onToggleFavoriteTrack,
+                        favoriteTrackIds = favoriteTrackIds,
+                        playlists = searchPlaylists,
+                        onCreatePlaylistAndAdd = onCreatePlaylistAndAdd,
+                        onAddToPlaylist = onAddTrackToPlaylist,
+                        onLoadMore = onLoadMoreResults,
+                        onSearchAlbums = onAlbumQueryChanged
+                    )
+                }
+            }
+        }
     }
 }

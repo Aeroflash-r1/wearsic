@@ -47,8 +47,10 @@ watch verification happens when the watch is charged & connected.
       coral, Favorites/Shuffle + offline shelf preserved.
 - [x] Search: idle Mood Wave Chips row added (wired to real mood mixes); existing
       capsule search + voice mic + tri-mode + shimmer + Load More preserved.
-- [x] Adaptive spec now actually consumed by shared song rows (tier-based
-      thumbnail sizes) — not just declared.
+- [x] Adaptive spec now actually consumed by the player's perimeter arc
+      (round/square branch). Song-row thumbnails kept at 46dp: tier-based
+      enlargement shifted Queue drag geometry and broke its CUJ tests without
+      a visible gain, so it was reverted.
 - [ ] TransformingLazyColumn + SurfaceTransformation migration — deferred as a
       non-visual internal refactor: ScalingLazyColumn already provides the same
       edge-scaling/entrance behaviour and its rotary/scroll gestures are verified.

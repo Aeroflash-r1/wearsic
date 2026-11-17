@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.ScreenGalleryTest" tests="33" skipped="0" failures="0" errors="0" timestamp="2026-11-17T18:54:23.821Z" hostname="runnervmccnms" time="3.134">
+  <properties/>
+  <testcase name="player_action_page" classname="com.wearsic.app.ScreenGalleryTest" time="0.234"/>
+  <testcase name="lyrics_unavailable" classname="com.wearsic.app.ScreenGalleryTest" time="0.064"/>
+  <testcase name="storage" classname="com.wearsic.app.ScreenGalleryTest" time="0.092"/>
+  <testcase name="playlists" classname="com.wearsic.app.ScreenGalleryTest" time="0.111"/>
+  <testcase name="favorites" classname="com.wearsic.app.ScreenGalleryTest" time="0.09"/>
+  <testcase name="library_idle" classname="com.wearsic.app.ScreenGalleryTest" time="0.082"/>
+  <testcase name="settings_error" classname="com.wearsic.app.ScreenGalleryTest" time="0.132"/>
+  <testcase name="albums" classname="com.wearsic.app.ScreenGalleryTest" time="0.098"/>
+  <testcase name="playlistDetail" classname="com.wearsic.app.ScreenGalleryTest" time="0.133"/>
+  <testcase name="playlists_empty" classname="com.wearsic.app.ScreenGalleryTest" time="0.099"/>
+  <testcase name="favorites_empty" classname="com.wearsic.app.ScreenGalleryTest" time="0.082"/>
+  <testcase name="artists" classname="com.wearsic.app.ScreenGalleryTest" time="0.091"/>
+  <testcase name="player_nowPlaying" classname="com.wearsic.app.ScreenGalleryTest" time="0.096"/>
+  <testcase name="queue_empty" classname="com.wearsic.app.ScreenGalleryTest" time="0.095"/>
+  <testcase name="lyrics_synced_activeLineCentered" classname="com.wearsic.app.ScreenGalleryTest" time="0.078"/>
+  <testcase name="serverDashboard" classname="com.wearsic.app.ScreenGalleryTest" time="0.075"/>
+  <testcase name="library_playing" classname="com.wearsic.app.ScreenGalleryTest" time="0.084"/>
+  <testcase name="made_for_you" classname="com.wearsic.app.ScreenGalleryTest" time="0.094"/>
+  <testcase name="trackActionSheet" classname="com.wearsic.app.ScreenGalleryTest" time="0.063"/>
+  <testcase name="player_empty" classname="com.wearsic.app.ScreenGalleryTest" time="0.064"/>
+  <testcase name="queue" classname="com.wearsic.app.ScreenGalleryTest" time="0.078"/>
+  <testcase name="hub_home" classname="com.wearsic.app.ScreenGalleryTest" time="0.077"/>
+  <testcase name="audioOutput" classname="com.wearsic.app.ScreenGalleryTest" time="0.122"/>
+  <testcase name="search_empty" classname="com.wearsic.app.ScreenGalleryTest" time="0.127"/>
+  <testcase name="search_songs" classname="com.wearsic.app.ScreenGalleryTest" time="0.129"/>
+  <testcase name="hub_offline_failover" classname="com.wearsic.app.ScreenGalleryTest" time="0.073"/>
+  <testcase name="lyrics_loading" classname="com.wearsic.app.ScreenGalleryTest" time="0.064"/>
+  <testcase name="mix_tab" classname="com.wearsic.app.ScreenGalleryTest" time="0.098"/>
+  <testcase name="search_results" classname="com.wearsic.app.ScreenGalleryTest" time="0.084"/>
+  <testcase name="downloads" classname="com.wearsic.app.ScreenGalleryTest" time="0.079"/>
+  <testcase name="settings" classname="com.wearsic.app.ScreenGalleryTest" time="0.091"/>
+  <testcase name="made_for_you_loading" classname="com.wearsic.app.ScreenGalleryTest" time="0.07"/>
+  <testcase name="home_feed" classname="com.wearsic.app.ScreenGalleryTest" time="0.073"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

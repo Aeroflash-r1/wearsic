@@ -1,0 +1,52 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.env
+debug.keystore
+my-upload-key.jks
+
+# Signing material - never commit
+KEYSTORE_BASE64.txt
+
+# Server module build output
+/wearsic-server/build/
+
+# Runtime SQLite databases (favorites/playlists) - never commit
+*.db
+*.db-shm
+*.db-wal
+/dist
+
+# Local secrets + logs (never commit)
+keystore.properties
+*.log
+wearsic-server/wearsic-server.log
+build-release.log
+
+# Supervisor state dir (staged engine updates, rollback records)
+wearsic-server/wearsic-state/
+
+# local dev convenience/runtime
+wearsic-server/bin/
+wearsic-server/lib/lib/
+wearsic-server/wearsic-gc.log.*
+
+# JDK 25 AOT cache built by `wearsic aot train` (tied to one machine's engine
+# jars + JVM, so it is regenerated, never shared)
+wearsic-server/wearsic.aot
+wearsic-server/wearsic.aot.stamp
+wearsic-server/wearsic.aot.bad
+wearsic-server/wearsic.aot.new

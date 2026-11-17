@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.RecentPlaybackIdentityTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-11-17T18:54:23.239Z" hostname="runnervmccnms" time="0.172">
+  <properties/>
+  <testcase name="exact ids survive restart and still resolve their own recordings" classname="com.wearsic.app.RecentPlaybackIdentityTest" time="0.034"/>
+  <testcase name="local MANUAL file is used only for its own visible recording" classname="com.wearsic.app.RecentPlaybackIdentityTest" time="0.054"/>
+  <testcase name="replaying AAA after BBB always replays recording AAA" classname="com.wearsic.app.RecentPlaybackIdentityTest" time="0.031"/>
+  <testcase name="local AUTO file is used only for its own visible recording" classname="com.wearsic.app.RecentPlaybackIdentityTest" time="0.026"/>
+  <testcase name="same-title recordings stay stored and the visible row resolves its own id" classname="com.wearsic.app.RecentPlaybackIdentityTest" time="0.023"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

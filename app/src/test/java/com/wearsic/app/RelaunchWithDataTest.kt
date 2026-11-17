@@ -228,8 +228,16 @@ class RelaunchWithDataTest {
             composeTestRule.waitForIdle()
             scrolls--
         }
+        composeTestRule.waitForIdle()
         downloadsTile.performClick()
         composeTestRule.waitForIdle()
+
+        // Prove the Downloads destination actually opened (unique to that
+        // screen, unlike the generic "Downloads" text on the Home tile).
+        composeTestRule.waitUntil(10_000) {
+            composeTestRule.onAllNodesWithTag("downloads_play_all", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
 
         // And the persisted downloads render on top of the reconciled DB.
         // The Downloads screen is itself lazy — scroll until "Kept" composes.

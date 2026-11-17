@@ -190,7 +190,7 @@ class WearsicPreferencesRepository(private val context: Context) {
     val dynamicColorFlow: Flow<Boolean> = context.dataStore.data
         .catch { emit(emptyPreferences()) }
         .map { preferences ->
-            preferences[KEY_DYNAMIC_COLOR] ?: true
+            preferences[KEY_DYNAMIC_COLOR] ?: false
         }
 
     suspend fun setDynamicColorEnabled(enabled: Boolean) {

@@ -10,24 +10,21 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ColorScheme
 
 /**
- * The app-wide accent colour. Components read this instead of hardcoding
- * [WearsicVibrantLavender] so the optional dynamic-accent feature can re-theme
- * the whole app from the current track's artwork. Defaults to the static
- * lavender when dynamic colour is off or no artwork is available.
+ * The app-wide accent colour. Components read this instead of hardcoding a
+ * shade so the optional dynamic-accent feature can re-theme the whole app from
+ * the current track's artwork. Defaults to Solar Coral (the Wearsic 2.0
+ * signature) when dynamic colour is off or no artwork is available.
  */
-val LocalWearsicAccent = staticCompositionLocalOf { WearsicVibrantLavender }
+val LocalWearsicAccent = staticCompositionLocalOf { WearsicSolarCoral }
 
 /**
- * Whether the dynamic-accent feature is currently enabled. Text that uses
- * the lavender secondary tone switches to whitish-grey when this is on, so
- * it keeps contrast against the artwork-derived accent on OLED black.
+ * Whether the dynamic-accent feature is currently enabled (opt-in override).
  */
 val LocalWearsicDynamicAccent = staticCompositionLocalOf { false }
 
 /**
- * Secondary text colour. With the static palette this is the lavender
- * secondary tone; when dynamic accent is enabled it becomes whitish-grey —
- * the artwork hue already carries the colour, text should stay neutral.
+ * Secondary text colour — neutral whitish-grey so it stays readable against
+ * both the static Solar Ember palette and any artwork-derived accent on OLED.
  */
 @Composable
 fun wearsicSecondaryText(): Color = WearsicTextWhite80
@@ -43,24 +40,26 @@ fun wearsicSecondaryText(): Color = WearsicTextWhite80
  */
 fun wearsicColorSchemeFor(accent: Color, dynamic: Boolean = false): ColorScheme {
     val container = lerp(accent, Color.Black, 0.55f)
-    val secondary = if (dynamic) WearsicTextWhite80 else lerp(accent, Color.White, 0.18f)
+    // Solar Ember secondary is always Warm Amber for the static palette; only
+    // under dynamic artwork tint do we let the secondary follow the accent.
+    val secondary = if (dynamic) lerp(accent, Color.White, 0.18f) else WearsicSolarAmber
     val onSurfaceVariant = if (dynamic) WearsicTextWhite80 else WearsicTextSecondary
     return ColorScheme(
         primary = accent,
         primaryDim = lerp(accent, Color.White, 0.22f),
         primaryContainer = container,
-        onPrimary = WearsicBlack,
-        onPrimaryContainer = accent,
+        onPrimary = WearsicSolarCoralOn,
+        onPrimaryContainer = lerp(accent, Color.White, 0.55f),
         secondary = secondary,
         secondaryDim = lerp(accent, Color.Black, 0.35f),
-        secondaryContainer = WearsicSurface,
-        onSecondary = WearsicBlack,
-        onSecondaryContainer = WearsicTextPrimary,
-        tertiary = lerp(accent, Color.White, 0.35f),
-        onTertiary = WearsicBlack,
+        secondaryContainer = WearsicSolarAmberDark,
+        onSecondary = WearsicSolarCoralOn,
+        onSecondaryContainer = WearsicSolarAmberOn,
+        tertiary = if (dynamic) lerp(accent, Color.White, 0.35f) else WearsicSolarAmber,
+        onTertiary = WearsicSolarCoralOn,
         surfaceContainer = WearsicSurface,
-        surfaceContainerLow = WearsicCanvasDark,
-        surfaceContainerHigh = WearsicSurfaceActive,
+        surfaceContainerLow = WearsicSurfaceLow,
+        surfaceContainerHigh = WearsicSurfaceHigh,
         onSurface = WearsicTextPrimary,
         onSurfaceVariant = onSurfaceVariant,
         outline = WearsicSurfaceBorder,
@@ -68,19 +67,23 @@ fun wearsicColorSchemeFor(accent: Color, dynamic: Boolean = false): ColorScheme 
         background = WearsicBlack,
         onBackground = WearsicTextPrimary,
         error = WearsicError,
-        onError = WearsicBlack
+        onError = WearsicSolarCoralOn
     )
 }
 
 @Composable
 fun WearsicTheme(
-    accent: Color = WearsicVibrantLavender,
+    accent: Color = WearsicSolarCoral,
     dynamic: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val watchScale = computeWatchScale()
+    val adaptiveSpec = rememberWearAdaptiveSpec()
     val colorScheme = remember(accent, dynamic) { wearsicColorSchemeFor(accent, dynamic) }
-    CompositionLocalProvider(LocalWatchScale provides watchScale) {
+    CompositionLocalProvider(
+        LocalWatchScale provides watchScale,
+        LocalWearAdaptiveSpec provides adaptiveSpec,
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = WearsicTypography,

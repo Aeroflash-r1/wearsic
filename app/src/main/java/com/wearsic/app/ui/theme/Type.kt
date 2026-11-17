@@ -9,12 +9,15 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Typography
 import com.wearsic.app.R
 
+// Solar Ember typography: Outfit for high-impact display/headers/hero titles
+// (variable font — same file registered at each weight), Plus Jakarta Sans for
+// body/card/label text, JetBrains Mono for tabular timers & counters.
 val WearsicDisplayFont = FontFamily(
-    Font(R.font.plus_jakarta_sans, FontWeight.Normal),
-    Font(R.font.plus_jakarta_sans, FontWeight.Medium),
-    Font(R.font.plus_jakarta_sans, FontWeight.SemiBold),
-    Font(R.font.plus_jakarta_sans, FontWeight.Bold),
-    Font(R.font.plus_jakarta_sans, FontWeight.ExtraBold)
+    Font(R.font.outfit, FontWeight.Normal),
+    Font(R.font.outfit, FontWeight.Medium),
+    Font(R.font.outfit, FontWeight.SemiBold),
+    Font(R.font.outfit, FontWeight.Bold),
+    Font(R.font.outfit, FontWeight.ExtraBold)
 )
 
 val WearsicBodyFont = FontFamily(
@@ -89,7 +92,7 @@ val WearsicTypography = Typography(
         letterSpacing = 0.15.sp
     ),
     labelLarge = TextStyle(
-        fontFamily = WearsicDisplayFont,
+        fontFamily = WearsicBodyFont,
         fontWeight = FontWeight.SemiBold,
         fontSize = 16.sp,
         lineHeight = 20.sp,

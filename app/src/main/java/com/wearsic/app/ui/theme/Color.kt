@@ -13,19 +13,32 @@ val WearsicBlack = Color(0xFF000000)
  * production music apps on Wear OS ship. Applied by every screen's
  * ScreenScaffold.
  */
-// Wearsic Midnight Lavender — production palette (v1.8).
-// OLED black stays black; surfaces deepened a step for separation;
-// the lavender primary is one notch deeper for small-size legibility;
-// sage = offline/saved, amber = warnings only, rose = errors.
+// ── Solar Ember palette (Wearsic 2.0) ──────────────────────────────────────
+// Pure OLED black canvas; warm obsidian tonal containers and a Neon Coral /
+// Warm Amber accent pair. Coral is the primary action colour (play, focus,
+// active progress), Amber the secondary highlight (shuffle, badges, equalizer).
+// Dynamic artwork tint remains an OPT-IN override in Settings.
 val WearsicAppBackground: Color = WearsicBlack
-val WearsicCanvasDark = Color(0xFF0A0A0A)
-val WearsicSurface = Color(0xFF141318)
-val WearsicSurfaceActive = Color(0xFF232027)
+val WearsicSolarCoral = Color(0xFFFF6B57)
+val WearsicSolarAmber = Color(0xFFFFB347)
+val WearsicSolarCoralDark = Color(0xFF4A1D18)   // primaryContainer
+val WearsicSolarAmberDark = Color(0xFF3B2914)   // secondaryContainer
+val WearsicSolarCoralOn = Color(0xFF1E0705)     // onPrimary
+val WearsicSolarCoralContainerOn = Color(0xFFFFDAD4)
+val WearsicSolarAmberOn = Color(0xFFFFE6BF)
+
+// Warm obsidian surface progression (replaces the old cold lav-grey surfaces).
+val WearsicSurfaceLow = Color(0xFF120F10)       // recessed wells, chips
+val WearsicSurface = Color(0xFF1B1617)          // standard cards, nav rows
+val WearsicSurfaceHigh = Color(0xFF282020)      // active cards, hero backdrops
+// Legacy aliases kept for components that still reference the old names.
+val WearsicCanvasDark = WearsicSurfaceLow
+val WearsicSurfaceActive = WearsicSurfaceHigh
 val WearsicSurfaceBorder = Color(0x1AFFFFFF) // white/10
 val WearsicSurfaceBorderSubtle = Color(0x0DFFFFFF) // white/5
 
 // Vibrant Accents - Enhanced for better contrast and visual appeal
-val WearsicVibrantLavender = Color(0xFFC4B0FF)
+val WearsicVibrantLavender = Color(0xFFC4B0FF) // kept for the "Pixel Lavender" catalog entry
 val WearsicViolet = Color(0xFF8A5CF6) // deep signature violet
 val WearsicLavenderSecondary = Color(0xFFCCC2DC)
 val WearsicLavenderTertiary = Color(0xFFB8A1FF)
@@ -34,9 +47,9 @@ val WearsicLavenderContainer = Color(0xFF382959)
 
 // Depth: an elevated surface for cards/heroes that should read as "above"
 // the flat canvas, plus a soft accent glow used behind titles and art.
-val WearsicSurfaceRaised = Color(0xFF1E1C22)
-val WearsicGlow = Color(0x33C4B0FF)          // lavender 20%
-val WearsicGlowWarm = Color(0x2E8A5CF6)      // violet 18%
+val WearsicSurfaceRaised = WearsicSurfaceHigh
+val WearsicGlow = Color(0x33FF6B57)          // Solar Coral 20%
+val WearsicGlowWarm = Color(0x2EFFB347)      // Warm Amber 18%
 
 // Per-screen accents. Each screen's header medallion + glow uses one of these
 // so the screens read as distinct places instead of one identical list.
@@ -70,29 +83,29 @@ val WearsicTextWhite60 = Color(0x99FFFFFF)
 val WearsicTextWhite40 = Color(0x66FFFFFF)
 val WearsicTextMuted = Color(0xFF938F99)
 
-// Status: sage = saved/offline (never decoration), amber = warnings only
-// (timeouts, bot-wall), rose = errors.
-val WearsicError = Color(0xFFF2B8C6)
-val WearsicSuccess = Color(0xFF9DB89A)
-val WearsicWarning = Color(0xFFE8C547)
+// Semantic status (Solar Ember): emerald success, amber warning, rose error.
+val WearsicSuccess = Color(0xFF6CE0A7)
+val WearsicWarning = WearsicSolarAmber
+val WearsicError = Color(0xFFFF758F)
+val WearsicErrorContainer = Color(0xFF3D1520)
 
-// Wear Material 3 ColorScheme
+// Wear Material 3 ColorScheme — Solar Ember default.
 val WearsicColorScheme = ColorScheme(
-    primary = WearsicVibrantLavender,
-    primaryDim = WearsicLavenderTertiary,
-    primaryContainer = WearsicLavenderContainer,
-    onPrimary = WearsicBlack,
-    onPrimaryContainer = WearsicVibrantLavender,
-    secondary = WearsicLavenderSecondary,
-    secondaryDim = WearsicLavenderSecondary,
-    secondaryContainer = WearsicSurface,
-    onSecondary = WearsicBlack,
-    onSecondaryContainer = WearsicTextPrimary,
-    tertiary = WearsicLavenderTertiary,
-    onTertiary = WearsicBlack,
+    primary = WearsicSolarCoral,
+    primaryDim = WearsicSolarCoral,
+    primaryContainer = WearsicSolarCoralDark,
+    onPrimary = WearsicSolarCoralOn,
+    onPrimaryContainer = WearsicSolarCoralContainerOn,
+    secondary = WearsicSolarAmber,
+    secondaryDim = WearsicSolarAmber,
+    secondaryContainer = WearsicSolarAmberDark,
+    onSecondary = WearsicSolarCoralOn,
+    onSecondaryContainer = WearsicSolarAmberOn,
+    tertiary = WearsicSolarAmber,
+    onTertiary = WearsicSolarCoralOn,
     surfaceContainer = WearsicSurface,
-    surfaceContainerLow = WearsicCanvasDark,
-    surfaceContainerHigh = WearsicSurfaceActive,
+    surfaceContainerLow = WearsicSurfaceLow,
+    surfaceContainerHigh = WearsicSurfaceHigh,
     onSurface = WearsicTextPrimary,
     onSurfaceVariant = WearsicTextSecondary,
     outline = WearsicSurfaceBorder,
@@ -100,7 +113,7 @@ val WearsicColorScheme = ColorScheme(
     background = WearsicBlack,
     onBackground = WearsicTextPrimary,
     error = WearsicError,
-    onError = WearsicBlack
+    onError = WearsicSolarCoralOn
 )
 
 /**
@@ -109,18 +122,18 @@ val WearsicColorScheme = ColorScheme(
  * Kept to pleasant, OLED-friendly shades that read clearly on black.
  */
 val WearsicAppColorChoices: List<Pair<String, Color>> = listOf(
-    "Lavender" to WearsicVibrantLavender,
+    // Blueprint "Solar Ember" curated catalog. Solar Coral is the signature
+    // preset (also the app default when no choice is saved).
+    "Solar Coral" to WearsicSolarCoral,
+    "Warm Amber" to WearsicSolarAmber,
+    "Electric Cyan" to Color(0xFF4DD0E1),
+    "Emerald Studio" to Color(0xFF6CE0A7),
+    "Pixel Lavender" to WearsicVibrantLavender,
+    "Rose Quartz" to Color(0xFFFF8FA3),
     "Violet" to WearsicViolet,
     "Sky" to WearsicAccentSky,
     "Mint" to WearsicAccentMint,
     "Peach" to WearsicAccentPeach,
-    "Rose" to WearsicAccentRose,
-    "Amber" to WearsicAccentAmber,
-    "Coral" to Color(0xFFFF9E80),
     "Teal" to Color(0xFF5FD4C8),
-    "Cyan" to Color(0xFF4DD0E1),
-    "Blue" to Color(0xFF82B1FF),
-    "Indigo" to Color(0xFF9FA8DA),
-    "Green" to Color(0xFF8BC98B),
-    "Pink" to Color(0xFFFF8A9B)
+    "Blue" to Color(0xFF82B1FF)
 )

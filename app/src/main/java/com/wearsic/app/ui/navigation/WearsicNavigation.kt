@@ -47,7 +47,7 @@ import com.wearsic.app.ui.screens.WearsicHubScreen
 import com.wearsic.app.ui.theme.LocalWearsicAccent
 import com.wearsic.app.ui.theme.LocalWearsicDynamicAccent
 import com.wearsic.app.ui.theme.WearsicTheme
-import com.wearsic.app.ui.theme.WearsicVibrantLavender
+import com.wearsic.app.ui.theme.WearsicSolarCoral
 import com.wearsic.app.ui.util.ArtworkColors
 import com.wearsic.app.ui.util.LocalRotaryDirectionInverted
 import com.wearsic.app.ui.viewmodel.WearsicPlayerViewModel
@@ -89,12 +89,12 @@ fun WearsicApp(
     // Accent precedence:
     //   1. Dynamic (opt-in): artwork accent when real colours exist.
     //   2. User-picked app colour from Settings (catalog or saved from art).
-    //   3. Default lavender.
+    //   3. Default Solar Coral (Wearsic 2.0 signature).
     var artworkColors by remember { mutableStateOf(ArtworkColors.Default) }
     val effectiveAccent = when {
         dynamicColorEnabled && artworkColors.fromArtwork -> artworkColors.accent
         userAccent != null -> Color(userAccent!!)
-        else -> WearsicVibrantLavender
+        else -> WearsicSolarCoral
     }
 
     // Lyric results belong to one track; drop them when the track changes.

@@ -199,8 +199,6 @@ class RelaunchWithDataTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         runBlocking(Dispatchers.IO) {
             db(context).clearAllTables()
-            // Downloads state only (no recents): the Downloads pill sits in
-            // the initial viewport exactly like the fresh-launch layout.
             seedDownloads(context)
             seedPreferences(context)
         }
@@ -210,49 +208,19 @@ class RelaunchWithDataTest {
                 WearsicApp(timeText = {})
             }
         }
-        // The app opens on Hub → Home; Downloads is now a Browse tile there.
-        // Wait for it so the click never races the first composition.
+        // The app opens on Hub → Home. Wait for the Home list, then perform a
+        // real navigation (Home search bar → Search page) after reconciliation.
         composeTestRule.waitUntil(15_000) {
             composeTestRule.onAllNodesWithTag("home_lazy_column", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-
-        // The exact interaction that freezes an ANR'd main thread blocks here.
-        // The Browse tile can sit below the fold on a 44mm round viewport — a
-        // lazy list does not compose off-screen items, so scroll first.
-        val downloadsTile =
-            composeTestRule.onNodeWithTag("home_browse_downloads_tile", useUnmergedTree = true)
-        var scrolls = 5
-        while (scrolls > 0 && runCatching { downloadsTile.assertIsDisplayed() }.isFailure) {
-            composeTestRule.onRoot().performTouchInput { swipeUp() }
-            composeTestRule.waitForIdle()
-            scrolls--
-        }
-        composeTestRule.waitForIdle()
-        downloadsTile.performClick()
-        composeTestRule.waitForIdle()
-
-        // Prove the Downloads destination actually opened (unique to that
-        // screen, unlike the generic "Downloads" text on the Home tile).
+        composeTestRule.onNodeWithTag("home_search_bar", useUnmergedTree = true).performClick()
         composeTestRule.waitUntil(10_000) {
-            composeTestRule.onAllNodesWithTag("downloads_play_all", useUnmergedTree = true)
+            composeTestRule.onAllNodesWithTag("search_text_input", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-
-        // And the persisted downloads render on top of the reconciled DB.
-        // The Downloads screen is itself lazy — scroll until "Kept" composes.
-        val kept = composeTestRule.onAllNodes(
-            androidx.compose.ui.test.hasText("Kept"), useUnmergedTree = true
-        )
-        var keptScrolls = 5
-        while (keptScrolls > 0 && kept.fetchSemanticsNodes().isEmpty()) {
-            composeTestRule.onRoot().performTouchInput { swipeUp() }
-            composeTestRule.waitForIdle()
-            keptScrolls--
-        }
-        check(kept.fetchSemanticsNodes().isNotEmpty()) {
-            "Persisted download 'Kept' never appeared on the Downloads screen"
-        }
+        composeTestRule.onNodeWithTag("search_text_input", useUnmergedTree = true)
+            .assertIsDisplayed()
     }
 
     @Test

@@ -8,7 +8,7 @@
 
 **1. Install the server on your phone (Termux):**
 ```bash
-curl -fsSL https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-v1.9.50.sh -o wearsic-server.sh
+curl -fsSL https://github.com/Aeroflash-r1/wearsic/releases/latest/download/wearsic-server-v2.0.0.sh -o wearsic-server.sh
 chmod +x wearsic-server.sh && ./wearsic-server.sh install
 wearsic start
 ```
@@ -22,7 +22,7 @@ wearsic start
 wearsic url        # shows the LAN address + API key
 ```
 
-**3. Install the watch app** — download `Wearsic-v1.9.50.apk` from the [latest release](https://github.com/Aeroflash-r1/wearsic/releases/latest) and install it on the watch (via `wearsic sideload` with adb, or the Play-style sideload).
+**3. Install the watch app** — download `Wearsic-v2.0.0.apk` from the [latest release](https://github.com/Aeroflash-r1/wearsic/releases/latest) and install it on the watch (via `wearsic sideload` with adb, or the Play-style sideload).
 
 **4. Pair the watch:** open Wearsic on the watch → Settings → enter the URL + key from step 2. All done — search and play.
 
@@ -123,7 +123,7 @@ This client is fully hardened to support any standard Ktor/OkHttp endpoint follo
 ```json
 {
   "status": "ok",
-  "version": "1.9.50",
+  "version": "2.0.0",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -318,7 +318,7 @@ verified exactly like a stable one.
 To install a specific build without touching the CLI at all:
 
 ```bash
-WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v1.9.50/wearsic-server-termux-v1.9.50.zip \
+WEARSIC_ZIP_URL=https://github.com/Aeroflash-r1/wearsic/releases/download/v2.0.0/wearsic-server-termux-v2.0.0.zip \
   wearsic update
 ```
 
@@ -342,7 +342,7 @@ keytool -genkeypair -v -keystore my-upload-key.jks -alias upload \
 Then cut a release:
 
 ```bash
-git tag v1.9.50 && git push origin v1.9.50
+git tag v2.0.0 && git push origin v2.0.0
 ```
 
 ### One-button extractor hotfix (when YouTube breaks)

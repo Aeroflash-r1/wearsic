@@ -48,7 +48,7 @@ X-Wearsic-Key: <key>
 ```json
 {
   "status": "ok",
-  "version": "1.9.50",
+  "version": "2.0.0",
   "serverName": "Wearsic Engine",
   "transcoderAvailable": true,
   "extraction": { "successCount": 42, "failureCount": 1, "failureRatePercent": 2, "consecutiveFailures": 0, "lastError": null },
@@ -88,7 +88,7 @@ dashboard renders).
   "database": true,
   "extractor": true,
   "transcoder": true,
-  "engineVersion": "1.9.50"
+  "engineVersion": "2.0.0"
 }
 ```
 

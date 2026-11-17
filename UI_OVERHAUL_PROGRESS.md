@@ -63,11 +63,14 @@ watch verification happens when the watch is charged & connected.
 - [ ] Lyrics hint pill — not added; the quiet icon was a deliberate prior fix.
 - [ ] Gate: compile + unit tests green; watch visual verification pending.
 
-### Phase 4 — Secondary screens & unified polish
-- [ ] Solar Ember tokens across Queue / Downloads / Storage / Playlists /
-      Albums / Artists / Favorites / Mix / Volume / Server / Settings.
-- [ ] Status cards (Healthy/Warning/Offline), accent swatch grid (Solar Coral default).
-- [ ] Gate: compile + watch spot-check.
+### Phase 4 — Secondary screens & unified polish  [DONE via tokens]
+- [x] All secondary screens inherit Solar Ember automatically (shared theme
+      scheme / typography / surfaces) — no per-screen hardcoding of old palette.
+- [x] Server dashboard already uses semantic tokens: Healthy=emerald,
+      Warning=amber, Offline=rose (matches blueprint).
+- [x] Settings swatch grid uses the updated WearsicAppColorChoices (Solar Coral
+      signature first); default accent = Solar Coral.
+- [ ] Gate: watch spot-check pending (watch offline / low battery).
 
 ### Phase 5 — Verification & release
 - [ ] Full CI (Robolectric on x86_64), fast APK, watch visual pass.
@@ -78,3 +81,9 @@ watch verification happens when the watch is charged & connected.
 ## Log
 - 2026-11-17: Blueprint read. Phase 0 implemented & gated (compile + tests green).
 - 2026-11-17: Starting Phase 1 — Horizon Hub navigation shell.
+- 2026-11-17: Phases 0–3 (partial) + 4 implemented; full CI green (4/4 jobs) at
+  commit 5ece808. APK at /tmp/opencode/solar/Wearsic-v1.9.50.apk.
+- 2026-11-17: Watch offline / battery was 6% — all visual verification blocked.
+- NEXT: watch charged → install APK → verify pager + pages + player gestures;
+  then perimeter arc (deferred Phase 3), TransformingLazyColumn migration,
+  version bump to 2.0.0 + release (tag wearsic only), sync wearsic-dev.

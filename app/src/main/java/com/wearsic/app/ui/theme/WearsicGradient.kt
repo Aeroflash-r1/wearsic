@@ -6,17 +6,17 @@ import androidx.compose.ui.graphics.Color
 /**
  * The Wearsic gradient language for the discovery surfaces (Home/Mix/shelves).
  *
- * The app is OLED-first: cards are charcoal-on-black with a whisper of the
- * lavender identity rather than loud colour slabs. Brushes are static
- * values (no allocation at draw time) so long lists stay cheap to scroll.
+ * Solar Ember OLED: warm obsidian charcoal fading to near-black rather than
+ * loud colour slabs. Brushes are static values (no allocation at draw time)
+ * so long lists stay cheap to scroll.
  */
 
-/** Card body: deep indigo-charcoal fading to near-black, left → right. */
+/** Card body: warm obsidian fading to near-black, left → right. */
 val WearsicHeroCardBrush: Brush =
     Brush.horizontalGradient(
         listOf(
-            Color(0xFF211A2E),
-            Color(0xFF141217)
+            Color(0xFF282020),
+            Color(0xFF151112)
         )
     )
 

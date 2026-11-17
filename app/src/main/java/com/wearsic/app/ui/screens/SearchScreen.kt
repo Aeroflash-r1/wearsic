@@ -28,6 +28,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Mic
@@ -132,6 +134,8 @@ fun SearchScreen(
     onOpenAlbum: (com.wearsic.app.model.Album) -> Unit = {},
     onSearchAlbums: (String) -> Unit = {},
     onPlayArtistTracks: (List<Track>, Int) -> Unit = { tracks, _ -> tracks.firstOrNull()?.let(onTrackSelected) },
+    /** Mood shortcuts shown in the idle Search state (Solar Ember discovery). */
+    onOpenMood: (WearsicMood) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
@@ -456,6 +460,29 @@ fun SearchScreen(
                         message = "Search a song, artist, or album to start listening.",
                         icon = Icons.Rounded.Search
                     )
+                }
+                // Mood Wave Chips keep the idle Search stage expressive and
+                // tappable (blueprint §2 "Idle Discovery State").
+                item {
+                    WearsicSectionTitle(
+                        label = "Moods",
+                        icon = Icons.Rounded.AutoAwesome,
+                        iconContentDescription = "Mood mixes"
+                    )
+                }
+                item {
+                    androidx.compose.foundation.lazy.LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(homeMoods().size) { index ->
+                            val mood = homeMoods()[index]
+                            com.wearsic.app.ui.components.WearsicMoodChip(
+                                label = mood.label,
+                                icon = Icons.Rounded.GraphicEq,
+                                onClick = { onOpenMood(mood) }
+                            )
+                        }
+                    }
                 }
             }
 

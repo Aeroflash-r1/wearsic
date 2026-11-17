@@ -131,7 +131,9 @@ fun WearsicHubScreen(
                         onOpenMix = onOpenRecommendations,
                         onOpenLibrary = { goTo(WearsicHubSection.Library.page) },
                         onOpenPlayer = onOpenPlayer,
-                        onRefreshRecommendations = onRefreshRecommendations
+                        onRefreshRecommendations = onRefreshRecommendations,
+                        onShuffleFavorites = onShuffleFavorites,
+                        onOpenSettings = onOpenSettings
                     )
 
                     1 -> LibraryScreen(
@@ -171,7 +173,8 @@ fun WearsicHubScreen(
                         onCreatePlaylistAndAdd = onCreatePlaylistAndAdd,
                         onAddToPlaylist = onAddTrackToPlaylist,
                         onLoadMore = onLoadMoreResults,
-                        onSearchAlbums = onAlbumQueryChanged
+                        onSearchAlbums = onAlbumQueryChanged,
+                        onOpenMood = onOpenMood
                     )
                 }
             }

@@ -39,14 +39,18 @@ watch verification happens when the watch is charged & connected.
 - NOTE: migrating the three page lists from ScalingLazyColumn → TransformingLazyColumn
   is folded into Phase 2 (alongside the page UI redesign).
 
-### Phase 2 — Three hub pages
-- [ ] Home: Live Spotlight hero, Mix/Shuffle ButtonGroup, recent art strip,
-      Most Played rows, Settings EdgeButton.
-- [ ] Library: adaptive Favorites/Downloads tiles, Playlists/Albums/Artists nav,
-      offline shelf, EdgeButton.
-- [ ] Search: capsule search + voice mic, scope ButtonGroup, mood wave chips,
-      shimmer results, Load More EdgeButton.
-- [ ] Gate: compile + watch visual verification.
+### Phase 2 — Three hub pages  [IN PROGRESS — solar-ember styling applied]
+- [x] Home: Solar Ember capsule search, amber Mix / tonal Library shortcuts,
+      coral "Shuffle favorites" primary CTA, Settings affordance; existing
+      hero/art shelves/Most Played preserved.
+- [x] Library: Downloads tile now amber + saved-count badge (mono), Search pill
+      coral, Favorites/Shuffle + offline shelf preserved.
+- [x] Search: idle Mood Wave Chips row added (wired to real mood mixes); existing
+      capsule search + voice mic + tri-mode + shimmer + Load More preserved.
+- [ ] Remaining: TransformingLazyColumn + SurfaceTransformation migration,
+      richer expressive hero tiles, bezel EdgeButtons. (Deferred to a follow-up
+      pass — the existing ScalingLazyColumn scrolling/gestures are verified.)
+- [ ] Gate: compile + unit tests green; watch visual verification pending charge.
 
 ### Phase 3 — Now Playing overhaul
 - [ ] Full-bleed art + dual scrim + radial Coral/Amber aura.

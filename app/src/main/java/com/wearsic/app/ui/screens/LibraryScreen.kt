@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Whatshot
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Star
 import com.wearsic.app.ui.theme.WearsicAccentAmber
+import com.wearsic.app.ui.theme.WearsicSolarAmber
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -267,6 +268,8 @@ fun LibraryScreen(
                         icon = Icons.Rounded.Download,
                         onClick = onNavigateToDownloads,
                         modifier = Modifier.weight(1f),
+                        accentColor = WearsicSolarAmber,
+                        badge = "${offlineDownloads.size} saved",
                         testTag = "library_downloads_button"
                     )
                     WearsicActionTile(

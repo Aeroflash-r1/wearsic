@@ -50,6 +50,8 @@ import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SelfImprovement
 import androidx.compose.material.icons.rounded.Whatshot
 import androidx.compose.material.icons.rounded.Radio
@@ -115,6 +117,8 @@ fun HomeScreen(
      *  instead of RESTARTING an already-playing song on tap. */
     currentTrackId: String? = null,
     onRefreshRecommendations: () -> Unit,
+    onShuffleFavorites: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
@@ -176,8 +180,8 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.08f))
-                        .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                        .background(com.wearsic.app.ui.theme.WearsicSurfaceLow)
+                        .border(1.dp, LocalWearsicAccent.current.copy(alpha = 0.28f), CircleShape)
                         .wearsicClickable(onClick = onOpenSearch)
                         .padding(horizontal = 14.dp, vertical = 10.dp)
                         .testTag("home_search_bar"),
@@ -213,13 +217,17 @@ fun HomeScreen(
                         label = "Library",
                         icon = Icons.Rounded.LibraryMusic,
                         onClick = onOpenLibrary,
-                        testTag = "home_library_shortcut"
+                        testTag = "home_library_shortcut",
+                        containerColor = com.wearsic.app.ui.theme.WearsicSurface,
+                        iconTint = LocalWearsicAccent.current
                     )
                     HomeShortcutPill(
                         label = "Mix",
                         icon = Icons.Rounded.GraphicEq,
                         onClick = onOpenMix,
-                        testTag = "home_mix_shortcut"
+                        testTag = "home_mix_shortcut",
+                        containerColor = com.wearsic.app.ui.theme.WearsicSolarAmberDark,
+                        iconTint = com.wearsic.app.ui.theme.WearsicSolarAmber
                     )
                 }
             }
@@ -326,13 +334,13 @@ fun HomeScreen(
                 }
             }
 
-            // ---- Favorites CTA ----
+            // ---- Favorites shuffle CTA (Solar Ember primary action) ----
             if (favorites.isNotEmpty()) {
                 item {
                     WearsicActionCard(
-                        label = "Play your favorites (${favorites.size})",
-                        icon = Icons.Rounded.Favorite,
-                        onClick = { onPlay(favorites, 0) },
+                        label = "Shuffle favorites (${favorites.size})",
+                        icon = Icons.Rounded.Shuffle,
+                        onClick = onShuffleFavorites,
                         testTag = "home_play_favorites"
                     )
                 }
@@ -345,6 +353,16 @@ fun HomeScreen(
                         testTag = "home_open_search"
                     )
                 }
+            }
+
+            // ---- Settings (bottom edge affordance) ----
+            item {
+                WearsicActionCard(
+                    label = "Settings",
+                    icon = Icons.Rounded.Settings,
+                    onClick = onOpenSettings,
+                    testTag = "home_settings_button"
+                )
             }
         }
     }
@@ -531,15 +549,16 @@ private fun androidx.compose.foundation.layout.RowScope.HomeShortcutPill(
     icon: ImageVector,
     onClick: () -> Unit,
     testTag: String,
+    containerColor: Color = com.wearsic.app.ui.theme.WearsicSurface,
+    iconTint: Color = LocalWearsicAccent.current,
     modifier: Modifier = Modifier
 ) {
-    val accent = LocalWearsicAccent.current
     Row(
         modifier = modifier
             .weight(1f)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.06f))
-            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+            .background(containerColor)
+            .border(1.dp, iconTint.copy(alpha = 0.35f), CircleShape)
             .wearsicClickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp)
             .testTag(testTag),
@@ -549,7 +568,7 @@ private fun androidx.compose.foundation.layout.RowScope.HomeShortcutPill(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = accent,
+            tint = iconTint,
             modifier = Modifier.size(14.dp)
         )
         Spacer(Modifier.width(6.dp))

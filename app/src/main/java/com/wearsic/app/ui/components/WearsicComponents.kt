@@ -82,6 +82,7 @@ import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
 import com.wearsic.app.ui.theme.WearsicTextWhite60
 import com.wearsic.app.ui.theme.WearsicTextWhite80
 import com.wearsic.app.ui.theme.LocalWearsicAccent
+import com.wearsic.app.ui.theme.WearsicMonoFont
 import com.wearsic.app.ui.util.WearsicMotion
 import com.wearsic.app.ui.util.wearsicClickable
 /**
@@ -207,6 +208,7 @@ fun WearsicActionTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     accentColor: Color = LocalWearsicAccent.current,
+    badge: String? = null,
     testTag: String = "action_tile"
 ) {
     val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
@@ -248,6 +250,17 @@ fun WearsicActionTile(
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center
         )
+        if (badge != null) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = badge,
+                color = accentColor,
+                fontFamily = WearsicMonoFont,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
     }
 }
 

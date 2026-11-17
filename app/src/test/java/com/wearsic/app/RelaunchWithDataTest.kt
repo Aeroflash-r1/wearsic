@@ -147,20 +147,12 @@ class RelaunchWithDataTest {
 
         // The start destination must appear — a hang/crash in ViewModel init,
         // Room/DataStore/IO startup or composition times this out. The app
-        // opens on the Hub's Home tab, so wait for the rail, switch to
-        // Library, and confirm the Library list renders.
+        // opens on Hub → Home, which now carries the former Library functions.
         composeTestRule.waitUntil(timeoutMillis = 15_000) {
-            composeTestRule.onAllNodesWithTag("home_library_shortcut", useUnmergedTree = true)
+            composeTestRule.onAllNodesWithTag("home_browse_downloads_tile", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
-        composeTestRule.waitUntil(timeoutMillis = 15_000) {
-            composeTestRule.onAllNodesWithTag("library_lazy_column")
-                .fetchSemanticsNodes().isNotEmpty()
-        }
-        // The Library list's own content is unambiguous (the "Library" text
-        // exists in both the rail label and the header).
-        composeTestRule.onNodeWithTag("library_lazy_column", useUnmergedTree = true)
+        composeTestRule.onNodeWithTag("home_lazy_column", useUnmergedTree = true)
             .assertIsDisplayed()
 
         // Startup reconciliation effects, verified against the real DB:
@@ -192,7 +184,7 @@ class RelaunchWithDataTest {
         }
 
         // The UI is still responsive after reconciliation: navigation works.
-        composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true)
+        composeTestRule.onNodeWithTag("home_search_bar", useUnmergedTree = true)
             .performClick()
         composeTestRule.waitUntil(10_000) {
             composeTestRule.onAllNodesWithTag("search_text_input", useUnmergedTree = true)
@@ -218,25 +210,18 @@ class RelaunchWithDataTest {
                 WearsicApp(timeText = {})
             }
         }
-        // Switch to Library (the app opens on Hub → Home). Wait for the rail
-        // chip first so the click never races the first composition.
+        // The app opens on Hub → Home; Downloads is now a Browse tile there.
+        // Wait for it so the click never races the first composition.
         composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("home_library_shortcut", useUnmergedTree = true)
-                .fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
-        composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("library_lazy_column")
+            composeTestRule.onAllNodesWithTag("home_browse_downloads_tile", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
 
         // The exact interaction that freezes an ANR'd main thread blocks here.
-        // Downloads now lives in the Browse grid, which can sit below the fold
-        // on a 44mm round viewport — and a lazy list does not compose
-        // off-screen items, so scroll it into view before clicking. (With the
-        // old pill layout it was already visible, so this was a no-op.)
+        // The Browse tile can sit below the fold on a 44mm round viewport — a
+        // lazy list does not compose off-screen items, so scroll first.
         val downloadsTile =
-            composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true)
+            composeTestRule.onNodeWithTag("home_browse_downloads_tile", useUnmergedTree = true)
         var scrolls = 5
         while (scrolls > 0 && runCatching { downloadsTile.assertIsDisplayed() }.isFailure) {
             composeTestRule.onRoot().performTouchInput { swipeUp() }
@@ -263,18 +248,12 @@ class RelaunchWithDataTest {
             seedPreferences(context)
         }
 
-        // First launch — the app opens on Hub → Home, so switch to Library
-        // before waiting for the Library list to compose.
+        // First launch — the app opens on Hub → Home; wait for the Browse tile.
         composeTestRule.setContent {
             WearsicTheme { WearsicApp(timeText = {}) }
         }
         composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("home_library_shortcut", useUnmergedTree = true)
-                .fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
-        composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("library_lazy_column")
+            composeTestRule.onAllNodesWithTag("home_browse_downloads_tile", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.waitForIdle()

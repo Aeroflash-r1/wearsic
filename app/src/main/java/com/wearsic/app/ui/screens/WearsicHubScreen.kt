@@ -32,17 +32,17 @@ import kotlinx.coroutines.launch
  */
 enum class WearsicHubSection(val label: String, val page: Int) {
     Home("Home", 0),
-    Library("Library", 1),
-    Search("Search", 2),
+    Search("Search", 1),
     Mix("Mix", -1);
 }
 
 /**
- * Wearsic 2.0 "Horizon Hub" — a 3-page horizontal pager (Home / Library /
- * Search) inside the existing AppScaffold. Each page is an [AnimatedPage] with
- * its own ScreenScaffold and independent scroll state; rotary scrolling stays
- * with the active page's vertical list (rotary page fling is deliberately not
- * enabled). Deep-link routes for Library/Search/Mix remain in the nav host.
+ * Wearsic 2.0 "Horizon Hub" — a 2-page horizontal pager (Home / Search) inside
+ * the existing AppScaffold. The former Library page was removed: its functions
+ * (Downloads / Playlists / Albums / Artists / Favorites / offline shelf) are
+ * folded into Home's Browse section. Each page is an [AnimatedPage] with its
+ * own ScreenScaffold and independent scroll state; rotary scrolling stays with
+ * the active page's vertical list. Deep-link routes remain in the nav host.
  */
 @Composable
 fun WearsicHubScreen(
@@ -97,7 +97,7 @@ fun WearsicHubScreen(
     onPlayTrackWithRelated: (Track) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val pagerState = rememberPagerState(pageCount = { 3 })
+    val pagerState = rememberPagerState(pageCount = { 2 })
     val scope = rememberCoroutineScope()
 
     // Shortcuts that used to push standalone routes now glide to the page.
@@ -129,35 +129,20 @@ fun WearsicHubScreen(
                         onOpenMood = onOpenMood,
                         onOpenSearch = { goTo(WearsicHubSection.Search.page) },
                         onOpenMix = onOpenRecommendations,
-                        onOpenLibrary = { goTo(WearsicHubSection.Library.page) },
+                        onOpenLibrary = {},
                         onOpenPlayer = onOpenPlayer,
                         onRefreshRecommendations = onRefreshRecommendations,
                         onShuffleFavorites = onShuffleFavorites,
-                        onOpenSettings = onOpenSettings
+                        onOpenSettings = onOpenSettings,
+                        onOpenDownloads = onOpenDownloads,
+                        onOpenPlaylists = onOpenPlaylists,
+                        onOpenAlbums = onOpenAlbums,
+                        onOpenArtists = onOpenArtists,
+                        onOpenFavorites = onOpenFavorites,
+                        offlineDownloads = offlineDownloads
                     )
 
-                    1 -> LibraryScreen(
-                        playbackState = playbackState,
-                        recentTracks = recentTracks,
-                        mostPlayed = mostPlayedTracks,
-                        onPlayRecentTrack = onPlay,
-                        isServerReachable = serverReachable,
-                        failoverServerName = failoverServerName,
-                        offlineDownloads = offlineDownloads,
-                        onPlayOfflineTrack = onPlay,
-                        onNavigateToSearch = { goTo(WearsicHubSection.Search.page) },
-                        onNavigateToDownloads = onOpenDownloads,
-                        onNavigateToPlaylists = onOpenPlaylists,
-                        onNavigateToAlbums = onOpenAlbums,
-                        onNavigateToFavorites = onOpenFavorites,
-                        onShuffleFavorites = onShuffleFavorites,
-                        onNavigateToArtists = onOpenArtists,
-                        onNavigateToRecommendations = onOpenRecommendations,
-                        onNavigateToSettings = onOpenSettings,
-                        onNavigateToPlayer = onOpenPlayer
-                    )
-
-                    2 -> SearchScreen(
+                    1 -> SearchScreen(
                         searchState = searchState,
                         onQuerySelected = onSearchQuerySubmitted,
                         onSearchTextChanged = onSearchQueryChanged,

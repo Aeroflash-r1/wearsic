@@ -33,10 +33,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.itemsIndexed
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Celebration
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Favorite
@@ -48,6 +53,7 @@ import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalCafe
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -59,9 +65,11 @@ import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.components.NowPlayingMiniCard
+import com.wearsic.app.ui.components.WearsicActionTile
 import com.wearsic.app.ui.components.WearsicMoodChip
 import com.wearsic.app.ui.components.WearsicScreenHeader
 import com.wearsic.app.ui.components.WearsicSectionTitle
+import com.wearsic.app.ui.components.WearsicSongRow
 import com.wearsic.app.ui.components.WearsicSongRowArtwork
 import com.wearsic.app.ui.components.WearsicTrackShelf
 import com.wearsic.app.ui.theme.LocalWearsicAccent
@@ -119,6 +127,13 @@ fun HomeScreen(
     onRefreshRecommendations: () -> Unit,
     onShuffleFavorites: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    // Library functions merged here (the standalone Library page was removed).
+    onOpenDownloads: () -> Unit = {},
+    onOpenPlaylists: () -> Unit = {},
+    onOpenAlbums: () -> Unit = {},
+    onOpenArtists: () -> Unit = {},
+    onOpenFavorites: () -> Unit = {},
+    offlineDownloads: List<Track> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
@@ -205,24 +220,15 @@ fun HomeScreen(
                 }
             }
 
-            // ---- Library + Mix shortcuts (the old floating rail is gone) ----
+            // ---- Mix shortcut (Library folded into the Browse tiles below) ----
             item {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = watchScaled(6.dp))
                 ) {
                     HomeShortcutPill(
-                        label = "Library",
-                        icon = Icons.Rounded.LibraryMusic,
-                        onClick = onOpenLibrary,
-                        testTag = "home_library_shortcut",
-                        containerColor = com.wearsic.app.ui.theme.WearsicSurface,
-                        iconTint = LocalWearsicAccent.current
-                    )
-                    HomeShortcutPill(
-                        label = "Mix",
+                        label = "Start a Mix",
                         icon = Icons.Rounded.GraphicEq,
                         onClick = onOpenMix,
                         testTag = "home_mix_shortcut",
@@ -251,6 +257,96 @@ fun HomeScreen(
                             if (last.id == currentTrackId) onOpenPlayer() else onPlay(recentTracks, 0)
                         },
                         modifier = Modifier.testTag("home_hero_last_played")
+                    )
+                }
+            }
+
+            // ---- Browse (former Library functions, folded into Home) ----
+            item {
+                WearsicSectionTitle(
+                    label = "Browse",
+                    icon = Icons.Rounded.Apps,
+                    iconContentDescription = "Browse your music"
+                )
+            }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    WearsicActionTile(
+                        label = "Downloads",
+                        icon = Icons.Rounded.Download,
+                        onClick = onOpenDownloads,
+                        modifier = Modifier.weight(1f),
+                        accentColor = com.wearsic.app.ui.theme.WearsicSolarAmber,
+                        badge = "${offlineDownloads.size} saved",
+                        testTag = "home_browse_downloads_tile"
+                    )
+                    WearsicActionTile(
+                        label = "Playlists",
+                        icon = Icons.AutoMirrored.Rounded.QueueMusic,
+                        onClick = onOpenPlaylists,
+                        modifier = Modifier.weight(1f),
+                        testTag = "home_browse_playlists_tile"
+                    )
+                }
+            }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    WearsicActionTile(
+                        label = "Albums",
+                        icon = Icons.Rounded.Album,
+                        onClick = onOpenAlbums,
+                        modifier = Modifier.weight(1f),
+                        testTag = "home_browse_albums_tile"
+                    )
+                    WearsicActionTile(
+                        label = "Artists",
+                        icon = Icons.Rounded.Person,
+                        onClick = onOpenArtists,
+                        modifier = Modifier.weight(1f),
+                        testTag = "home_browse_artists_tile"
+                    )
+                }
+            }
+            item {
+                WearsicActionCard(
+                    label = "Favorites",
+                    icon = Icons.Rounded.Favorite,
+                    onClick = onOpenFavorites,
+                    modifier = Modifier.padding(horizontal = watchScaled(10.dp)),
+                    testTag = "home_browse_favorites_tile"
+                )
+            }
+
+            // Offline saved-shelf: when the server is unreachable, saved music
+            // stays one tap away (carried over from the removed Library page).
+            if (!isServerReachable && offlineDownloads.isNotEmpty()) {
+                item {
+                    WearsicSectionTitle(
+                        label = "Saved offline",
+                        icon = Icons.Rounded.Download,
+                        trailing = {
+                            Text(
+                                text = "${offlineDownloads.size} songs",
+                                color = wearsicSecondaryText(),
+                                fontFamily = com.wearsic.app.ui.theme.WearsicMonoFont,
+                                fontSize = 10.sp
+                            )
+                        }
+                    )
+                }
+                itemsIndexed(offlineDownloads.take(8), key = { _, t -> "home_offline_${t.id}" }) { _, track ->
+                    WearsicSongRow(
+                        title = track.title,
+                        artist = track.artist,
+                        artworkUrl = track.artworkUrl,
+                        onClick = { onPlay(listOf(track), 0) },
+                        testTag = "home_offline_${track.id}"
                     )
                 }
             }
@@ -357,10 +453,13 @@ fun HomeScreen(
 
             // ---- Settings (bottom edge affordance) ----
             item {
+                // Inset from the round bezel so the pill's ends never clip at
+                // the bottom chord (full-width cards touch the curved edge).
                 WearsicActionCard(
                     label = "Settings",
                     icon = Icons.Rounded.Settings,
                     onClick = onOpenSettings,
+                    modifier = Modifier.padding(horizontal = watchScaled(10.dp)),
                     testTag = "home_settings_button"
                 )
             }

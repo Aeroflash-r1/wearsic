@@ -84,6 +84,15 @@ watch verification happens when the watch is charged & connected.
 - 2026-11-17: Phases 0–3 (partial) + 4 implemented; full CI green (4/4 jobs) at
   commit 5ece808. APK at /tmp/opencode/solar/Wearsic-v1.9.50.apk.
 - 2026-11-17: Watch offline / battery was 6% — all visual verification blocked.
-- NEXT: watch charged → install APK → verify pager + pages + player gestures;
-  then perimeter arc (deferred Phase 3), TransformingLazyColumn migration,
+- 2026-11-17: LIVE feedback pass (battery 50%):
+  - Play/pause button reverted to ALWAYS circular (user rejected squircle morph).
+  - Removed in-app mic from Search (keyboard already has one).
+  - Home Settings pill inset to stop bezel clipping.
+  - Server profile rows: outer padding (no bezel clip), bold name + mono-bold URL;
+    fixed port bug — HTTPS public hosts (Workers/Vercel/…) never get a stray
+    ":port" on apply/save; port dialog shows "Standard (HTTPS)" instead of 8080.
+  - LIBRARY PAGE REMOVED from the pager (now 2 pages: Home/Search). Its functions
+    (Downloads/Playlists/Albums/Artists/Favorites/offline shelf) folded into
+    Home's new Browse section. Robolectric CUJ tests updated for new testTags.
+- NEXT: CI gate → watch port → visual verify → perimeter arc (deferred) →
   version bump to 2.0.0 + release (tag wearsic only), sync wearsic-dev.

@@ -226,7 +226,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun addCurrentAsProfile(name: String) {
         val cleanName = name.trim()
         if (cleanName.isBlank()) return
-        val currentUrl = serverUrl.value
+        val currentUrl = sanitizeProfileUrl(serverUrl.value)
         if (currentUrl.isBlank()) return
         viewModelScope.launch {
             preferencesRepository.saveProfile(
@@ -243,12 +243,42 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     /** Switches the watch to [profile] (URL + key + connection-test reset). */
     fun applyProfile(profile: com.wearsic.app.data.ServerProfile) {
         viewModelScope.launch {
-            if (profile.url != serverUrl.value) {
-                preferencesRepository.saveServerUrl(profile.url)
+            // Public HTTPS hosts (Cloudflare Workers, Vercel, …) must never
+            // carry a stray ":port" — strip it on apply so even profiles saved
+            // by an older build paste cleanly.
+            val cleanUrl = sanitizeProfileUrl(profile.url)
+            if (cleanUrl != serverUrl.value) {
+                preferencesRepository.saveServerUrl(cleanUrl)
             }
             if (profile.apiKey != apiKey.value) {
                 musicRepository.saveApiKey(profile.apiKey)
             }
+        }
+    }
+
+    /**
+     * Drops an explicit port from public HTTPS endpoints that use standard
+     * 443 (Workers / Pages / Vercel / Netlify / Render / Railway / Fly).
+     * Local LAN servers (http, or private hosts) keep their explicit port.
+     */
+    private fun sanitizeProfileUrl(url: String): String {
+        if (url.isBlank()) return url
+        return try {
+            val uri = java.net.URI(url)
+            if (uri.scheme?.lowercase() == "https" && uri.port > 0) {
+                val host = uri.host.orEmpty()
+                val publicHost = listOf(
+                    "workers.dev", "pages.dev", "vercel.app", "netlify.app",
+                    "onrender.com", "railway.app", "fly.dev", "herokuapp.com"
+                ).any { host.equals(it, ignoreCase = true) || host.endsWith(".$it", ignoreCase = true) }
+                if (publicHost) {
+                    val path = uri.rawPath.orEmpty()
+                    val query = uri.rawQuery?.let { "?$it" }.orEmpty()
+                    "https://$host$path$query"
+                } else url
+            } else url
+        } catch (_: Exception) {
+            url
         }
     }
 

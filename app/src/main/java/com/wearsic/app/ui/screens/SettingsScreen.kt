@@ -82,7 +82,9 @@ import com.wearsic.app.ui.components.WearsicScreenHeader
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wearsic.app.ui.theme.WearsicBodyFont
 import com.wearsic.app.ui.theme.WearsicDisplayFont
+import com.wearsic.app.ui.theme.WearsicMonoFont
 import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.watchScaled
 import com.wearsic.app.ui.theme.wearsicSecondaryText
 import com.wearsic.app.ui.theme.wearsicAccentContainer
 import com.wearsic.app.ui.theme.LocalWearsicAccent
@@ -559,9 +561,11 @@ fun SettingsScreen(
             // Server Port — customize the port baked into the server URL
             item {
                 SettingsPillItem(
-                    title = "Server Port: ${currentPort}",
+                    title = if (currentPort.isEmpty()) "Server Port: Standard (HTTPS)" else "Server Port: $currentPort",
                     subtitle = if (serverUrl.isBlank()) {
                         "Set a server URL first"
+                    } else if (currentPort.isEmpty()) {
+                        "HTTPS uses the standard port"
                     } else {
                         "Tap to change (1024–65535)"
                     },
@@ -1292,6 +1296,9 @@ private fun ServerProfileRow(
     val shape = RoundedCornerShape(WearsicDimens.CardRadius)
     Box(
         modifier = Modifier
+            // Inset BEFORE fillMaxWidth so the card's rounded ends stay inside
+            // the round bezel chord instead of being clipped by it.
+            .padding(horizontal = watchScaled(6.dp))
             .fillMaxWidth()
             .clip(shape)
             .background(
@@ -1304,7 +1311,7 @@ private fun ServerProfileRow(
                 else WearsicSurfaceBorderSubtle,
                 shape
             )
-            .padding(horizontal = WearsicDimens.ScreenPaddingH, vertical = 8.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
             .testTag("settings_profile_${profile.id}")
     ) {
         Row(
@@ -1324,15 +1331,18 @@ private fun ServerProfileRow(
                     Text(
                         text = profile.name,
                         color = WearsicTextPrimary,
+                        fontFamily = WearsicDisplayFont,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = profile.url,
                         color = wearsicSecondaryText(),
+                        fontFamily = WearsicMonoFont,
                         fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1436,22 +1446,33 @@ private fun SettingsPillItem(
     }
 }
 
-/** Extract the port from a server URL (default 8080 when absent). */
+/**
+ * Extract the explicit port from a server URL. HTTPS endpoints without an
+ * explicit port use the standard 443 and report an empty string (never a
+ * misleading "8080" that would tempt the user to bake a port into a Workers
+ * URL). Local http servers still default to 8080 for backwards compatibility.
+ */
 private fun extractPort(base: String): String =
     try {
         val uri = java.net.URI(base)
-        uri.port.takeIf { it > 0 }?.toString() ?: "8080"
+        uri.port.takeIf { it > 0 }?.toString()
+            ?: if (uri.scheme?.lowercase() == "https") "" else "8080"
     } catch (_: Exception) {
-        "8080"
+        ""
     }
 
-/** Rebuilds the server URL with a new port, preserving scheme/host/path. */
+/**
+ * Rebuilds the server URL with a new port. Public HTTPS URLs are returned
+ * untouched — appending ":port" to a Cloudflare Workers / Vercel endpoint is
+ * exactly the bug that produced broken saved profiles.
+ */
 private fun buildServerUrlWithPort(base: String, port: String): String {
     val cleanPort = port.trim()
     return try {
         val uri = java.net.URI(base)
+        val scheme = uri.scheme?.lowercase() ?: "http"
+        if (scheme == "https") return base
         val host = uri.host ?: return base
-        val scheme = uri.scheme ?: "http"
         val path = uri.path ?: ""
         "$scheme://$host:$cleanPort$path"
     } catch (_: Exception) {

@@ -32,7 +32,6 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
@@ -62,8 +61,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -150,37 +147,8 @@ fun SearchScreen(
     // the song results). rememberSaveable so the mode survives tab hops.
     var mode by rememberSaveable { mutableIntStateOf(0) }
 
-    // Voice search through the platform recognizer (Wear OS supports the
-    // same RecognizerIntent as phones). Hidden entirely on watches without
-    // a recognizer instead of crashing on launch.
-    val context = LocalContext.current
-    val voiceIntent = remember {
-        android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-        }
-    }
-    val voiceAvailable = remember {
-        try {
-            context.packageManager.resolveActivity(voiceIntent, 0) != null
-        } catch (_: Exception) {
-            false
-        }
-    }
-    val voiceLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val spoken = result.data
-            ?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)
-            ?.firstOrNull()
-        if (!spoken.isNullOrBlank()) {
-            keyboardController?.hide()
-            onSearchTextChanged(spoken)
-            onQuerySelected(spoken)
-        }
-    }
+    // Voice search removed: the on-screen keyboard already provides a mic,
+    // so the in-app trigger was redundant and consumed cramped search-bar width.
 
     // Albums mode hits /api/search/albums (5-min server cache) whenever a
     // query lands in Albums mode. Runs in composable scope, not inside the
@@ -330,15 +298,6 @@ fun SearchScreen(
                             )
                         }
 
-                        if (voiceAvailable) {
-                            WearsicSongRowActionButton(
-                                icon = Icons.Rounded.Mic,
-                                contentDescription = "Voice search",
-                                onClick = { voiceLauncher.launch(voiceIntent) },
-                                testTag = "search_voice_button",
-                                tint = LocalWearsicAccent.current
-                            )
-                        }
                     }
                 }
             }

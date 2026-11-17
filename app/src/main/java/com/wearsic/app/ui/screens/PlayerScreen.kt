@@ -136,7 +136,6 @@ import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicBodyFont
-import com.wearsic.app.ui.theme.WearsicMotion
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.WearsicSurface
@@ -1782,15 +1781,8 @@ private fun PlayButton(
         isPlaying -> Icons.Rounded.Pause
         else -> Icons.Rounded.PlayArrow
     }
-    // Solar Ember expressive transport: the primary control morphs between a
-    // full circle (playing) and a soft squircle (paused). Layer-only animation
-    // — no recomposition during the transition.
-    val morphPercent by animateFloatAsState(
-        targetValue = if (isPlaying || isBuffering) 50f else 26f,
-        animationSpec = WearsicMotion.morphSpring(),
-        label = "playButtonMorph"
-    )
-    val controlShape = RoundedCornerShape(morphPercent)
+    // Primary control stays a perfect circle in every state (user preference).
+    val controlShape = CircleShape
     Box(
         modifier = Modifier
             .size(size)

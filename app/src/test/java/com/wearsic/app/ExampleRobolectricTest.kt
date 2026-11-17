@@ -177,31 +177,16 @@ class ExampleRobolectricTest {
             }
         }
 
-        // The app now opens on Home — open Library via the Home pill.
-        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
+        // The Library page was removed; its functions now live in Home's
+        // Browse section. Verify those tiles are present on the start page.
+        composeTestRule.onNodeWithTag("home_browse_downloads_tile", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("home_browse_playlists_tile", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("home_browse_albums_tile", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("home_browse_artists_tile", useUnmergedTree = true).assertExists()
 
-        // Verify Library content with unmerged tree. (The "Library" text
-        // exists in both the rail label and the screen header, so assert the
-        // screen's unique list and buttons instead of the ambiguous text.)
-        composeTestRule.onNodeWithTag("library_lazy_column", useUnmergedTree = true).assertExists()
-        composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).assertExists()
-
-        // Downloads lives in the Browse grid, which can sit below the fold on
-        // a 44mm round viewport. A lazy list does not compose off-screen
-        // items, so scroll it into view before asserting it exists.
-        val downloadsTile =
-            composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true)
-        var scrolls = 5
-        while (scrolls > 0 && runCatching { downloadsTile.assertIsDisplayed() }.isFailure) {
-            composeTestRule.onRoot().performTouchInput { swipeUp() }
-            composeTestRule.waitForIdle()
-            scrolls--
-        }
-        downloadsTile.assertExists()
-
-        // Navigate to Search (the Hub's Search tab). The tab shows both a
-        // "Search" header AND the text input, so assert on the input's tag.
-        composeTestRule.onNodeWithTag("library_search_button", useUnmergedTree = true).performClick()
+        // Search is page 1 of the Horizon pager; the Home search bar glides there.
+        composeTestRule.onNodeWithTag("home_search_bar", useUnmergedTree = true).performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("search_text_input", useUnmergedTree = true).assertExists()
     }
 
@@ -213,15 +198,10 @@ class ExampleRobolectricTest {
             }
         }
 
-        // Switch to Library (start = Home on the new Hub).
-        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
-
-        // Navigate to Downloads. The destination now lives in the Browse
-        // grid, below the fold on the round default viewport — swipe until
-        // it is on-screen (no ScrollToNode semantics on ScalingLazyColumn),
-        // then tap.
+        // Downloads is now a Browse tile on the Home page (below the fold on
+        // the round default viewport — swipe until on-screen, then tap).
         val downloadsTile =
-            composeTestRule.onNodeWithTag("library_downloads_button", useUnmergedTree = true)
+            composeTestRule.onNodeWithTag("home_browse_downloads_tile", useUnmergedTree = true)
         var scrolls = 5
         while (scrolls > 0 && runCatching { downloadsTile.assertIsDisplayed() }.isFailure) {
             composeTestRule.onRoot().performTouchInput { swipeUp() }
@@ -241,10 +221,9 @@ class ExampleRobolectricTest {
             }
         }
 
-        // Navigate to Settings from Library (Home → Library pill → Settings).
-        composeTestRule.onNodeWithTag("home_library_shortcut", useUnmergedTree = true).performClick()
+        // Settings now has its own Home action at the bottom of the feed.
         val settingsTile =
-            composeTestRule.onNodeWithTag("library_settings_button", useUnmergedTree = true)
+            composeTestRule.onNodeWithTag("home_settings_button", useUnmergedTree = true)
         var settingsScrolls = 5
         while (settingsScrolls > 0 &&
             runCatching { settingsTile.assertIsDisplayed() }.isFailure

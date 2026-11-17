@@ -80,11 +80,15 @@ watch verification happens when the watch is charged & connected.
       signature first); default accent = Solar Coral.
 - [ ] Gate: watch spot-check pending (watch offline / low battery).
 
-### Phase 5 — Verification & release
-- [ ] Full CI (Robolectric on x86_64), fast APK, watch visual pass.
-- [ ] Unit tests updated for new nav.
-- [ ] Version bump (2.0.0), docs pins, tag/release on `wearsic` only.
-- [ ] Sync `wearsic-dev`.
+### Phase 5 — Verification & release  [DONE ✅ — release shipped]
+- [x] Full CI green (4/4 incl. Robolectric x86_64) at 664f2e5.
+- [x] Unit tests updated for the 2-page pager + Home Browse testTags.
+- [x] Version bump 2.0.0 / versionCode 81 via scripts/bump-version.py;
+      bump gate 23/23 green; tag v2.0.0 pushed to `wearsic` ONLY (dev has none).
+- [x] GitHub Release "Wearsic v2.0.0" published with signed APK + sha256,
+      server zip + sha256, single-file installer. CI 4/4 green on the tag.
+- [x] `wearsic-dev` synced to the release commit.
+- [ ] Watch visual pass — user will check the installed v2.0.0 APK.
 
 ## Log
 - 2026-11-17: Blueprint read. Phase 0 implemented & gated (compile + tests green).
@@ -106,6 +110,9 @@ watch verification happens when the watch is charged & connected.
   2-page pager. APK at /tmp/opencode/solar2/Wearsic-v1.9.50.apk.
 - NOTE: In Robolectric the Home Browse tile click did not reach Downloads
   (likely pager/layer touch quirk in the test harness) — must verify on hardware.
-- NEXT: watch port → install APK → verify 2-page pager, Home Browse tiles,
-  circular play button, no mic, clean server profiles → then perimeter arc
-  (deferred), version bump 2.0.0 + release (tag wearsic only), sync wearsic-dev.
+- 2026-11-18: Perimeter bezel progress arc implemented (round), adaptive spec
+  wired; tier-based thumbnail reverted (broke Queue drag CUJs). Full CI green.
+- 2026-11-18: v2.0.0 RELEASED on wearsic only (tag 664f2e5, 4/4 CI green, all
+  assets). APK: /tmp/opencode/v200/Wearsic-v2.0.0.apk (sha256 verified).
+- STATUS: plan functionally complete. Watch visual pass is the only open item —
+  user to check the v2.0.0 APK and report anything to fix.

@@ -229,13 +229,21 @@ class RelaunchWithDataTest {
             scrolls--
         }
         downloadsTile.performClick()
-        composeTestRule.onNodeWithText("Downloads").assertIsDisplayed()
+        composeTestRule.waitForIdle()
 
         // And the persisted downloads render on top of the reconciled DB.
-        composeTestRule.waitUntil(10_000) {
-            composeTestRule.onAllNodes(
-                androidx.compose.ui.test.hasText("Kept"), useUnmergedTree = true
-            ).fetchSemanticsNodes().isNotEmpty()
+        // The Downloads screen is itself lazy — scroll until "Kept" composes.
+        val kept = composeTestRule.onAllNodes(
+            androidx.compose.ui.test.hasText("Kept"), useUnmergedTree = true
+        )
+        var keptScrolls = 5
+        while (keptScrolls > 0 && kept.fetchSemanticsNodes().isEmpty()) {
+            composeTestRule.onRoot().performTouchInput { swipeUp() }
+            composeTestRule.waitForIdle()
+            keptScrolls--
+        }
+        check(kept.fetchSemanticsNodes().isNotEmpty()) {
+            "Persisted download 'Kept' never appeared on the Downloads screen"
         }
     }
 

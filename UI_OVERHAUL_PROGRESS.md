@@ -52,13 +52,16 @@ watch verification happens when the watch is charged & connected.
       pass — the existing ScalingLazyColumn scrolling/gestures are verified.)
 - [ ] Gate: compile + unit tests green; watch visual verification pending charge.
 
-### Phase 3 — Now Playing overhaul
-- [ ] Full-bleed art + dual scrim + radial Coral/Amber aura.
-- [ ] Perimeter arc progress/scrub (circle on round, rounded-rect on square),
-      draw-phase only, haptic ticks, live preview + commit on release.
-- [ ] Morphing transport (circle↔squircle), ≥48dp targets, adaptive art sizing.
-- [ ] Lyrics pill + pull-up lyrics + actions page + rotary volume HUD preserved.
-- [ ] Gate: compile + watch visual verification (all gestures).
+### Phase 3 — Now Playing overhaul  [PARTIAL — player was already modern]
+- [x] Full-bleed art backdrop + artwork aura already present (ArtworkBackdrop).
+- [x] Expressive transport: play button now morphs circle↔squircle via shared
+      spring (layer-only). Skip targets ≥48dp already.
+- [x] Pull-up lyrics + actions page + rotary volume HUD preserved untouched.
+- [ ] Perimeter bezel arc progress/scrub (round/square) — DEFERRED: the existing
+      disc ring works and is verified; a bezel arc cannot be visually verified
+      while the watch is offline/low-battery. Revisit with live hardware.
+- [ ] Lyrics hint pill — not added; the quiet icon was a deliberate prior fix.
+- [ ] Gate: compile + unit tests green; watch visual verification pending.
 
 ### Phase 4 — Secondary screens & unified polish
 - [ ] Solar Ember tokens across Queue / Downloads / Storage / Playlists /

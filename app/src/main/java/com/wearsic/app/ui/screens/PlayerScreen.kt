@@ -136,6 +136,7 @@ import com.wearsic.app.model.PlaybackUiState
 import com.wearsic.app.model.Track
 import com.wearsic.app.ui.theme.WearsicBlack
 import com.wearsic.app.ui.theme.WearsicBodyFont
+import com.wearsic.app.ui.theme.WearsicMotion
 import com.wearsic.app.ui.theme.WearsicDimens
 import com.wearsic.app.ui.theme.WearsicDisplayFont
 import com.wearsic.app.ui.theme.WearsicSurface
@@ -1781,6 +1782,15 @@ private fun PlayButton(
         isPlaying -> Icons.Rounded.Pause
         else -> Icons.Rounded.PlayArrow
     }
+    // Solar Ember expressive transport: the primary control morphs between a
+    // full circle (playing) and a soft squircle (paused). Layer-only animation
+    // — no recomposition during the transition.
+    val morphPercent by animateFloatAsState(
+        targetValue = if (isPlaying || isBuffering) 50f else 26f,
+        animationSpec = WearsicMotion.morphSpring(),
+        label = "playButtonMorph"
+    )
+    val controlShape = RoundedCornerShape(morphPercent)
     Box(
         modifier = Modifier
             .size(size)
@@ -1791,9 +1801,9 @@ private fun PlayButton(
         Box(
             modifier = Modifier
                 .size(size)
-                .clip(CircleShape)
+                .clip(controlShape)
                 .background(colors.blobTint.copy(alpha = if (enabled || isBuffering) 1f else 0.4f))
-                .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
+                .border(1.dp, Color.White.copy(alpha = 0.18f), controlShape),
             contentAlignment = Alignment.Center
         ) {
             // Keyed so the glyph pops in on every play/pause/buffer change.

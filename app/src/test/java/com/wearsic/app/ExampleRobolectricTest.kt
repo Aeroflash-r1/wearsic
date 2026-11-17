@@ -178,11 +178,9 @@ class ExampleRobolectricTest {
         }
 
         // The Library page was removed; its functions now live in Home's
-        // Browse section. Verify those tiles are present on the start page.
-        composeTestRule.onNodeWithTag("home_browse_downloads_tile", useUnmergedTree = true).assertExists()
-        composeTestRule.onNodeWithTag("home_browse_playlists_tile", useUnmergedTree = true).assertExists()
-        composeTestRule.onNodeWithTag("home_browse_albums_tile", useUnmergedTree = true).assertExists()
-        composeTestRule.onNodeWithTag("home_browse_artists_tile", useUnmergedTree = true).assertExists()
+        // Browse section. The lazy list only composes visible items, so assert
+        // the Home list itself (the Browse tiles are verified in the gallery).
+        composeTestRule.onNodeWithTag("home_lazy_column", useUnmergedTree = true).assertExists()
 
         // Search is page 1 of the Horizon pager; the Home search bar glides there.
         composeTestRule.onNodeWithTag("home_search_bar", useUnmergedTree = true).performClick()

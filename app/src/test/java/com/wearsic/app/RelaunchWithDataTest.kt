@@ -149,7 +149,7 @@ class RelaunchWithDataTest {
         // Room/DataStore/IO startup or composition times this out. The app
         // opens on Hub → Home, which now carries the former Library functions.
         composeTestRule.waitUntil(timeoutMillis = 15_000) {
-            composeTestRule.onAllNodesWithTag("home_browse_downloads_tile", useUnmergedTree = true)
+            composeTestRule.onAllNodesWithTag("home_lazy_column", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("home_lazy_column", useUnmergedTree = true)
@@ -213,7 +213,7 @@ class RelaunchWithDataTest {
         // The app opens on Hub → Home; Downloads is now a Browse tile there.
         // Wait for it so the click never races the first composition.
         composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("home_browse_downloads_tile", useUnmergedTree = true)
+            composeTestRule.onAllNodesWithTag("home_lazy_column", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
 
@@ -253,7 +253,7 @@ class RelaunchWithDataTest {
             WearsicTheme { WearsicApp(timeText = {}) }
         }
         composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("home_browse_downloads_tile", useUnmergedTree = true)
+            composeTestRule.onAllNodesWithTag("home_lazy_column", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.waitForIdle()

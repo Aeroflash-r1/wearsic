@@ -257,7 +257,6 @@ fun HomeScreen(
                         onClick = onOpenDownloads,
                         modifier = Modifier.weight(1f),
                         accentColor = com.wearsic.app.ui.theme.WearsicSolarAmber,
-                        badge = "${offlineDownloads.size} saved",
                         testTag = "home_browse_downloads_tile"
                     )
                     WearsicActionTile(

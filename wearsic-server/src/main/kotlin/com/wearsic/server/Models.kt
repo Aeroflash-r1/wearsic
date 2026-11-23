@@ -1,0 +1,231 @@
+package com.wearsic.server
+
+import kotlinx.serialization.Serializable
+
+/**
+ * Matches API_CONTRACT.md exactly. The client parses these defensively with
+ * kotlinx.serialization (unknown keys ignored, missing fields defaulted), so
+ * new fields can be added freely later, but `videoId` must never be renamed
+ * or removed within this client generation.
+ */
+@Serializable
+data class TrackDto(
+    val videoId: String,
+    val title: String,
+    val uploader: String,
+    val durationMs: Long = 0L,
+    val thumbnailUrl: String? = null,
+    /**
+     * Album name when the source knows it (YouTube Music search rows carry it;
+     * related/radio/playlist rows usually do not). This is what lets the
+     * watch's player disc resolve "open the album for this song" without
+     * guessing from the title alone.
+     */
+    val albumName: String? = null,
+)
+
+@Serializable
+data class SearchResponse(val results: List<TrackDto>)
+
+/** `/api/albums/resolve`: the album for a video, or null when unknown. */
+@Serializable
+data class AlbumResolveResponse(val album: AlbumDto? = null)
+
+@Serializable
+data class SuggestionsResponse(val suggestions: List<String>)
+
+@Serializable
+data class RelatedResponse(val results: List<TrackDto>)
+
+@Serializable
+data class AlbumDto(
+    val id: String, // full playlist URL, not a bare id — per contract
+    val name: String,
+    val uploader: String,
+    val thumbnailUrl: String? = null,
+    /** Number of tracks in the album (0 = unknown) — real albums have many,
+     * auto-generated single "albums" have exactly 1. Used to rank
+     * same-named album search results so a real LP beats publisher junk. */
+    val trackCount: Long = 0,
+    /** Whether YT Music marks the album's channel as verified/artist-owned. */
+    val uploaderVerified: Boolean = false,
+)
+
+@Serializable
+data class PlaylistTracksResponse(
+    val id: String,
+    val name: String,
+    val tracks: List<TrackDto>,
+)
+
+@Serializable
+data class PlaylistSummaryDto(
+    val id: String,
+    val name: String,
+    val trackCount: Int,
+    val thumbnailUrl: String? = null,
+)
+
+@Serializable
+data class CreatePlaylistRequest(val name: String)
+
+@Serializable
+data class ExtractionHealthDto(
+    val successCount: Int = 0,
+    val failureCount: Int = 0,
+    val failureRatePercent: Int = 0,
+    val consecutiveFailures: Int = 0,
+    val lastError: String? = null,
+    // Failure-classification context: WHEN each outcome last happened, so
+    // "YouTube broke the engine" (recent failures, long-run successes) can be
+    // told apart from "never extracted anything" and from transient outages.
+    val lastSuccessAtMillis: Long = 0,
+    val lastFailureAtMillis: Long = 0,
+)
+
+@Serializable
+data class UpdateStatusDto(
+    // "idle" | "checking" | "staged" — "staged" means a new engine is
+    // downloaded and waiting for the supervisor to apply on restart.
+    val status: String = "idle",
+    val latestKnownVersion: String? = null,
+    val lastCheckAtMillis: Long = 0,
+    val lastError: String? = null,
+    val stagedVersion: String? = null,
+    // Update/rollback loop visibility: how many times the current target has
+    // been staged, and why the supervisor last rolled back (if it ever did).
+    val updateAttempt: Int = 0,
+    val rollbackReason: String? = null,
+    // Preview of the target release's GitHub notes (first ~400 chars,
+    // newline-joined). Optional + nullable everywhere so a rollback with no
+    // notes, an old staged state file, or an old client all stay compatible.
+    val latestNotes: String? = null,
+)
+
+/**
+ * /diag — public, secret-free performance surface. The percentiles are the
+ * same ones embedded in /health; the counters are what make them actionable.
+ */
+@Serializable
+data class DiagResponse(
+    val latency: Map<String, LatencyStatsDto> = emptyMap(),
+    val upstreamRangeRefusals: Int = 0,
+    val upstreamOpenRangeRefusals: Int = 0,
+)
+
+/**
+ * Readiness ("can Wearsic currently serve music right now?") — the deeper
+ * counterpart to /health ("is the process alive?"). Deliberately cheap:
+ * no network, no extraction, no secrets.
+ */
+@Serializable
+data class ReadyResponse(
+    val ready: Boolean,
+    val database: Boolean,
+    val extractor: Boolean,
+    val transcoder: Boolean,
+    val engineVersion: String = ServerVersion.VERSION,
+)
+
+@Serializable
+data class HealthResponse(
+    val status: String = "ok",
+    // ServerVersion.VERSION is the single source of truth (build.gradle.kts
+    // parses it so the JAR name and /health always agree).
+    val version: String = ServerVersion.VERSION,
+    val serverName: String = "Wearsic Engine",
+    // True when ffmpeg was found, so server-side AAC conversion works for
+    // songs YouTube only offers in Opus/WebM. Purely informational — the app
+    // parses health leniently and ignores unknown fields.
+    val transcoderAvailable: Boolean = false,
+    // Self-healing observability: is the extraction engine succeeding, is the
+    // canary (probe of a permanent video) passing, and is an engine update
+    // staged? Optional + nullable so old monitoring scripts stay compatible.
+    val extraction: ExtractionHealthDto? = null,
+    val canaryHealthy: Boolean? = null,
+    val update: UpdateStatusDto? = null,
+    // Crash visibility: how many uncaught throwables were captured since
+    // install (files in state/crashes) and when the newest happened. Zero
+    // means "none recorded", not "none happened before capture existed".
+    val crashCount: Int = 0,
+    val lastCrashAtMillis: Long = 0,
+    // Throttle visibility: CDN range refusals since boot (see UpstreamStats).
+    // High counts with failing streams = throttled network (cookie/wait),
+    // not a broken engine (update).
+    val upstreamRefusals: Int = 0,
+    // Hot-path latency percentiles over the last ~256 samples per metric
+    // (see LatencyMetrics). Counts only, no user data, no secrets: this is what
+    // turns "it feels slow" into "extract p90 = 9.8s, lean p90 = 0.4s".
+    val latency: Map<String, LatencyStatsDto>? = null,
+    // Process uptime in milliseconds (when the JVM was started). Optional and
+    // nullable so older clients parse this defensively; the web dashboard and
+    // the watch's Engine Dashboard use it for "uptime".
+    val uptimeMs: Long? = 0L,
+)
+
+/**
+ * /api/prewarm result. `ready = true` means the stream target is resolved and
+ * cached, so the playback request that follows can start without waiting for
+ * extraction. No audio bytes cross the wire.
+ */
+@Serializable
+data class PrewarmResponse(val ready: Boolean)
+
+@Serializable
+data class ErrorResponse(val error: String)
+
+@Serializable
+data class YoutubeCookieRequest(val cookie: String)
+
+@Serializable
+data class YoutubeCookieStatus(val hasCookie: Boolean)
+
+@Serializable
+data class RecommendationsRequest(
+    val seedTrackIds: List<String> = emptyList(),
+    val topArtists: List<String> = emptyList(),
+    val excludeTrackIds: List<String> = emptyList(),
+    val limit: Int = 0,
+    // Incremented by the watch on each manual refresh, so the server serves a
+    // freshly rotated candidate pool instead of the same cached 25 forever.
+    val refreshNonce: Int = 0,
+    // Genre taste hints ("chill", "workout", …) derived from the user's
+    // listening; narrows the candidate pool toward those vibes.
+    val genres: List<String> = emptyList(),
+)
+
+@Serializable
+data class RecommendationsResponse(val results: List<TrackDto>)
+
+@Serializable
+data class AiPlaylistRequest(
+    val name: String,
+    val genres: List<String> = emptyList(),
+    val seedTrackIds: List<String> = emptyList(),
+    val topArtists: List<String> = emptyList(),
+    val limit: Int = 15,
+)
+
+@Serializable
+data class AiPlaylistResponse(
+    val name: String,
+    val tracks: List<TrackDto> = emptyList(),
+    val aiUsed: Boolean = false,
+)
+
+/** `POST /api/mood` — a real mood mix, personalized from listening seeds. */
+@Serializable
+data class MoodRequest(
+    /** Canonical mood id ("chill", "pop", "workout", ...). */
+    val mood: String,
+    /** Recent/current listening seeds (up to 6) used for taste bias. */
+    val seedTrackIds: List<String> = emptyList(),
+    /** ids to never repeat (current queue + recently played). */
+    val excludeTrackIds: List<String> = emptyList(),
+)
+
+@Serializable
+data class MoodResponse(
+    val mood: String,
+    val results: List<TrackDto>,
+)

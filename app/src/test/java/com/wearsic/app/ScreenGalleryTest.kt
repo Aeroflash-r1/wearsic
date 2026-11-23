@@ -1,0 +1,624 @@
+package com.wearsic.app
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import com.wearsic.app.data.db.DownloadState
+import com.wearsic.app.data.db.WearsicDownloadEntity
+import com.wearsic.app.model.Album
+import com.wearsic.app.model.ArtistGroup
+import com.wearsic.app.model.PlaybackUiState
+import com.wearsic.app.model.Playlist
+import com.wearsic.app.model.Track
+import com.wearsic.app.network.model.ConnectionTestState
+import com.wearsic.app.network.model.ServerHealthDto
+import com.wearsic.app.model.LyricLine
+import com.wearsic.app.model.LyricsMode
+import com.wearsic.app.ui.components.WearsicTrackActionSheet
+import com.wearsic.app.ui.screens.LyricsFullscreen
+import com.wearsic.app.ui.viewmodel.LyricsViewModel
+import com.wearsic.app.ui.screens.AlbumsScreen
+import com.wearsic.app.ui.screens.ArtistsScreen
+import com.wearsic.app.ui.screens.DownloadsScreen
+import com.wearsic.app.ui.screens.FavoritesScreen
+import com.wearsic.app.ui.screens.LibraryScreen
+import com.wearsic.app.ui.screens.MixScreen
+import com.wearsic.app.ui.screens.HomeScreen
+import com.wearsic.app.ui.screens.PlayerScreen
+import com.wearsic.app.ui.screens.PlaylistDetailScreen
+import com.wearsic.app.ui.screens.PlaylistsScreen
+import com.wearsic.app.ui.screens.QueueScreen
+import com.wearsic.app.ui.screens.SearchScreen
+import com.wearsic.app.ui.screens.ServerDashboardScreen
+import com.wearsic.app.ui.screens.SettingsScreen
+import com.wearsic.app.ui.screens.StorageStatsContent
+import com.wearsic.app.ui.screens.VolumeScreen
+import com.wearsic.app.ui.screens.WearsicHubScreen
+import com.wearsic.app.ui.screens.RecommendationsScreen
+import com.wearsic.app.ui.theme.WearsicTheme
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.AlbumsUiState
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.ArtistsUiState
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.FavoritesUiState
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistDetailUiState
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.PlaylistsUiState
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.RecommendationsUiState
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.RadioState
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.SearchUiState
+import com.wearsic.app.ui.viewmodel.ServerDashboardState
+import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
+import com.github.takahirom.roborazzi.captureRoboImage
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+
+/**
+ * Renders EVERY reachable watch screen at true Galaxy Watch7 44mm round
+ * dimensions and writes a PNG per screen, so the shipped UI can be reviewed
+ * as images instead of inferred from code.
+ *
+ * Artwork URLs are intentionally omitted: Robolectric performs no network I/O,
+ * so an image-backed screen would render an empty box. Every screen therefore
+ * exercises its real "no artwork" placeholder path, which is what many songs
+ * show in production anyway.
+ *
+ * Output: app/src/test/screenshots/<screen>.png (450x450 @ the round qualifiers)
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(qualifiers = RobolectricDeviceQualifiers.WearOSLargeRound, sdk = [36])
+class ScreenGalleryTest {
+
+    @get:Rule val composeTestRule = createComposeRule()
+
+    private fun shoot(name: String, before: () -> Unit = {}, content: @Composable () -> Unit) {
+        composeTestRule.setContent { WearsicTheme { Box(Modifier.fillMaxSize()) { content() } } }
+        composeTestRule.waitForIdle()
+        before()
+        composeTestRule.waitForIdle()
+        composeTestRule.onRoot().captureRoboImage(filePath = "src/test/screenshots/$name.png")
+    }
+
+    // ── Fixtures ────────────────────────────────────────────────────────────
+
+    private fun track(
+        id: String,
+        title: String,
+        artist: String,
+        durationMs: Long = 240_000L,
+        favorite: Boolean = false
+    ) = Track(
+        id = id, title = title, artist = artist,
+        durationMs = durationMs, artworkUrl = null, isFavorite = favorite
+    )
+
+    private val tracks = listOf(
+        track("t1", "Kesariya", "Arijit Singh", 250_000),
+        track("t2", "Tum Hi Ho", "Arijit Singh", 261_000),
+        track("t3", "A Sky Full of Stars", "Coldplay", 267_000),
+        track("t4", "Photograph", "Ed Sheeran", 258_000),
+        track("t5", "Perfect", "Ed Sheeran", 263_000),
+        track("t6", "Calm Down", "Rema", 239_000)
+    )
+
+    private val playback = PlaybackUiState(
+        currentTrack = tracks[2],
+        isPlaying = true,
+        isBuffering = false,
+        currentPositionMs = 84_000L,
+        durationMs = 267_000L,
+        hasNext = true,
+        hasPrevious = true,
+        playlist = tracks,
+        currentTrackIndex = 2
+    )
+
+    private val playlists = listOf(
+        Playlist(id = "p1", name = "Road Trip", trackCount = 24),
+        Playlist(id = "p2", name = "Focus", trackCount = 12),
+        Playlist(id = "p3", name = "Late Night", trackCount = 31)
+    )
+
+    // ── Home ────────────────────────────────────────────────────────────────
+
+    @Test
+    fun library_playing() = shoot("01-library") {
+        LibraryScreen(
+            onNavigateToSearch = {}, onNavigateToDownloads = {}, onNavigateToPlaylists = {},
+            onNavigateToAlbums = {}, onNavigateToArtists = {}, onNavigateToSettings = {},
+            onNavigateToPlayer = {}, onNavigateToFavorites = {},
+            playbackState = playback,
+            recentTracks = tracks.take(3),
+            onPlayRecentTrack = { _, _ -> }
+        )
+    }
+
+    @Test
+    fun library_idle() = shoot("02-library-idle") {
+        LibraryScreen(
+            onNavigateToSearch = {}, onNavigateToDownloads = {}, onNavigateToPlaylists = {},
+            onNavigateToAlbums = {}, onNavigateToArtists = {}, onNavigateToSettings = {},
+            onNavigateToPlayer = {}, onNavigateToFavorites = {},
+            playbackState = PlaybackUiState(), recentTracks = emptyList(), onPlayRecentTrack = { _, _ -> }
+        )
+    }
+
+    // ── Player ──────────────────────────────────────────────────────────────
+
+    @Test
+    fun player_nowPlaying() = shoot("03-player-now-playing") {
+        PlayerScreen(
+            playbackState = playback,
+            onTogglePlayPause = {}, onSkipNext = {}, onSkipPrevious = {},
+            onToggleFavorite = {}, onNavigateToVolume = {}
+        )
+    }
+
+    @Test
+    fun player_empty() = shoot("04-player-empty") {
+        PlayerScreen(
+            playbackState = PlaybackUiState(),
+            onTogglePlayPause = {}, onSkipNext = {}, onSkipPrevious = {},
+            onToggleFavorite = {}, onNavigateToVolume = {}
+        )
+    }
+
+    // ── Discovery ───────────────────────────────────────────────────────────
+
+    @Test
+    fun search_results() = shoot("05-search-results") {
+        SearchScreen(
+            searchState = SearchUiState(query = "arjit singh", results = tracks, hasSearched = true),
+            onQuerySelected = {}, onTrackSelected = {}
+        )
+    }
+
+    @Test
+    fun search_empty() = shoot("06-search-idle") {
+        SearchScreen(
+            searchState = SearchUiState(),
+            onQuerySelected = {}, onTrackSelected = {}
+        )
+    }
+
+    @Test
+    fun albums() = shoot("07-albums") {
+        AlbumsScreen(
+            albumsState = AlbumsUiState(
+                query = "coldplay",
+                albums = listOf(
+                    Album("a1", "Parachutes", "Coldplay"),
+                    Album("a2", "A Rush of Blood to the Head", "Coldplay"),
+                    Album("a3", "X&Y", "Coldplay")
+                )
+            ),
+            onQueryChanged = {}, onOpenAlbum = {}
+        )
+    }
+
+    @Test
+    fun artists() = shoot("08-artists") {
+        ArtistsScreen(
+            artistsState = ArtistsUiState(
+                artists = listOf(
+                    ArtistGroup("Coldplay", tracks.take(3)),
+                    ArtistGroup("Ed Sheeran", tracks.drop(3)),
+                    ArtistGroup("Arijit Singh", tracks.take(2))
+                )
+            ),
+            onRefresh = {}, onPlayArtistSongs = { _, _ -> }
+        )
+    }
+
+    // ── Library collections ─────────────────────────────────────────────────
+
+    @Test
+    fun favorites() = shoot("09-favorites") {
+        FavoritesScreen(
+            favoritesState = FavoritesUiState(tracks = tracks.take(4)),
+            onRefresh = {}, onPlayTrack = { _, _ -> },
+            onDownloadTrack = {}, onRemoveFavorite = {}
+        )
+    }
+
+    @Test
+    fun playlists() = shoot("10-playlists") {
+        PlaylistsScreen(
+            playlistsState = PlaylistsUiState(favorites = tracks.take(3), playlists = playlists),
+            onRefresh = {}, onNavigateToFavorites = {}, onOpenPlaylist = {}
+        )
+    }
+
+    @Test
+    fun playlistDetail() = shoot("11-playlist-detail") {
+        PlaylistDetailScreen(
+            playlistId = "p1", playlistName = "Road Trip",
+            detailState = PlaylistDetailUiState(playlistId = "p1", tracks = tracks),
+            onLoadTracks = {}, onPlayTrack = { _, _ -> },
+            onDownloadTrack = {}, onRemoveTrack = { _, _ -> }
+        )
+    }
+
+    // ── Queue & offline ─────────────────────────────────────────────────────
+
+    @Test
+    fun queue() = shoot("12-queue") {
+        QueueScreen(
+            playbackState = playback,
+            onPlayItem = {}, onRemoveItem = {}, onClearQueue = {},
+            shuffleEnabled = true, repeatMode = 2,
+            onToggleShuffle = {}, onCycleRepeat = {}
+        )
+    }
+
+    @Test
+    fun downloads() = shoot("13-downloads") {
+        DownloadsScreen(
+            downloads = listOf(
+                WearsicDownloadEntity(
+                    trackId = "d1", title = "Kesariya", artist = "Arijit Singh", album = null,
+                    artworkUrl = null, durationMs = 250_000, localFilePath = "/data/d1.m4a",
+                    originalStreamUrl = "http://x/d1", downloadState = DownloadState.COMPLETED.name,
+                    progress = 100, fileSizeBytes = 4_200_000
+                ),
+                WearsicDownloadEntity(
+                    trackId = "d2", title = "Tum Hi Ho", artist = "Arijit Singh", album = null,
+                    artworkUrl = null, durationMs = 261_000, localFilePath = "/data/d2.m4a",
+                    originalStreamUrl = "http://x/d2", downloadState = DownloadState.DOWNLOADING.name,
+                    progress = 64
+                ),
+                WearsicDownloadEntity(
+                    trackId = "d3", title = "Calm Down", artist = "Rema", album = null,
+                    artworkUrl = null, durationMs = 239_000, localFilePath = "/data/d3.m4a",
+                    originalStreamUrl = "http://x/d3", downloadState = DownloadState.COMPLETED.name,
+                    progress = 100, fileSizeBytes = 3_900_000, autoCached = true
+                )
+            ),
+            onPlayTrack = {}, onDeleteDownload = {}, onCancelDownload = {},
+            onClearAllDownloads = {}
+        )
+    }
+
+    @Test
+    fun storage() = shoot("14-storage") {
+        StorageStatsContent(
+            autoCount = 34, autoMb = 118.4, manualCount = 6, manualMb = 24.9,
+            onClearAutoCached = {}
+        )
+    }
+
+    // ── Settings & output ───────────────────────────────────────────────────
+
+    @Test
+    fun settings() = shoot("15-settings") {
+        SettingsScreen(
+            serverUrl = "https://phone.tailnet.ts.net",
+            connectionTestState = ConnectionTestState.Success("1.6.0", "Wearsic Engine"),
+            apiKey = "wsk_9f2b7c1a4e8d",
+            autoCacheEnabled = true,
+            offlineLimitSongs = 15,
+            startupHealth = "Ready — engine v1.6.0"
+        )
+    }
+
+    @Test
+    fun settings_error() = shoot("16-settings-error") {
+        SettingsScreen(
+            serverUrl = "http://192.168.1.44:8080",
+            connectionTestState = ConnectionTestState.Error("Host not resolved. Check URL or internet."),
+            apiKey = "", autoCacheEnabled = false, offlineLimitSongs = 50
+        )
+    }
+
+    @Test
+    fun audioOutput() = shoot("17-audio-output") {
+        VolumeScreen(
+            currentOutputDevice = "Pixel Buds Pro",
+            sleepRemainingMs = 15 * 60_000L,
+            sleepSetMinutes = 15
+        )
+    }
+
+    @Test
+    fun serverDashboard() = shoot("17b-server-dashboard") {
+        ServerDashboardScreen(
+            state = ServerDashboardState(
+                health = ServerHealthDto(
+                    status = "ok",
+                    version = "1.9.0",
+                    serverName = "Wearsic Engine",
+                    transcoderAvailable = true,
+                    canaryHealthy = true,
+                    crashCount = 0
+                ),
+                latencyMs = 38,
+                checkedAtMillis = 0L
+            )
+        )
+    }
+
+    // ── Lyrics (fullscreen lock page) ───────────────────────────────────────
+
+    private val lyricLines = listOf(
+        "Look at the stars", "Look how they shine for you",
+        "And everything you do", "Yeah, they were all yellow",
+        "I came along", "I wrote a song for you",
+        "And all the things you do", "And it was called Yellow"
+    ).mapIndexed { i, text -> LyricLine(timeMs = i * 4200L, text = text) }
+
+    @Test
+    fun lyrics_synced_activeLineCentered() = shoot("19-lyrics-synced") {
+        // activeIndex 3 of 8: the highlighted row must render (visually
+        // verifiable) dead-center of the round face.
+        LyricsFullscreen(
+            track = tracks[3],
+            lyricsState = LyricsViewModel.LyricsUiState(
+                trackId = tracks[3].id,
+                mode = LyricsMode.Synced,
+                source = "LRCLIB",
+                lines = lyricLines,
+            ),
+            activeIndex = 3,
+            scrollState = androidx.compose.foundation.rememberScrollState(),
+            colors = com.wearsic.app.ui.util.ArtworkColors.Default,
+            onExit = {}, onRetry = {},
+        )
+    }
+
+    @Test
+    fun lyrics_unavailable() = shoot("20-lyrics-unavailable") {
+        LyricsFullscreen(
+            track = tracks[1],
+            lyricsState = LyricsViewModel.LyricsUiState(trackId = tracks[1].id, mode = LyricsMode.Unavailable),
+            activeIndex = -1,
+            scrollState = androidx.compose.foundation.rememberScrollState(),
+            colors = com.wearsic.app.ui.util.ArtworkColors.Default,
+            onExit = {}, onRetry = {},
+        )
+    }
+
+    @Test
+    fun lyrics_loading() = shoot("21-lyrics-loading") {
+        LyricsFullscreen(
+            track = tracks[2],
+            lyricsState = LyricsViewModel.LyricsUiState(trackId = tracks[2].id, isLoading = true),
+            activeIndex = -1,
+            scrollState = androidx.compose.foundation.rememberScrollState(),
+            colors = com.wearsic.app.ui.util.ArtworkColors.Default,
+            onExit = {}, onRetry = {},
+        )
+    }
+
+    // ── Overlay ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun trackActionSheet() = shoot("18-track-actions") {
+        WearsicTrackActionSheet(
+            track = tracks[0], playlists = playlists,
+            onDismiss = {}, onPlay = {}, onQueue = {}, onDownload = {},
+            onAddToPlaylist = {}, onCreatePlaylistAndAdd = {}
+        )
+    }
+
+    // ── v1.9.49 redesign: Home + Mix discovery tabs ────────────────────────
+
+    @Test
+    fun home_feed() = shoot("22-home-feed") {
+        HomeScreen(
+            recentTracks = tracks.take(3),
+            mostPlayedTracks = tracks.take(4),
+            recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
+            favorites = tracks.take(3),
+            isServerReachable = true,
+            onPlay = { _, _ -> },
+            onOpenMood = { _ -> },
+            onOpenSearch = {},
+            onOpenMix = {},
+            onRefreshRecommendations = {}
+        )
+    }
+
+    @Test
+    fun mix_tab() = shoot("23-mix") {
+        MixScreen(
+            recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
+            favorites = tracks.take(3),
+            recentTracks = tracks.take(2),
+            radioState = RadioState.Idle,
+            onPlay = { _, _ -> },
+            onStartRadio = {},
+            onShuffleFavorites = {},
+            onRefreshRecommendations = {}
+        )
+    }
+
+    // ── v1.9.49 shell + tri-mode sub-screens ─────────────────────────────
+
+    @Test
+    fun hub_home() = shoot("24-hub-home") {
+        WearsicHubScreen(
+            playbackState = playback,
+            recentTracks = tracks.take(3),
+            mostPlayedTracks = tracks.take(4),
+            favoritesState = FavoritesUiState(tracks = tracks.take(4)),
+            playlistsState = PlaylistsUiState(favorites = tracks.take(3), playlists = playlists),
+            playlistDetailState = PlaylistDetailUiState(playlistId = "p1", tracks = tracks),
+            albumsState = AlbumsUiState(
+                query = "coldplay",
+                albums = listOf(
+                    Album("a1", "Parachutes", "Coldplay"),
+                    Album("a2", "A Rush of Blood to the Head", "Coldplay")
+                )
+            ),
+            artistsState = ArtistsUiState(
+                artists = listOf(
+                    ArtistGroup("Coldplay", tracks.take(3)),
+                    ArtistGroup("Ed Sheeran", tracks.drop(3))
+                )
+            ),
+            recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
+            searchState = SearchUiState(),
+            radioState = RadioState.Idle,
+            serverReachable = true,
+            failoverServerName = null,
+            offlineDownloads = emptyList(),
+            favoriteTrackIds = emptySet(),
+            onPlay = { _, _ -> },
+            onPlayFavorites = {},
+            onShuffleFavorites = {},
+            onStartRadio = {},
+            onQueueTrack = {},
+            onToggleFavoriteTrack = {},
+            onStartDownload = {},
+            onOpenPlayer = {},
+            onOpenSearch = {},
+            onOpenDownloads = {},
+            onOpenPlaylists = {},
+            onOpenAlbums = {},
+            onOpenFavorites = {},
+            onOpenArtists = {},
+            onOpenRecommendations = {},
+            onOpenSettings = {},
+            onRefreshLibrary = {},
+            onRefreshFavorites = {},
+            onRefreshArtists = {},
+            onRefreshRecommendations = {},
+            onSearchQueryChanged = {},
+            onSearchQuerySubmitted = {},
+            onLoadMoreResults = {},
+            searchPlaylists = playlists,
+            onCreatePlaylistAndAdd = { _, _ -> },
+            onAddTrackToPlaylist = { _, _ -> },
+            onAlbumQueryChanged = {},
+            onOpenAlbum = { _, _ -> },
+            onPlayArtist = { _, _ -> }
+        )
+    }
+
+    @Test
+    fun hub_offline_failover() = shoot("24b-hub-offline") {
+        WearsicHubScreen(
+            playbackState = PlaybackUiState(),
+            recentTracks = tracks.take(2),
+            mostPlayedTracks = tracks.take(3),
+            favoritesState = FavoritesUiState(tracks = tracks.take(4)),
+            playlistsState = PlaylistsUiState(favorites = tracks.take(3), playlists = playlists),
+            playlistDetailState = PlaylistDetailUiState(),
+            albumsState = AlbumsUiState(),
+            artistsState = ArtistsUiState(),
+            recommendationsState = RecommendationsUiState(),
+            searchState = SearchUiState(),
+            radioState = RadioState.Idle,
+            serverReachable = false,
+            failoverServerName = "Home Tube",
+            offlineDownloads = tracks.take(2),
+            favoriteTrackIds = emptySet(),
+            onPlay = { _, _ -> },
+            onPlayFavorites = {},
+            onShuffleFavorites = {},
+            onStartRadio = {},
+            onQueueTrack = {},
+            onToggleFavoriteTrack = {},
+            onStartDownload = {},
+            onOpenPlayer = {},
+            onOpenSearch = {},
+            onOpenDownloads = {},
+            onOpenPlaylists = {},
+            onOpenAlbums = {},
+            onOpenFavorites = {},
+            onOpenArtists = {},
+            onOpenRecommendations = {},
+            onOpenSettings = {},
+            onRefreshLibrary = {},
+            onRefreshFavorites = {},
+            onRefreshArtists = {},
+            onRefreshRecommendations = {},
+            onSearchQueryChanged = {},
+            onSearchQuerySubmitted = {},
+            onLoadMoreResults = {},
+            searchPlaylists = playlists,
+            onCreatePlaylistAndAdd = { _, _ -> },
+            onAddTrackToPlaylist = { _, _ -> },
+            onAlbumQueryChanged = {},
+            onOpenAlbum = { _, _ -> },
+            onPlayArtist = { _, _ -> }
+        )
+    }
+
+    @Test
+    fun search_songs() = shoot("25-search-songs") {
+        SearchScreen(
+            searchState = SearchUiState(
+                query = "coldplay",
+                results = tracks,
+                hasSearched = true
+            ),
+            onQuerySelected = {},
+            onTrackSelected = {}
+        )
+    }
+
+    @Test
+    fun player_action_page() = shoot(
+        "27-player-actions",
+        before = { composeTestRule.onNodeWithTag("player_page_switch").performClick() }
+    ) {
+        PlayerScreen(
+            playbackState = playback,
+            onTogglePlayPause = {}, onSkipNext = {}, onSkipPrevious = {},
+            onToggleFavorite = {}, onNavigateToVolume = {}
+        )
+    }
+
+    @Test
+    fun made_for_you() = shoot("28-made-for-you") {
+        RecommendationsScreen(
+            recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
+            onRefresh = {},
+            onPlayTrack = { _, _ -> }
+        )
+    }
+
+    @Test
+    fun made_for_you_loading() = shoot("29-made-for-you-loading") {
+        RecommendationsScreen(
+            recommendationsState = RecommendationsUiState(isLoading = true),
+            onRefresh = {},
+            onPlayTrack = { _, _ -> }
+        )
+    }
+
+    @Test
+    fun queue_empty() = shoot("30-queue-empty") {
+        QueueScreen(
+            playbackState = PlaybackUiState(),
+            onPlayItem = {}, onRemoveItem = {}, onClearQueue = {},
+            shuffleEnabled = false, repeatMode = 0,
+            onToggleShuffle = {}, onCycleRepeat = {}
+        )
+    }
+
+    @Test
+    fun favorites_empty() = shoot("31-favorites-empty") {
+        FavoritesScreen(
+            favoritesState = FavoritesUiState(),
+            onRefresh = {}, onPlayTrack = { _, _ -> },
+            onDownloadTrack = {}, onRemoveFavorite = {}
+        )
+    }
+
+    @Test
+    fun playlists_empty() = shoot("32-playlists-empty") {
+        PlaylistsScreen(
+            playlistsState = PlaylistsUiState(),
+            onRefresh = {}, onNavigateToFavorites = {}, onOpenPlaylist = {}
+        )
+    }
+}

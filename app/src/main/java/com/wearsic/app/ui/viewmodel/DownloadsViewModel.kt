@@ -1,0 +1,220 @@
+package com.wearsic.app.ui.viewmodel
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.wearsic.app.WearsicApp
+import com.wearsic.app.data.db.WearsicDownloadEntity
+import com.wearsic.app.media.download.WearsicDownloadManager
+import com.wearsic.app.model.Track
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/**
+ * ViewModel responsible for download management.
+ * Handles download state, progress, and storage statistics.
+ */
+class DownloadsViewModel(application: Application) : AndroidViewModel(application) {
+
+    /** Shared with every other screen — see LibraryViewModel's note. */
+    private val container = (application as? WearsicApp)?.container
+        ?: com.wearsic.app.di.AppContainer(application)
+    private val downloadRepository = container.downloadRepository
+    private val downloadManager = WearsicDownloadManager(application.applicationContext, downloadRepository)
+    private val musicRepository = container.musicRepository
+    private val lyricsStore = container.lyricsStore
+    private val preferencesRepository = container.preferencesRepository
+
+    val allDownloads: StateFlow<List<WearsicDownloadEntity>> = downloadManager.allDownloadsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val completedTracks: StateFlow<List<Track>> = downloadManager.completedTracksFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _storageStats = MutableStateFlow(StorageStats())
+    val storageStats: StateFlow<StorageStats> = _storageStats.asStateFlow()
+
+    data class StorageStats(
+        val autoCount: Int = 0,
+        val autoMb: Double = 0.0,
+        val manualCount: Int = 0,
+        val manualMb: Double = 0.0
+    ) {
+        val totalMb: Double get() = autoMb + manualMb
+    }
+
+    init {
+        // Startup hygiene (once per process): drop rows/bytes left behind by a
+        // killed process and retry any deferred AUTO deletions that were
+        // persisted before the process died. Runs off the main thread because
+        // it touches Room and the filesystem.
+        viewModelScope.launch(Dispatchers.IO) {
+            downloadManager.cleanupInterruptedDownloads()
+            downloadManager.flushPendingDeletions()
+        }
+        // Lyrics bundling (the "Lyrics Downloads" setting): every completed
+        // download fetches and caches its lyrics when the setting allows.
+        // Bounded + silent: store hits are skipped, network failures are
+        // swallowed (the lyrics load lazily, with or from cache, next open),
+        // and the rowset is deduped so one song is fetched at most once per
+        // process.
+        viewModelScope.launch(Dispatchers.IO) {
+            val ownedLyrics = java.util.Collections.newSetFromMap(
+                java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+            )
+            var lastMode = com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_OFF
+            downloadManager.allDownloadsFlow.collect { rows ->
+                val mode = preferencesRepository.lyricsDownloadModeFlow.first()
+                // A fresh scan whenever the setting rises (Off → Songs →
+                // Everything) so mid-session flips retroactively cover the
+                // user's already-downloaded music.
+                if (mode > lastMode) ownedLyrics.clear()
+                lastMode = mode
+                if (mode <= com.wearsic.app.data.WearsicPreferencesRepository.LYRICS_MODE_OFF) return@collect
+                for (row in rows) {
+                    if (!row.isCompleted()) continue
+                    // The id is claimed BEFORE the attempt: failures are NOT
+                    // retried while the flow re-emits on every progress tick —
+                    // a song whose lyrics never resolve falls back to the
+                    // lazy on-open path once the server can answer.
+                    if (!ownedLyrics.add(row.trackId)) continue
+                    if (lyricsStore.get(row.trackId) != null) continue
+                    runCatching {
+                        val lyrics = musicRepository.fetchLyrics(row.toDomainTrack()).getOrThrow()
+                        if (lyrics.mode != com.wearsic.app.model.LyricsMode.Unavailable) {
+                            lyricsStore.save(row.toDomainTrack(), lyrics)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ============================================================================
+    // Download Operations
+    // ============================================================================
+
+    fun startDownload(track: Track) {
+        downloadManager.startDownload(track)
+    }
+
+    fun startDownload(track: Track, autoCached: Boolean) {
+        downloadManager.startDownload(track, autoCached)
+    }
+
+    /**
+     * Requests a whole album/playlist for offline use. Duplicate track ids
+     * are skipped and the manager itself ignores tracks that are already
+     * downloaded or already downloading, so this is safe to re-run.
+     */
+    fun startDownloadBatch(tracks: List<Track>) {
+        val seen = mutableSetOf<String>()
+        for (track in tracks) {
+            if (track.id.isBlank()) continue
+            if (!seen.add(track.id)) continue
+            downloadManager.startDownload(track)
+        }
+    }
+
+    fun cancelDownload(trackId: String) {
+        downloadManager.cancelDownload(trackId)
+    }
+
+    fun deleteDownload(trackId: String) {
+        downloadManager.deleteDownload(trackId)
+    }
+
+    fun clearAllDownloads() {
+        downloadManager.clearAllDownloads()
+    }
+
+    fun clearAutoCachedDownloads() {
+        downloadManager.clearAutoCachedDownloads()
+    }
+
+    fun flushPendingDeletions() {
+        downloadManager.flushPendingDeletions()
+    }
+
+    /** Wires the playback-protection predicate: deletes/evictions of the
+     *  currently-playing local track are deferred until playback releases it
+     *  (null = no local track is playing). */
+    fun setCurrentLocalTrackId(trackId: String?) {
+        downloadManager.isTrackProtected = { id -> id == trackId }
+    }
+
+    /** Retries a failed download preserving its ownership intent (AUTO vs
+     *  MANUAL): a failed auto-cache must come back as auto-cache, not become
+     *  a permanent manual download (which would evade the eviction cap). */
+    fun retryDownload(track: Track) {
+        viewModelScope.launch {
+            val existing = withContext(Dispatchers.IO) {
+                downloadManager.downloadEntityFor(track.id)
+            }
+            deleteDownload(track.id)
+            startDownload(track, autoCached = existing?.autoCached ?: false)
+        }
+    }
+
+    // ============================================================================
+    // Storage Management
+    // ============================================================================
+
+    fun refreshStorageStats() {
+        viewModelScope.launch {
+            val breakdown = withContext(Dispatchers.IO) {
+                downloadRepository.computeLocalStorageBreakdown()
+            }
+            _storageStats.value = StorageStats(
+                autoCount = breakdown.autoCount,
+                autoMb = breakdown.autoBytes / (1024.0 * 1024.0),
+                manualCount = breakdown.manualCount,
+                manualMb = breakdown.manualBytes / (1024.0 * 1024.0)
+            )
+        }
+    }
+
+    fun isDownloading(trackId: String): Boolean {
+        return downloadManager.isDownloading(trackId)
+    }
+
+    // ============================================================================
+    // Auto-Cache Management
+    // ============================================================================
+
+    fun setMaxAutoCachedTracks(max: Int) {
+        downloadManager.maxAutoCachedTracks = max.coerceIn(5, 200)
+    }
+
+    fun trimAutoCache() {
+        downloadManager.trimAutoCache()
+    }
+
+    // ============================================================================
+    // Lifecycle
+    // ============================================================================
+
+    /**
+     * Cancels in-flight download jobs and tears down the manager's scope.
+     *
+     * Public because this ViewModel is constructed directly by
+     * WearsicPlayerViewModel rather than through a ViewModelStore, so the
+     * framework never calls [onCleared] on it. Safe to call more than once.
+     */
+    fun release() {
+        downloadManager.release()
+    }
+
+    override fun onCleared() {
+        release()
+        super.onCleared()
+    }
+}
+

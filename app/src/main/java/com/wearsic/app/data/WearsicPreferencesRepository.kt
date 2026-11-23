@@ -1,0 +1,352 @@
+package com.wearsic.app.data
+
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import com.wearsic.app.media.crossfade.CrossfadeLengths
+import com.wearsic.app.util.Validation
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.datastore.preferences.core.emptyPreferences
+import kotlinx.coroutines.flow.catch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.IOException
+import java.net.URI
+import java.util.UUID
+
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "wearsic_settings")
+
+class WearsicPreferencesRepository(private val context: Context) {
+
+    companion object {
+        val KEY_SERVER_URL = stringPreferencesKey("server_url")
+        val KEY_AUTO_CACHE_ENABLED = booleanPreferencesKey("auto_cache_enabled")
+        val KEY_API_KEY = stringPreferencesKey("api_key")
+        val KEY_HIDDEN_PLAYLISTS = stringSetPreferencesKey("hidden_playlists")
+        val KEY_OFFLINE_LIMIT = intPreferencesKey("offline_song_limit")
+        /**
+         * Crossfade window between queue tracks, in milliseconds. Defaults to
+         * [CrossfadeLengths.OFF_MS] (the feature off) so installing an update
+         * never changes how playback sounds or what it costs on battery.
+         */
+        val KEY_CROSSFADE_MS = intPreferencesKey("crossfade_ms")
+        /**
+         * Opt-in dynamic accent: when enabled, the app's accent colour follows
+         * the current track's artwork hue (extracted on the player). Falls
+         * back to the fixed lavender whenever there is no artwork.
+         */
+        val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color_enabled")
+        /** User-picked app accent (ARGB int), from the Settings catalog or saved from artwork. */
+        val KEY_USER_ACCENT_ARGB = intPreferencesKey("user_accent_argb")
+        /** "dark" (default) or "light" — the flagship theme's surface palette. */
+
+        /**
+         * Whether live search suggestions (as you type) are fetched and shown.
+         * Adds a small network call per keystroke; off by default is NOT the
+         * default — users who don't want the pop-up can turn it off here.
+         */
+        val KEY_SEARCH_SUGGESTIONS_ENABLED = booleanPreferencesKey("search_suggestions_enabled")
+        /**
+         * Whether the player's album-art disc rotates slowly with the song.
+         * The motion is free (drawn in the layer phase), but some users find
+         * any motion distracting, so it is a setting.
+         */
+        /** Saved server profiles, serialized as a JSON array. */
+        val KEY_SERVER_PROFILES = stringPreferencesKey("server_profiles")
+        /**
+         * Bezel/crown scroll direction. `false` (default) keeps the standard
+         * touch-aligned direction used by every built-in Wear app; some
+         * wrists legitimately prefer the opposite, so it is a user setting —
+         * never something to guess in code.
+         */
+        val KEY_ROTARY_INVERTED = booleanPreferencesKey("rotary_direction_inverted")
+        /**
+         * Where lyrics get saved to the on-watch cache
+         * ([WearsicPreferencesRepository.LYRICS_DOWNLOAD_MODES]):
+         * OFF saves nothing (updates never change behavior on their own),
+         * WITH_DOWNLOADS caches lyrics when a song finishes downloading,
+         * ALWAYS additionally caches whenever the lyrics screen loads them.
+         */
+        val KEY_LYRICS_DOWNLOAD_MODE = intPreferencesKey("lyrics_download_mode")
+        const val LYRICS_MODE_OFF = 0
+        const val LYRICS_MODE_WITH_DOWNLOADS = 1
+        const val LYRICS_MODE_ALWAYS = 2
+        const val DEFAULT_LYRICS_DOWNLOAD_MODE = LYRICS_MODE_OFF
+        /** No server is preconfigured; users enter their own URL in Settings. */
+        const val DEFAULT_SERVER_URL = ""
+        const val DEFAULT_OFFLINE_LIMIT = 15
+    }
+
+    /**
+     * Runs a preferences write on [Dispatchers.IO].
+     *
+     * The preferences DataStore funnels every write through a single actor
+     * and executes each write's transform in the *caller's* coroutine
+     * context. A write started from the main thread therefore makes the
+     * actor dispatch its very next step onto the main Looper, and every
+     * later write queues behind whatever that Looper is doing. On a real
+     * device that is merely wasteful; under Robolectric the Looper is
+     * paused between idles, so the queue can stall until the next pump —
+     * the 2026-10-18 CI wedge that blocked the next DataStore write for a
+     * full 30 s (reads were unaffected, which is why only writers hung).
+     * Writing from IO keeps the actor independent of the main thread and
+     * keeps the disk work off the UI thread.
+     */
+    private suspend fun editPreferences(block: (MutablePreferences) -> Unit) =
+        withContext(Dispatchers.IO) {
+            context.dataStore.edit(block)
+        }
+
+    val serverUrlFlow: Flow<String> = context.dataStore.data
+        .catch { exception ->
+            emit(emptyPreferences())
+        }
+        .map { preferences ->
+            preferences[KEY_SERVER_URL] ?: DEFAULT_SERVER_URL
+        }
+
+    /**
+     * Persists the server URL.
+     *
+     * Blank input CLEARS the setting (the user emptied the field on purpose —
+     * that is how the app returns to "no server configured"). Anything else
+     * must validate: an invalid value is dropped instead of written.
+     *
+     * Why the strictness: the previous code stored `""` for any URL that did
+     * not validate. Combined with saving on every keystroke that meant typing
+     * `http://192.168...` went through invalid intermediate states, each one
+     * WIPING the stored server URL — silently breaking playback mid-edit and
+     * (via the settings screen's two-way binding) erasing characters under
+     * the user's fingers.
+     */
+    suspend fun saveServerUrl(url: String) {
+        if (url.isBlank()) {
+            editPreferences { preferences ->
+                preferences[KEY_SERVER_URL] = ""
+            }
+            return
+        }
+        val cleanUrl = Validation.validateServerUrl(url).getOrNull() ?: return
+        editPreferences { preferences ->
+            preferences[KEY_SERVER_URL] = cleanUrl.trimEnd('/')
+        }
+    }
+
+    val autoCacheEnabledFlow: Flow<Boolean> = context.dataStore.data
+        .catch { exception ->
+            emit(emptyPreferences())
+        }
+        .map { preferences ->
+            preferences[KEY_AUTO_CACHE_ENABLED] ?: true
+        }
+
+    suspend fun setAutoCacheEnabled(enabled: Boolean) {
+        editPreferences { preferences ->
+            preferences[KEY_AUTO_CACHE_ENABLED] = enabled
+        }
+    }
+
+    val offlineLimitFlow: Flow<Int> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_OFFLINE_LIMIT] ?: DEFAULT_OFFLINE_LIMIT
+        }
+
+    suspend fun saveOfflineLimit(limitSongs: Int) {
+        editPreferences { preferences ->
+            preferences[KEY_OFFLINE_LIMIT] = limitSongs.coerceIn(5, 200)
+        }
+    }
+
+    /**
+     * Reads are sanitised on the way out, not on the way in: a value this build
+     * does not offer (written by another version, or a corrupted entry) must
+     * never reach the player as an arbitrary fade window.
+     */
+    val crossfadeMsFlow: Flow<Long> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            CrossfadeLengths.sanitize(
+                (preferences[KEY_CROSSFADE_MS] ?: CrossfadeLengths.DEFAULT_MS.toInt()).toLong()
+            )
+        }
+
+    suspend fun saveCrossfadeMs(ms: Long) {
+        editPreferences { preferences ->
+            preferences[KEY_CROSSFADE_MS] = CrossfadeLengths.sanitize(ms).toInt()
+        }
+    }
+
+    val dynamicColorFlow: Flow<Boolean> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_DYNAMIC_COLOR] ?: false
+        }
+
+    suspend fun setDynamicColorEnabled(enabled: Boolean) {
+        editPreferences { preferences ->
+            preferences[KEY_DYNAMIC_COLOR] = enabled
+        }
+    }
+
+    /** User-chosen app accent, or null for the default lavender. */
+    val userAccentFlow: Flow<Int?> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_USER_ACCENT_ARGB]
+        }
+
+    suspend fun setUserAccentColor(argb: Int?) {
+        editPreferences { preferences ->
+            if (argb == null) preferences.remove(KEY_USER_ACCENT_ARGB)
+            else preferences[KEY_USER_ACCENT_ARGB] = argb
+        }
+    }
+
+    val rotaryDirectionInvertedFlow: Flow<Boolean> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_ROTARY_INVERTED] ?: false
+        }
+
+    suspend fun setRotaryDirectionInverted(inverted: Boolean) {
+        editPreferences { preferences ->
+            preferences[KEY_ROTARY_INVERTED] = inverted
+        }
+    }
+
+    val lyricsDownloadModeFlow: Flow<Int> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            val mode = preferences[KEY_LYRICS_DOWNLOAD_MODE]
+                ?: DEFAULT_LYRICS_DOWNLOAD_MODE
+            // A corrupted value never brick the setting — clamp to a valid mode.
+            mode.coerceIn(LYRICS_MODE_OFF, LYRICS_MODE_ALWAYS)
+        }
+
+    suspend fun setLyricsDownloadMode(mode: Int) {
+        editPreferences { preferences ->
+            preferences[KEY_LYRICS_DOWNLOAD_MODE] = mode.coerceIn(LYRICS_MODE_OFF, LYRICS_MODE_ALWAYS)
+        }
+    }
+
+    val searchSuggestionsEnabledFlow: Flow<Boolean> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_SEARCH_SUGGESTIONS_ENABLED] ?: true
+        }
+
+    suspend fun setSearchSuggestionsEnabled(enabled: Boolean) {
+        editPreferences { preferences ->
+            preferences[KEY_SEARCH_SUGGESTIONS_ENABLED] = enabled
+        }
+    }
+
+    // ============================================================================
+    // Server profiles (multi-server switching)
+    // ============================================================================
+
+    val serverProfilesFlow: Flow<List<ServerProfile>> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            val raw = preferences[KEY_SERVER_PROFILES]
+            if (raw.isNullOrBlank()) {
+                emptyList()
+            } else {
+                runCatching { Json.decodeFromString<List<ServerProfile>>(raw) }
+                    .getOrElse { emptyList() }
+            }
+        }
+
+    private suspend fun writeProfiles(profiles: List<ServerProfile>) {
+        editPreferences { preferences ->
+            if (profiles.isEmpty()) {
+                preferences.remove(KEY_SERVER_PROFILES)
+            } else {
+                preferences[KEY_SERVER_PROFILES] = Json.encodeToString(profiles)
+            }
+        }
+    }
+
+    /** Upserts a profile (same id replaces). */
+    suspend fun saveProfile(profile: ServerProfile) {
+        val current = serverProfilesFlow.first()
+        val next = current.filterNot { it.id == profile.id } + profile
+        writeProfiles(next)
+    }
+
+    suspend fun deleteProfile(id: String) {
+        val next = serverProfilesFlow.first().filterNot { it.id == id }
+        writeProfiles(next)
+    }
+
+    fun newProfileId(): String = UUID.randomUUID().toString()
+
+    val apiKeyFlow: Flow<String> = context.dataStore.data
+        .catch { exception ->
+            emit(emptyPreferences())
+        }
+        .map { preferences ->
+            preferences[KEY_API_KEY] ?: ""
+        }
+
+    suspend fun getApiKey(): String {
+        return context.dataStore.data
+            .catch { emit(emptyPreferences()) }
+            .map { preferences -> preferences[KEY_API_KEY] ?: "" }
+            .first()
+    }
+
+    /**
+     * Persists the API key and returns the value that was actually applied
+     * (`""` when cleared, `null` when the input was rejected).
+     *
+     * Blank clears the key. A non-blank key must pass [Validation.validateApiKey];
+     * an invalid key is dropped rather than stored, so a half-typed key can
+     * never replace a working one. Callers that mirror the key into the HTTP
+     * layer must use the returned value — not their input — or they would
+     * push a rejected key into every outgoing request.
+     */
+    suspend fun saveApiKey(key: String): String? {
+        if (key.isBlank()) {
+            editPreferences { preferences ->
+                preferences[KEY_API_KEY] = ""
+            }
+            return ""
+        }
+        val cleanKey = Validation.validateApiKey(key).getOrNull() ?: return null
+        editPreferences { preferences ->
+            preferences[KEY_API_KEY] = cleanKey
+        }
+        return cleanKey
+    }
+
+    fun isValidServerUrl(url: String): Boolean {
+        return Validation.hasValidScheme(url)
+    }
+
+    val hiddenPlaylistsFlow: Flow<Set<String>> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
+            preferences[KEY_HIDDEN_PLAYLISTS] ?: emptySet()
+        }
+
+    suspend fun toggleHiddenPlaylist(id: String) {
+        editPreferences { preferences ->
+            val current = preferences[KEY_HIDDEN_PLAYLISTS] ?: emptySet()
+            preferences[KEY_HIDDEN_PLAYLISTS] =
+                if (id in current) current - id else current + id
+        }
+    }
+}

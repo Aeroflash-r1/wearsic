@@ -1,0 +1,312 @@
+package com.wearsic.app.ui.components
+import com.wearsic.app.ui.theme.LocalFlagshipColors
+import com.wearsic.app.ui.theme.FlagshipColors
+import com.wearsic.app.ui.theme.FlagshipDisplayFont
+import com.wearsic.app.ui.theme.FlagshipBodyFont
+
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.Text
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.wearsic.app.ui.theme.WearsicBodyFont
+import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.WearsicDisplayFont
+import com.wearsic.app.ui.theme.wearsicAccentContainer
+import com.wearsic.app.ui.theme.WearsicSurface
+import com.wearsic.app.ui.theme.WearsicSurfaceBorder
+import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
+import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.WearsicTextMuted
+import com.wearsic.app.ui.theme.WearsicTextPrimary
+import com.wearsic.app.ui.theme.WearsicTextPrimaryDark
+import com.wearsic.app.ui.theme.LocalWearsicAccent
+import com.wearsic.app.ui.theme.LocalWearAdaptiveSpec
+import com.wearsic.app.ui.theme.watchScaled
+import com.wearsic.app.ui.util.WearsicMotion
+import com.wearsic.app.ui.util.wearsicClickable
+import com.wearsic.app.ui.theme.WearsicTextWhite80
+
+/**
+ * The canonical song card used across every list (search, queue, downloads,
+ * library, favorites, playlists, artists). Sized for round watch screens
+ * (~240dp usable width): 40dp artwork, a 2-line title at 14sp and a 12sp
+ * artist line, so song names are actually readable instead of being ellipsized
+ * to ~12 characters by 30dp thumbs + 10sp text + a row of tiny buttons.
+ *
+ * Secondary actions (queue, download, playlist…) live in the long-press
+ * action sheet; rows keep at most one or two inline actions so the title
+ * keeps the width.
+ *
+ * Touch feedback: the whole card subtly scales down while pressed (90ms tween)
+ * so every row in the app feels alive without continuous animation cost.
+ */
+@Composable
+fun WearsicSongRow(
+    title: String,
+    artist: String,
+    artworkUrl: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    testTag: String = "song_row",
+    titleColor: Color = LocalFlagshipColors.current.textPrimary,
+    artistColor: Color = LocalFlagshipColors.current.textSecondary,
+    titleMaxLines: Int = 2,
+    onLongClick: (() -> Unit)? = null,
+    trailing: @Composable () -> Unit = {},
+) {
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
+    val rowAccent = LocalWearsicAccent.current
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            // Rows enter with the list, not every time lazy scrolling recycles them.
+            .clip(cardShape)
+            .background(LocalFlagshipColors.current.canvas) // OLED black — battery friendly
+            .border(1.dp, LocalFlagshipColors.current.hairline, cardShape)
+            .wearsicClickable(pressedScale = 0.975f, onLongClick = onLongClick, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp)
+            .testTag(testTag)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                WearsicSongRowArtwork(artworkUrl = artworkUrl, contentDescription = title)
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = title,
+                        color = titleColor,
+                        fontFamily = FlagshipDisplayFont,
+                        fontSize = 15.sp,
+                        lineHeight = 19.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = titleMaxLines,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = artist,
+                        color = artistColor,
+                        fontFamily = FlagshipBodyFont,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            trailing()
+        }
+    }
+}
+
+/**
+ * 40dp ROUNDED-SQUARE artwork (or accent music-note placeholder) with a
+ * hairline ring. Sizes the Coil decode request directly to the target container
+ * pixel size so thumbnails stay light in memory while album art stays crisp.
+ */
+@Composable
+fun WearsicSongRowArtwork(
+    artworkUrl: String?,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    size: Dp = watchScaled(46.dp),
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val requestPx = with(density) { size.roundToPx() }.coerceIn(72, 192)
+    val shape = RoundedCornerShape(WearsicDimens.ArtRadius)
+    val ring = Modifier.border(1.dp, LocalFlagshipColors.current.hairline, shape)
+    if (!artworkUrl.isNullOrBlank()) {
+        val request = remember(artworkUrl, requestPx) {
+            ImageRequest.Builder(context)
+                .data(artworkUrl)
+                .size(requestPx)
+                .build()
+        }
+        AsyncImage(
+            model = request,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = modifier
+                .size(size)
+                .clip(shape)
+                .then(ring)
+        )
+    } else {
+        Box(
+            modifier = modifier
+                .size(size)
+                .clip(shape)
+                .background(LocalFlagshipColors.current.surfaceHigh)
+                .then(ring),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.MusicNote,
+                contentDescription = null,
+                tint = LocalWearsicAccent.current,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Small circular icon action button for song-row trailing actions.
+ * Touchable area is at least 40dp on a watch (rows are tall enough that
+ * adjacent targets don't collide); visual size defaults to 28dp. Squishes
+ * + ticks on press.
+ */
+@Composable
+fun WearsicSongRowActionButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    testTag: String? = null,
+    visualSize: Dp = 28.dp,
+    tint: Color = LocalFlagshipColors.current.textMuted,
+    background: Color = LocalFlagshipColors.current.surface,
+    borderColor: Color = LocalFlagshipColors.current.hairline,
+) {
+    val haptic = LocalHapticFeedback.current
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.84f else 1f,
+        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
+        label = "songRowActionPress"
+    )
+
+    // 44dp touch box around a smaller visual disc: comfortable one-finger
+    // tapping on the watch without crowding the row's text width.
+    Box(
+        modifier = modifier
+            .size(WearsicDimens.TouchTarget)
+            .clickable(interactionSource = interaction, indication = null) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+            .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(visualSize)
+                .graphicsLayer {
+                    scaleX = pressScale
+                    scaleY = pressScale
+                }
+                .clip(CircleShape)
+                .background(background)
+                .border(1.dp, borderColor, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = tint,
+                modifier = Modifier.size(15.dp)
+            )
+        }
+    }
+}
+
+/** Solid lavender play button used as the row's primary trailing action. */
+@Composable
+fun WearsicSongRowPlayButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    testTag: String? = null,
+    size: Dp = 28.dp,
+) {
+    val haptic = LocalHapticFeedback.current
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.84f else 1f,
+        animationSpec = if (pressed) WearsicMotion.Snappy else WearsicMotion.Bouncy,
+        label = "songRowPlayPress"
+    )
+
+    // Same 44dp touch box as the other row actions.
+    Box(
+        modifier = modifier
+            .size(WearsicDimens.TouchTarget)
+            .clickable(interactionSource = interaction, indication = null) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+            .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(size)
+                .graphicsLayer {
+                    scaleX = pressScale
+                    scaleY = pressScale
+                }
+                .clip(CircleShape)
+                .background(LocalWearsicAccent.current),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.PlayArrow,
+                contentDescription = "Play",
+                tint = LocalFlagshipColors.current.textOnAccent,
+                modifier = Modifier.size(17.dp)
+            )
+        }
+    }
+}

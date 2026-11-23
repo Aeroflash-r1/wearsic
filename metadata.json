@@ -1,0 +1,6 @@
+{
+  "name": "Wearsic",
+  "description": "A modern music streaming app designed specifically for Wear OS 6 smartwatches.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

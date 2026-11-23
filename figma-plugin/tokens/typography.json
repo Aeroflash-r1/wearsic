@@ -1,0 +1,16 @@
+{
+  "source": "app/src/main/java/com/wearsic/app/ui/theme/Type.kt",
+  "note": "Font sizes in Figma px; treat 1sp = 1px for design. Line heights in px.",
+  "styles": {
+    "Wearsic/Display/Large": { "fontSize": 28, "lineHeight": 34, "fontWeight": 700 },
+    "Wearsic/Display/Medium": { "fontSize": 24, "lineHeight": 30, "fontWeight": 700 },
+    "Wearsic/Title/Large": { "fontSize": 20, "lineHeight": 26, "fontWeight": 600 },
+    "Wearsic/Title/Medium": { "fontSize": 16, "lineHeight": 22, "fontWeight": 600 },
+    "Wearsic/Title/Small": { "fontSize": 14, "lineHeight": 20, "fontWeight": 500 },
+    "Wearsic/Body/Large": { "fontSize": 14, "lineHeight": 20, "fontWeight": 400 },
+    "Wearsic/Body/Medium": { "fontSize": 12, "lineHeight": 16, "fontWeight": 400 },
+    "Wearsic/Label/Large": { "fontSize": 14, "lineHeight": 20, "fontWeight": 600 },
+    "Wearsic/Label/Medium": { "fontSize": 12, "lineHeight": 16, "fontWeight": 500 },
+    "Wearsic/Label/Small": { "fontSize": 11, "lineHeight": 16, "fontWeight": 500 }
+  }
+}

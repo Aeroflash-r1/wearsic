@@ -1,0 +1,415 @@
+package com.wearsic.app.ui.screens
+import com.wearsic.app.ui.theme.LocalFlagshipColors
+import com.wearsic.app.ui.theme.FlagshipColors
+import com.wearsic.app.ui.theme.FlagshipDisplayFont
+import com.wearsic.app.ui.theme.FlagshipBodyFont
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.wearsic.app.ui.components.WearsicEmptyState
+import com.wearsic.app.ui.components.WearsicSongRowArtwork
+import com.wearsic.app.ui.components.WearsicAlbumShimmerCard
+import com.wearsic.app.ui.components.WearsicCompactShimmer
+import com.wearsic.app.ui.components.WearsicSongRowActionButton
+import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.wearsicSecondaryText
+import com.wearsic.app.ui.theme.LocalWearsicAccent
+import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
+import com.wearsic.app.ui.util.wearsicClickable
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.Text
+import androidx.wear.tooling.preview.devices.WearDevices
+import androidx.compose.ui.tooling.preview.Preview
+import com.wearsic.app.model.Album
+import com.wearsic.app.ui.theme.WearsicBodyFont
+import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.WearsicDisplayFont
+import com.wearsic.app.ui.theme.WearsicGlassBorder
+import com.wearsic.app.ui.theme.WearsicGlassFill
+import com.wearsic.app.ui.components.WearsicScreenHeader
+import com.wearsic.app.ui.components.WearsicSectionTitle
+import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicSurface
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
+import com.wearsic.app.ui.theme.WearsicError
+import com.wearsic.app.ui.theme.WearsicTextMuted
+import com.wearsic.app.ui.theme.WearsicTextPrimary
+import com.wearsic.app.ui.theme.wearsicSecondaryText
+import com.wearsic.app.ui.theme.WearsicTheme
+import com.wearsic.app.ui.theme.watchScaled
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.AlbumsUiState
+
+import com.wearsic.app.ui.util.wearsicEntrance
+import com.wearsic.app.ui.util.wearsicRotaryScroll
+
+@Composable
+fun AlbumsScreen(
+    albumsState: AlbumsUiState,
+    onQueryChanged: (String) -> Unit,
+    onOpenAlbum: (Album) -> Unit,
+    onRefreshRecommended: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val distinctAlbums = remember(albumsState.albums) { albumsState.albums.distinctBy { it.id } }
+    // Initialised ONCE from the ViewModel query — keying this on
+    // albumsState.query made the field reset whenever a search landed,
+    // silently dropping characters typed while the server was answering.
+    var typed by remember { mutableStateOf(albumsState.query) }
+    var debouncedQuery by remember { mutableStateOf("") }
+    var submittedQuery by remember { mutableStateOf("") }
+
+    // Adopt genuine external changes (e.g. the query cleared from elsewhere),
+    // but never fight the user: an echo of our own submission is ignored.
+    LaunchedEffect(albumsState.query) {
+        val incoming = albumsState.query
+        if (incoming != typed && incoming != submittedQuery) typed = incoming
+    }
+
+    // Debounce: fire search 400ms after the user stops typing.
+    LaunchedEffect(debouncedQuery) {
+        if (debouncedQuery.isNotBlank()) {
+            kotlinx.coroutines.delay(400)
+            val query = debouncedQuery.trim()
+            if (query != submittedQuery) {
+                submittedQuery = query
+                onQueryChanged(query)
+            }
+        }
+    }
+
+    // Wear keyboards fire different enter actions; handle all and dismiss so
+    // results appear immediately.
+    fun submitAlbumSearch() {
+        val q = typed.trim()
+        if (q.isNotBlank()) {
+            keyboardController?.hide()
+            submittedQuery = q
+            onQueryChanged(q)
+        }
+    }
+
+    ScreenScaffold(
+        scrollState = listState,
+        modifier = modifier
+            .fillMaxSize()
+            .background(WearsicAppBackground)
+    ) {
+        ScalingLazyColumn(
+            state = listState,
+            // No auto-centering: the framework otherwise anchors item 1 to the
+            // viewport centre, pushing the header (and the clock) off the top
+            // of the round face. We pin the list with an explicit content
+            // padding instead.
+            autoCentering = null,
+            modifier = Modifier
+                .fillMaxSize()
+                .wearsicEntrance()
+                .wearsicRotaryScroll(listState),
+            contentPadding = rememberWearsicListContentPadding(it),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            item {
+                WearsicScreenHeader(
+                    title = "Albums",
+                    subtitle = "Find full albums"
+                )
+            }
+
+            item {
+                var isFocused by remember { mutableStateOf(false) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = WearsicDimens.TouchTarget)
+                        .clip(CircleShape)
+                        .background(if (isFocused) LocalWearsicAccent.current.copy(alpha = 0.12f) else LocalFlagshipColors.current.glassFill)
+                        .border(
+                            1.dp,
+                            if (isFocused) LocalWearsicAccent.current else LocalFlagshipColors.current.glassBorder,
+                            CircleShape
+                        )
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = null,
+                            tint = if (isFocused) LocalWearsicAccent.current else LocalFlagshipColors.current.textMuted,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            BasicTextField(
+                                value = typed,
+                                onValueChange = {
+                                    typed = it
+                                    debouncedQuery = it
+                                },
+                                singleLine = true,
+                                textStyle = TextStyle(
+                                    color = LocalFlagshipColors.current.textPrimary,
+                                    fontFamily = FlagshipBodyFont,
+                                    fontSize = 12.sp
+                                ),
+                                cursorBrush = SolidColor(LocalWearsicAccent.current),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = { submitAlbumSearch() },
+                                    onDone = { submitAlbumSearch() },
+                                    onGo = { submitAlbumSearch() }
+                                ),
+                                modifier = Modifier.fillMaxWidth().onFocusChanged { isFocused = it.isFocused }
+                            )
+                        }
+                        if (typed.isNotEmpty()) {
+                            WearsicSongRowActionButton(
+                                icon = Icons.Rounded.Close,
+                                contentDescription = "Clear album search",
+                                onClick = {
+                                    typed = ""
+                                    debouncedQuery = ""
+                                    submittedQuery = ""
+                                    onQueryChanged("")
+                                },
+                                testTag = "albums_search_clear",
+                                tint = wearsicSecondaryText()
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Personalized recommendation shelf — shown whenever the album
+            // results are not dominating the screen (empty query).
+            if (albumsState.query.isBlank() && albumsState.recommendedAlbums.isNotEmpty()) {
+                item {
+                    WearsicSectionTitle(
+                        label = "Albums for you",
+                        icon = Icons.Rounded.AutoAwesome,
+                        trailing = {
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(LocalFlagshipColors.current.glassFill)
+                                    .wearsicClickable(onClick = onRefreshRecommended)
+                                    .padding(6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = "Refresh album picks",
+                                    tint = LocalWearsicAccent.current,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    )
+                }
+                items(albumsState.recommendedAlbums.take(10), key = { "rec_${it.id}" }) { album ->
+                    AlbumCard(album = album, onClick = { onOpenAlbum(album) })
+                }
+            }
+
+            if (albumsState.isLoading) {
+                if (albumsState.albums.isEmpty()) {
+                    repeat(3) { shimmerIndex ->
+                        item(key = "albums_shimmer_$shimmerIndex") {
+                            WearsicAlbumShimmerCard(modifier = Modifier)
+                        }
+                    }
+                } else {
+                    item(key = "albums_refresh_shimmer") {
+                        WearsicCompactShimmer(modifier = Modifier)
+                    }
+                }
+            }
+
+            if (albumsState.errorMessage != null && !albumsState.isLoading) {
+                item {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = albumsState.errorMessage,
+                            color = WearsicError,
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(LocalFlagshipColors.current.glassFill)
+                                .border(1.dp, LocalFlagshipColors.current.glassBorder, CircleShape)
+                                .wearsicClickable { submitAlbumSearch() }
+                                .padding(horizontal = 14.dp, vertical = 7.dp)
+                                .testTag("albums_retry"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = null,
+                                    tint = LocalWearsicAccent.current,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Retry",
+                                    color = LocalFlagshipColors.current.textPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!albumsState.isLoading && albumsState.albums.isEmpty() && albumsState.errorMessage == null) {
+                item {
+                    WearsicEmptyState(
+                        title = if (albumsState.query.isBlank()) "Listen from start to finish" else "No albums found",
+                        message = if (albumsState.query.isBlank()) "Search an artist or album and explore the full release." else "Try another artist or album title.",
+                        icon = Icons.Rounded.Album
+                    )
+                }
+            }
+
+            items(distinctAlbums, key = { it.id }) { album ->
+                AlbumCard(album = album, onClick = { onOpenAlbum(album) })
+            }
+
+            item { Spacer(modifier = Modifier.height(56.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun AlbumCard(
+    album: Album,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val accent = LocalWearsicAccent.current
+    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
+    Column(
+        modifier = modifier.fillMaxWidth()
+            .clip(cardShape)
+            .background(LocalFlagshipColors.current.canvas) // OLED black — battery friendly
+            .border(1.dp, LocalFlagshipColors.current.hairline, cardShape)
+            .wearsicClickable(onClick = onClick)
+            .testTag("album_${album.id}")
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .size(watchScaled(102.dp))
+                    .background(
+                        Brush.radialGradient(
+                            listOf(accent.copy(alpha = 0.16f), Color.Transparent)
+                        )
+                    )
+            )
+            WearsicSongRowArtwork(
+                artworkUrl = album.thumbnailUrl,
+                contentDescription = album.name,
+                size = watchScaled(88.dp)
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = album.name,
+            color = LocalFlagshipColors.current.textPrimary,
+            fontFamily = FlagshipDisplayFont,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = album.uploader,
+            color = LocalFlagshipColors.current.textMuted,
+            fontFamily = FlagshipBodyFont,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+@Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
+@Composable
+fun AlbumsScreenPreview() {
+    WearsicTheme {
+        AlbumsScreen(albumsState = AlbumsUiState(), onQueryChanged = {}, onOpenAlbum = {})
+    }
+}

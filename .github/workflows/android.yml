@@ -1,0 +1,678 @@
+# Wearsic Android CI & Release pipeline.
+#
+# - Every push/PR: unit tests + debug APK artifact + screen gallery renders.
+# - Tag push (v*): signed release APK (+ its sha256) attached to a GitHub Release.
+#
+# Required repository secrets for the release job:
+#   KEYSTORE_BASE64  – base64 of my-upload-key.jks
+#                      (create locally: keytool -genkeypair -v -keystore my-upload-key.jks \
+#                       -alias upload -keyalg RSA -keysize 2048 -validity 10000
+#                      then: base64 -w0 my-upload-key.jks)
+#   STORE_PASSWORD   – keystore password
+#   KEY_PASSWORD     – key password (alias "upload")
+name: Android CI
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+# Do not cancel previous runs: every push should produce its own Debug and
+# Release build/artifacts, even when several commits are pushed quickly.
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    # The default GITHUB_TOKEN for push/tag runs can push to a scratch
+    # branch, which is how we smuggle the raw failure log out of the
+    # runner (logs/artifacts are auth-gated for anonymous readers, the
+    # ci-logs branch is not). The branch is not `main` and not a tag, so
+    # this push never re-triggers the workflow.
+    permissions:
+      contents: write
+    # Backstop: if anything in this job ever wedges (see the Robolectric
+    # pre-fetch step below for the 2026-10-17 Maven-stall incident), fail in
+    # 45 min instead of the 6-hour default.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Robolectric fetches its Android framework jar (android-all-instrumented)
+      # from Maven Central at test runtime, INSIDE the test JVM, with no
+      # timeout of its own. When the runner's route to Central stalls, the
+      # test task hangs silently for 20+ minutes (three release attempts hit
+      # exactly this on 2026-10-17). Keep a copy in ~/.m2 via the CI cache
+      # and pre-fetch it here with hard timeouts, so a bad network fails this
+      # step in minutes — visibly — and a good one is a no-op. The version
+      # pairs with `robolectric` in gradle/libs.versions.toml (4.16.1, SDK 36,
+      # test sources pin sdk = [36]): bump both together.
+      - name: Cache Robolectric android-all runtime
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          # NOTE: actions/cache never re-saves a key that already exists, so a
+          # frozen key can never learn artifacts added later (this bit us on
+          # 2026-10-18: the cached android-all stayed fine, but anything new
+          # Robolectric needed at runtime missed the cache forever). Bump the
+          # -vN suffix whenever a runtime artifact enters the picture.
+          key: robolectric-android-all-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}-v2
+
+      - name: Pre-fetch Robolectric android-all runtime (bounded)
+        run: |
+          set -euo pipefail
+          ver="16-robolectric-13921718-i7"
+          jar="$HOME/.m2/repository/org/robolectric/android-all-instrumented/$ver/android-all-instrumented-$ver.jar"
+          if [ -s "$jar" ]; then
+            echo "android-all already present, skipping download: $jar"
+            exit 0
+          fi
+          mkdir -p "$(dirname "$jar")"
+          curl -fSL --retry 2 --retry-all-errors --retry-delay 5 \
+            --connect-timeout 15 --max-time 120 \
+            -o "$jar.part" \
+            "https://repo1.maven.org/maven2/org/robolectric/android-all-instrumented/$ver/android-all-instrumented-$ver.jar"
+          mv "$jar.part" "$jar"
+          ls -la "$jar"
+
+      # The android-all pre-fetch above covers exactly one jar. Anything else
+      # Robolectric resolves at test runtime (e.g. a new android-all version
+      # after a dependency bump) is NOT covered, hits Maven Central from
+      # inside the test JVM with no timeout of its own, and wedges silently
+      # until the 45-minute job backstop kills the run (reproduced 2026-10-18,
+      # three times in seven runs). Run one NATIVE-mode screenshot test under
+      # a hard timeout first: missing artifacts download HERE — bounded and
+      # visible in minutes — and the job-end cache save (key bumped to -v2,
+      # because actions/cache never re-saves an existing key) then carries
+      # them into every later run, so the main suite goes back to zero network.
+      - name: Warm Robolectric runtime (bounded)
+        run: timeout 600 ./gradlew :app:testDebugUnitTest --tests 'com.wearsic.app.GreetingScreenshotTest' --stacktrace
+
+      # Fast-fail instead of the 45-minute job backstop if the suite ever
+      # wedges again; per-test start logging (app/build.gradle.kts) names the
+      # hanging test in the log, so a repeat is self-diagnosing.
+      - name: Run app unit tests (Robolectric)
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          ./gradlew :app:testDebugUnitTest --stacktrace 2>&1 | tee gradle.out
+
+      # When the suite fails on a runner that cannot reach the local
+      # workspace, the error lives only in the log zip (download needs a
+      # token). This step surfaces the failing test XMLs in the job
+      # summary instead — the summary is readable anonymously, so the
+      # diagnosis needs no credentials.
+      - name: Surface failing tests in the job summary
+        if: failure()
+        run: |
+          python3 .github/scripts/summarize-failures.py \
+            app/build/test-results/testDebugUnitTest gradle.out \
+            > summary.md 2>&1 || true
+          cat summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          cat summary.md
+
+      # The single most reliable diagnostic channel an anonymous reader has:
+      # push the raw failure artifacts to a scratch branch (ci-logs) that
+      # never triggers this workflow. Everything else (step logs, artifacts)
+      # needs credentials to read.
+      - name: Publish failure artifacts to ci-logs branch
+        if: failure()
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/ci-logs-out
+          mkdir -p /tmp/ci-logs-out
+          if [ -f gradle.out ]; then cp gradle.out /tmp/ci-logs-out/gradle.out; fi
+          if [ -d app/build/test-results/testDebugUnitTest ]; then
+            cp -r app/build/test-results/testDebugUnitTest /tmp/ci-logs-out/test-results
+          fi
+          if [ -f summary.md ]; then cp summary.md /tmp/ci-logs-out/summary.md; fi
+          if [ -f .github/scripts/summarize-failures.py ]; then
+            cp .github/scripts/summarize-failures.py /tmp/ci-logs-out/
+          fi
+          printf '%s\n' "commit: $GITHUB_SHA" "run: $GITHUB_RUN_ID" \
+            "attempt: ${GITHUB_RUN_ATTEMPT:-1}" "job: $GITHUB_JOB" \
+            > /tmp/ci-logs-out/meta.txt
+          ls -la /tmp/ci-logs-out
+          # Orphan branch = ONLY the diagnostics, never the whole tree; and
+          # pushing ci-logs does not re-trigger this workflow (not main, not
+          # a tag).
+          git checkout --orphan ci-logs-diag
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          rm -rf ./* ./.github ./.devcontainer 2>/dev/null || true
+          mkdir -p ci-logs-out
+          cp -r /tmp/ci-logs-out/. ci-logs-out/
+          git add -A
+          git -c user.name="CI diagnostics bot" \
+             -c user.email="ci@wearsic.invalid" \
+             commit -m "ci(debug): publish failure artifacts for run $GITHUB_RUN_ID"
+          git push origin HEAD:ci-logs --force
+
+      # A broken server must not merge silently while only Android tests run.
+      - name: Run server tests
+        run: ./gradlew :wearsic-server:test --stacktrace
+
+      # Static analysis. Lint is the only analyzer in the build, and it has
+      # already caught a real Compose bug the tests did not: a StateFlow
+      # `.value` read inside composition (WearsicNavigation), which renders the
+      # initial empty value forever because it never observes later emissions.
+      # Warnings stay warnings; errors fail the job.
+      - name: Android lint (debug)
+        timeout-minutes: 15
+        run: ./gradlew :app:lintDebug --stacktrace
+
+      # The Extractor Hotfix workflow rewrites version pins across the repo
+      # through scripts/bump-version.py; a silent pattern drift there would
+      # cut a malformed release, so the script's offline suite runs on every
+      # push — not only at release time.
+      - name: Run bump-script test (offline version pin rewrite)
+        run: bash scripts/tests/bump-version-test.sh
+
+      # Shell logic lives in the `wearsic` CLI, which no Kotlin test covers.
+      # This one is fast and offline: it fakes `tailscale` and pins the state
+      # detection that `wearsic funnel` depends on to tell a dead daemon from
+      # a logged-out phone (the bug that made funnel setup fail).
+      - name: Run CLI shell tests (funnel/Tailscale state detection)
+        run: bash wearsic-server/tests/funnel-state-test.sh
+
+      # The AOT cache is the one optimisation driven by a FILE on disk, so the
+      # gate that decides whether to load it (engine/JVM fingerprint) and the
+      # quarantine that retires a cache which killed a start must not drift.
+      # Offline: extracts the launcher's helpers and pins both paths.
+      - name: Run CLI shell tests (AOT cache gate + quarantine)
+        run: bash wearsic-server/tests/aot-cache-test.sh
+
+      # Offline, fakes `curl`: pins `wearsic update --pre` so a published
+      # pre-release is reachable, and so drafts / releases with no server
+      # package are skipped. Without it `wearsic update` silently serves the
+      # older stable build forever.
+      - name: Run CLI shell tests (update --pre release resolution)
+        run: bash wearsic-server/tests/update-pre-test.sh
+
+      # `wearsic sideload` picks a release APK and refuses to install when
+      # the published sha256 does not match. Offline: stubs the presentation
+      # helpers and fakes both curl and adb, covering asset resolution,
+      # checksum handling and device selection without a real watch.
+      - name: Run CLI shell tests (sideload asset + adb selection)
+        run: bash wearsic-server/tests/sideload-test.sh
+
+      # `wearsic pair` delivers the server address + key to the watch over
+      # adb — no watch keyboard. Offline: fakes adb + curl + tailscale and
+      # pins the two-line file contract, the reachability gate before
+      # delivery, the public-requires-a-key rule, the 8-char key floor and
+      # device selection; plus funnel_url's first-occurrence DNSName read.
+      - name: Run CLI shell tests (pair sends address + key over adb)
+        run: bash wearsic-server/tests/pair-test.sh
+
+      # `wearsic url` was a permanent false negative on stock Termux (the
+      # probe order assumed iproute2's `ip`, which Termux never ships) and
+      # then printed a literal `http://<phone-IP>` placeholder users typed
+      # verbatim. Offline: every probe is staged through a hermetic PATH,
+      # WEARSIC_SYS_BIN and WEARSIC_PROC_NET.
+      - name: Run CLI shell tests (lan_ip probe chain)
+        run: bash wearsic-server/tests/lan-ip-test.sh
+
+      # The TTY download progress bar polled `wc -c` on a file curl had not
+      # created yet, spamming "No such file or directory" under its own
+      # progress line (users read it as a failed download). Offline: fakes
+      # curl so the GET lags the HEAD, then pins 0% -> 100% + zero stderr.
+      - name: Run CLI shell tests (download progress race)
+        run: bash wearsic-server/tests/download-bar-test.sh
+
+      # The UI kit draws terminal-width panels: a wrap path once padded rows
+      # with colour codes counted as visible width (ragged right borders)
+      # before, and word wrap ate content indents. Offline: renders every
+      # screen at five widths with colour forced on, strips the codes back
+      # off, then measures every line and panel border.
+      - name: Run CLI shell tests (screen layout at phone widths)
+        run: bash wearsic-server/tests/ui-layout-test.sh
+
+      # The Cloudflare front door turns a random Quick Tunnel hostname into a
+      # PERMANENT workers.dev address, so the watch never has to be re-paired
+      # after a restart. Offline: stubs the Cloudflare API and pins hostname
+      # capture (log + Prometheus metrics), the permanent-URL construction,
+      # the Worker upload (endpoint, bearer token, ORIGIN binding,
+      # compatibility_date) and the re-point that happens when the tunnel
+      # hands out a NEW random hostname.
+      - name: Run CLI shell tests (Cloudflare front door)
+        run: bash wearsic-server/tests/cloudflare-tunnel-test.sh
+
+      # End-to-end for the same feature: a real engine behind a mocked
+      # Cloudflare edge. Proves the permanent URL actually serves the engine
+      # and that it survives a tunnel hostname change. The engine is built
+      # here because the shell-test job runs before the Gradle build steps.
+      - name: Run CLI shell tests (Cloudflare end-to-end)
+        run: |
+          ./gradlew :wearsic-server:installDist
+          bash wearsic-server/tests/cloudflare-e2e-test.sh
+
+      # The terminal shimmer (the soft gray wave) and the stage machine: the
+      # exact #8A8A85/#C9C9C3 blend, the 256-colour fallback, NO_COLOR, a
+      # non-TTY stdout, cursor restoration (including Ctrl+C), narrow
+      # terminals, and the seven installer stages. Offline.
+      - name: Run CLI shell tests (terminal shimmer + stages)
+        run: bash wearsic-server/tests/shimmer-test.sh
+
+      # Slash-dispatch, one-word shortcuts and live terminal re-measure
+      # (WINCH) — the fix that keeps the CLI usable in any terminal.
+      - name: Run CLI shell tests (slash dispatch + shortcuts + resize)
+        run: bash wearsic-server/tests/cli-shortcuts-test.sh
+
+      # The Worker itself is JavaScript, so it gets a real JS engine rather
+      # than a grep. Pins the two properties that decide whether audio works
+      # through the front door: Range must be forwarded, and the body must
+      # stream. A dropped header or a buffered body fails here, not on the
+      # watch.
+      - name: Run Worker proxy tests (Range + streaming + headers)
+        run: node wearsic-server/tests/worker-proxy-test.mjs
+
+      # Real pixels at Galaxy Watch7 dimensions. `ScreenGalleryTest` renders
+      # every reachable screen through Robolectric and writes PNGs into
+      # app/src/test/screenshots/. Roborazzi only WRITES pixels in record
+      # mode — the plain test run above leaves the committed (possibly
+      # stale) PNGs untouched, so record them explicitly here: this reruns
+      # just the gallery class and refreshes every screen, including the
+      # Engine dashboard and the live-volume Sound screen.
+      - name: Render screen gallery (Robolectric + Roborazzi record)
+        run: ./gradlew :app:testDebugUnitTest --tests "com.wearsic.app.ScreenGalleryTest" -Proborazzi.test.record=true --stacktrace
+
+      - name: Upload screen gallery renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screen-gallery
+          path: app/src/test/screenshots/
+          if-no-files-found: ignore
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-*.html
+            app/build/reports/lint-results-*.txt
+            wearsic-server/build/reports/tests/
+          if-no-files-found: ignore
+
+  # Every other job builds on JDK 21, so "the engine supports and prefers
+  # Java 25" would otherwise be a claim nobody executes. This job is the only
+  # place where it is real: build ON 25 (proving the Gradle build no longer
+  # requires a JDK 17 toolchain), run the whole server suite on 25, boot the
+  # engine with the 25-only flags, then do a real AOT record -> create
+  # round-trip and boot a SECOND time with the cache loaded.
+  jdk25:
+    name: JDK 25 (build + boot + AOT cache)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the engine on JDK 25
+        run: ./gradlew :wearsic-server:installDist --stacktrace
+
+      - name: Server tests on JDK 25
+        timeout-minutes: 15
+        run: ./gradlew :wearsic-server:test --stacktrace
+
+      - name: Script checks on JDK 25
+        run: |
+          set -euo pipefail
+          bash -n wearsic-server/run-termux.sh
+          bash -n wearsic-server/wearsic
+          bash wearsic-server/tests/aot-cache-test.sh
+
+      # The flags are extracted from the SHIPPED launcher, so this boots exactly
+      # what a phone boots: a JDK 25 flag set that a JDK 21 would reject.
+      - name: Boot the engine with the Java 25 flags
+        run: |
+          set -euo pipefail
+          SERVER_DIR="$PWD/wearsic-server"
+          DEST="$SERVER_DIR/build/install/wearsic-server"
+          sed -n '/^jvm_flags_for_java() {/,/^}/p' "$SERVER_DIR/run-termux.sh" > /tmp/jvmflags.sh
+          SCRIPT_DIR="$SERVER_DIR" . /tmp/jvmflags.sh
+          FLAGS="$(SCRIPT_DIR="$SERVER_DIR" jvm_flags_for_java 25)"
+          echo "flags: $FLAGS"
+          case "$FLAGS" in
+            *UseCompactObjectHeaders*) echo "compact object headers: ON" ;;
+            *) echo "::error::compact object headers missing from the Java 25 flag set"; exit 1 ;;
+          esac
+
+          boot() { # $1 = log, $2 = extra flags
+            env PORT=18080 WEARSIC_DB_PATH=/tmp/wearsic-ci.db \
+              WEARSIC_STATE_DIR=/tmp/wearsic-ci-state WEARSIC_AUTO_UPDATE=0 \
+              JAVA_OPTS="$FLAGS $2" "$DEST/bin/wearsic-server" > "$1" 2>&1 &
+            BOOT_PID=$!
+            for _ in $(seq 1 120); do
+              if curl -sf -m 2 http://127.0.0.1:18080/health >/dev/null 2>&1; then return 0; fi
+              kill -0 "$BOOT_PID" 2>/dev/null || return 1
+              sleep 1
+            done
+            return 1
+          }
+          stop() { kill "$BOOT_PID" 2>/dev/null || true; wait "$BOOT_PID" 2>/dev/null || true; }
+
+          echo "== boot without a cache =="
+          boot /tmp/boot1.log "" || { cat /tmp/boot1.log; exit 1; }
+          echo "healthy (no cache)"; stop
+
+          echo "== AOT round-trip: record -> create =="
+          bash "$SERVER_DIR/run-termux.sh" __aot_train
+          test -s "$SERVER_DIR/wearsic.aot" || { echo "::error::no AOT cache was produced"; exit 1; }
+
+          echo "== boot WITH the cache =="
+          boot /tmp/boot2.log "-XX:AOTCache=$SERVER_DIR/wearsic.aot" || { cat /tmp/boot2.log; exit 1; }
+          stop
+          # A rejected cache prints an [aot] warning and is silently ignored —
+          # that is exactly the failure this job exists to catch.
+          if grep -i 'aot' /tmp/boot2.log | grep -i 'warn'; then
+            echo "::error::the JVM rejected the AOT cache"
+            exit 1
+          fi
+          echo "healthy with the AOT cache loaded"
+
+  build-debug:
+    name: Debug APK
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble debug APK + server dist
+        run: ./gradlew :app:assembleDebug :wearsic-server:installDist --stacktrace
+
+      # The installer and the CLI updater are shell-only: Kotlin tests cannot
+      # catch a torn reinstall or an updater that copies a new CLI over the
+      # very file bash is reading (the self-overwrite users hit right after
+      # "✓ update complete"). Runs the full smoke against the dist built
+      # above with real GNU coreutils — whose in-place `cp` is what made the
+      # old bug reproducible — and needs no phone.
+      - name: Install/update smoke test (installer + CLI end-to-end)
+        run: bash wearsic-server/tests/install-smoke-test.sh
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wearsic-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/*.apk
+
+  release:
+    name: Release APK
+    runs-on: ubuntu-latest
+    needs: test
+    # Build signed release APKs on normal main pushes and version tags.
+    # Only version tags publish a GitHub Release below.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify signing secrets are configured
+        id: check_secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::warning::Missing release signing secrets (KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD). Building with a THROWAWAY keystore so the release pipeline is still exercised end to end. The resulting APK is NOT installable over the released app and no GitHub Release is published from this run."
+            echo "has_secrets=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_secrets=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Decode signing keystore
+        if: steps.check_secrets.outputs.has_secrets == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
+          # Export the credentials for every later step. Using GITHUB_ENV for
+          # BOTH the real and the throwaway key means the assemble step has a
+          # single code path — a step-level `env:` would shadow these.
+          echo "STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Without the repository secrets there is no upload key, but the
+      # pipeline still has to prove that the RELEASE variant builds, minifies
+      # and packages correctly. A throwaway key gives us the real signed
+      # release path (R8 + resource shrinking + the release applicationId)
+      # instead of a debug build that would pass while the release is broken.
+      # The key is ephemeral, so nothing signed with it is ever published.
+      - name: Generate throwaway signing key (no repository secrets)
+        if: steps.check_secrets.outputs.has_secrets != 'true'
+        run: |
+          keytool -genkeypair -v \
+            -keystore my-upload-key.jks \
+            -storepass ci-ephemeral -keypass ci-ephemeral \
+            -alias upload -keyalg RSA -keysize 2048 -validity 30 \
+            -dname "CN=Wearsic CI (throwaway), O=Wearsic, C=US"
+          echo "STORE_PASSWORD=ci-ephemeral" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=ci-ephemeral" >> "$GITHUB_ENV"
+
+      # R8 already crossed the 1 GiB daemon heap on the redesigned tree (the
+      # `-Xmx1024m` in gradle.properties exists because the ARM64 phone has
+      # only ~2 GiB). GitHub runners are x86_64 with plenty of RAM, so the
+      # release job bumps the daemon heap BEFORE assembling — the committed
+      # properties file stays device-friendly.
+      - name: Raise Gradle daemon heap for the release assembly
+        run: sed -i 's/-Xmx1024m/-Xmx4096m/' gradle.properties
+
+      - name: Assemble release APK + server dist
+        run: ./gradlew :app:assembleRelease :wearsic-server:installDist --stacktrace
+
+      - name: Stage release assets from THIS build (never a committed zip)
+        run: |
+          mkdir -p dist
+          VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
+          RELEASE_REF="${GITHUB_REF_NAME}"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
+          echo "Packaging server version $VERSION as $RELEASE_REF"
+          # Signed release APK built moments ago in this same job.
+          cp app/build/outputs/apk/release/app-release.apk "dist/Wearsic-${RELEASE_REF}.apk"
+          # Authenticity for the WATCH APP too: `wearsic sideload` verifies
+          # this file before anything reaches the watch.
+          (cd dist && sha256sum "Wearsic-${RELEASE_REF}.apk" > "Wearsic-${RELEASE_REF}.apk.sha256" \
+            && sha256sum -c "Wearsic-${RELEASE_REF}.apk.sha256")
+          # Server installDist output built moments ago in this same job.
+          STAGE="dist/wearsic-server"
+          mkdir -p "$STAGE"
+          cp -r wearsic-server/build/install/wearsic-server/bin "$STAGE/"
+          cp -r wearsic-server/build/install/wearsic-server/lib "$STAGE/"
+          cp wearsic-server/run-termux.sh "$STAGE/"
+          # The canonical installer (repo root) — detects the adjacent engine
+          # payload and installs it offline instead of re-downloading.
+          cp install.sh "$STAGE/"
+          cp wearsic-server/wearsic "$STAGE/"
+          # The Cloudflare front door uploads this file verbatim. Without it
+          # an installed release cannot start `wearsic cloudflare` at all.
+          cp wearsic-server/wearsic-cloudflare-worker.js "$STAGE/"
+          cp wearsic-server/.env.example "$STAGE/"
+          cp wearsic-server/README.md "$STAGE/"
+          # Licence files must travel with the distributed server. The server
+          # is GPL-3.0-only (LICENSE); the Apache-2.0 text is renamed so it is
+          # obvious it covers the Wear OS app, not the server.
+          cp wearsic-server/LICENSE "$STAGE/LICENSE"
+          cp LICENSE "$STAGE/LICENSE.apache-2.0"
+          cp NOTICE "$STAGE/NOTICE"
+          (cd dist && zip -qr "wearsic-server-termux-${RELEASE_REF}.zip" wearsic-server)
+          # Authenticity: publish the zip's SHA-256 alongside it. The server's
+          # auto-updater REFUSES to install any release without this file.
+          (cd dist && sha256sum "wearsic-server-termux-${RELEASE_REF}.zip" \
+            > "wearsic-server-termux-${RELEASE_REF}.zip.sha256")
+          # Single-file server bundle: ONE download containing everything
+          # (engine + launcher + CLI), installed and managed with one command.
+          bash wearsic-server/package-single-file.sh \
+            wearsic-server/build/install/wearsic-server \
+            "dist/wearsic-server-${RELEASE_REF}.sh"
+          ls -la dist/
+
+      - name: Verify packaged server (boot + /health version)
+        run: |
+          VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
+          RELEASE_REF="${GITHUB_REF_NAME}"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
+          # The published checksum must actually match the published zip.
+          (cd dist && sha256sum -c "wearsic-server-termux-${RELEASE_REF}.zip.sha256")
+          cd dist/wearsic-server
+          PORT=18099 WEARSIC_DB_PATH=/tmp/verify.db nohup ./bin/wearsic-server > /tmp/verify.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 30); do
+            sleep 1
+            BODY=$(curl -sf http://127.0.0.1:18099/health || true)
+            if [ -n "$BODY" ]; then break; fi
+          done
+          kill $SERVER_PID 2>/dev/null || true
+          echo "Health response: $BODY"
+          echo "$BODY" | grep -q "\"version\":\"$VERSION\"" \
+            || { echo "::error::Packaged server /health does not report version $VERSION"; exit 1; }
+
+      - name: Verify single-file bundle (self-extract + boot + /health)
+        run: |
+          VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
+          RELEASE_REF="${GITHUB_REF_NAME}"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
+          BUNDLE="dist/wearsic-server-${RELEASE_REF}.sh"
+          rm -rf /tmp/bundle-home && mkdir -p /tmp/bundle-home
+          HOME=/tmp/bundle-home WEARSIC_DIR=/tmp/bundle-home/wearsic-server bash "$BUNDLE" install
+          test -x /tmp/bundle-home/wearsic-server/bin/wearsic-server
+          test -f /tmp/bundle-home/wearsic-server/.env
+          grep -q '^WEARSIC_API_KEY=..*' /tmp/bundle-home/wearsic-server/.env
+          cd /tmp/bundle-home/wearsic-server
+          PORT=18098 WEARSIC_DB_PATH=/tmp/bundle-verify.db nohup ./bin/wearsic-server > /tmp/bundle-verify.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 30); do
+            sleep 1
+            BODY=$(curl -sf http://127.0.0.1:18098/health || true)
+            if [ -n "$BODY" ]; then break; fi
+          done
+          kill $SERVER_PID 2>/dev/null || true
+          echo "Bundle health response: $BODY"
+          echo "$BODY" | grep -q "\"version\":\"$VERSION\"" \
+            || { echo "::error::Single-file bundle /health does not report version $VERSION"; exit 1; }
+
+      - name: Upload release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wearsic-release-${{ github.sha }}
+          path: dist/Wearsic-v*.apk
+
+      - name: Create GitHub Release
+        # Only version tags publish a GitHub Release — plain main pushes build,
+        # verify and upload the artifact but never create/replace a release (a
+        # release pinned to an untagged commit would be served as "latest" to
+        # every updater).
+        # Publishing needs the REAL upload key: the app's in-app updater and
+        # `wearsic sideload` verify the APK signature, so a release signed
+        # with the throwaway key could never be installed over the released
+        # build. Without the secrets we still build, verify and upload the
+        # CI artifact above — we just do not cut a GitHub Release.
+        if: steps.check_secrets.outputs.has_secrets == 'true' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Empty = publish as a NORMAL release. Set to "true" to cut a beta.
+          #
+          # This flag is NOT cosmetic. Two separate things depend on it:
+          #   1. GitHub's "latest release" endpoint (releases/latest) IGNORES
+          #      pre-releases, so a beta is invisible to plain `wearsic update`
+          #      in the Termux CLI — testers must use `wearsic update --pre`.
+          #   2. ServerUpdater::checkForUpdate reads the releases LIST, which
+          #      does include pre-releases — it filters them out itself (see
+          #      GithubRelease.prerelease). If you ever remove that filter, a
+          #      pre-release would silently auto-install on every user's phone.
+          #
+          # Default is "" (normal) so the ordinary update path works.
+          RELEASE_PRERELEASE: ""
+        run: |
+          VERSION=$(grep -oP 'VERSION: String = "\K[^"]+' wearsic-server/src/main/kotlin/com/wearsic/server/ServerVersion.kt)
+          RELEASE_REF="$GITHUB_REF_NAME"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then RELEASE_REF="v${VERSION}"; fi
+          PRERELEASE_FLAG=()
+          if [ -n "$RELEASE_PRERELEASE" ]; then PRERELEASE_FLAG=(--prerelease); fi
+          # The whole publish is retried as a unit: a transient GitHub-side
+          # 403 ("Resource not accessible by integration") has been seen on
+          # an otherwise fully verified release. The cleanup loop runs again
+          # between attempts, so a draft left behind by a failed attempt is
+          # removed before the next try. Published releases are never touched.
+          published=0
+          for attempt in 1 2 3; do
+            # Remove stale draft releases for this version. Never delete a published release.
+            while true; do
+              RELEASE_STATE=$(gh release view "$RELEASE_REF" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+              case "$RELEASE_STATE" in
+                true)
+                  echo "Removing stale draft release $RELEASE_REF"
+                  gh release delete "$RELEASE_REF" --yes
+                  ;;
+                false)
+                  echo "Published release $RELEASE_REF already exists; nothing to publish."
+                  exit 0
+                  ;;
+                *) break ;;
+              esac
+            done
+            if gh release create "$RELEASE_REF" \
+              --target "$GITHUB_SHA" \
+              --title "Wearsic $RELEASE_REF" \
+              "${PRERELEASE_FLAG[@]}" \
+              --generate-notes \
+              "dist/Wearsic-${RELEASE_REF}.apk" \
+              "dist/Wearsic-${RELEASE_REF}.apk.sha256" \
+              "dist/wearsic-server-termux-${RELEASE_REF}.zip" \
+              "dist/wearsic-server-termux-${RELEASE_REF}.zip.sha256" \
+              "dist/wearsic-server-${RELEASE_REF}.sh"
+            then
+              published=1
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::release publish attempt $attempt failed — retrying in 20s"
+              sleep 20
+            fi
+          done
+          if [ "$published" != "1" ]; then
+            echo "::error::could not publish release $RELEASE_REF after 3 attempts"
+            exit 1
+          fi

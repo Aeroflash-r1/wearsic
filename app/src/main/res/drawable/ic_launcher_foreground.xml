@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Far-left bar: near-dot size (10 units + rounded 5-unit caps) -->
+    <path
+        android:pathData="M30,49 L30,59"
+        android:strokeWidth="5"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="30" android:startY="48"
+                android:endX="30" android:endY="60"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE0D2FF" />
+                <item android:offset="1.0" android:color="#FF8A5CF6" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Left-middle bar: +10 units -->
+    <path
+        android:pathData="M42,44 L42,64"
+        android:strokeWidth="5"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="42" android:startY="43"
+                android:endX="42" android:endY="65"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE8D9FF" />
+                <item android:offset="1.0" android:color="#FF8A5CF6" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Center bar: tallest, +10 units again -->
+    <path
+        android:pathData="M54,39 L54,69"
+        android:strokeWidth="5"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="54" android:startY="38"
+                android:endX="54" android:endY="70"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFF3EDFF" />
+                <item android:offset="1.0" android:color="#FF8A5CF6" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Right-middle bar: mirror of the left-middle -->
+    <path
+        android:pathData="M66,44 L66,64"
+        android:strokeWidth="5"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="66" android:startY="43"
+                android:endX="66" android:endY="65"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE8D9FF" />
+                <item android:offset="1.0" android:color="#FF8A5CF6" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Far-right bar: mirror of the far-left dot -->
+    <path
+        android:pathData="M78,49 L78,59"
+        android:strokeWidth="5"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="78" android:startY="48"
+                android:endX="78" android:endY="60"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE0D2FF" />
+                <item android:offset="1.0" android:color="#FF8A5CF6" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

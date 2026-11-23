@@ -1,0 +1,202 @@
+package com.wearsic.app.ui.screens
+import com.wearsic.app.ui.theme.LocalFlagshipColors
+import com.wearsic.app.ui.theme.FlagshipColors
+import com.wearsic.app.ui.theme.FlagshipDisplayFont
+import com.wearsic.app.ui.theme.FlagshipBodyFont
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.wearsic.app.ui.theme.WearsicSurfaceRaised
+import com.wearsic.app.ui.theme.wearsicSecondaryText
+import com.wearsic.app.ui.theme.WearsicDimens
+import com.wearsic.app.ui.theme.WearsicSurfaceBorderSubtle
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.foundation.lazy.itemsIndexed
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.Text
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.wear.tooling.preview.devices.WearDevices
+import com.wearsic.app.ui.components.WearsicArtistCollageAvatar
+import com.wearsic.app.ui.components.WearsicEmptyState
+import com.wearsic.app.ui.components.WearsicLibraryTrackRow
+import com.wearsic.app.ui.components.WearsicLoadingState
+import com.wearsic.app.ui.components.WearsicScreenHeader
+import androidx.compose.ui.graphics.Brush
+import com.wearsic.app.ui.theme.WearsicAppBackground
+import com.wearsic.app.ui.theme.WearsicBodyFont
+import com.wearsic.app.ui.theme.WearsicDisplayFont
+import com.wearsic.app.ui.theme.WearsicSurface
+import com.wearsic.app.ui.theme.rememberWearsicListContentPadding
+import com.wearsic.app.ui.theme.WearsicTextPrimary
+import com.wearsic.app.ui.theme.WearsicTheme
+import com.wearsic.app.ui.util.wearsicClickable
+import com.wearsic.app.ui.util.wearsicEntrance
+import com.wearsic.app.ui.util.wearsicRotaryScroll
+import com.wearsic.app.model.ArtistGroup
+import com.wearsic.app.ui.viewmodel.LibraryViewModel.ArtistsUiState
+
+@Composable
+fun ArtistsScreen(
+    artistsState: ArtistsUiState,
+    onRefresh: () -> Unit,
+    onPlayArtistSongs: (ArtistGroup, Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
+    var selected by remember { mutableStateOf<ArtistGroup?>(null) }
+    val distinctSongs = remember(selected) { selected?.songs?.distinctBy { it.id }.orEmpty() }
+
+    LaunchedEffect(Unit) { onRefresh() }
+
+    ScreenScaffold(
+        scrollState = listState,
+        modifier = modifier
+            .fillMaxSize()
+            .background(WearsicAppBackground)
+    ) {
+        ScalingLazyColumn(
+            state = listState,
+            // No auto-centering: the framework otherwise anchors item 1 to the
+            // viewport centre, pushing the header (and the clock) off the top
+            // of the round face. We pin the list with an explicit content
+            // padding instead.
+            autoCentering = null,
+            modifier = Modifier
+                .fillMaxSize()
+                .wearsicEntrance()
+                .wearsicRotaryScroll(listState),
+            contentPadding = rememberWearsicListContentPadding(it),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            item {
+                if (selected == null) {
+                    WearsicScreenHeader(
+                        title = "Artists",
+                        subtitle = "From your saved songs"
+                    )
+                } else {
+                    WearsicScreenHeader(
+                        title = selected!!.name,
+                        subtitle = "${selected!!.songs.size} songs"
+                    )
+                }
+            }
+
+            if (artistsState.isLoading && artistsState.artists.isEmpty()) {
+                item {
+                    WearsicLoadingState(label = "Loading artists…")
+                }
+            }
+
+            val group = selected
+            if (group != null) {
+                itemsIndexed(distinctSongs, key = { _, song -> song.id }) { index, song ->
+                    WearsicLibraryTrackRow(
+                        track = song,
+                        onPlay = { onPlayArtistSongs(group, index) }
+                    )
+                }
+            } else if (artistsState.artists.isEmpty() && !artistsState.isLoading) {
+                item {
+                    WearsicEmptyState(
+                        title = "No artists yet",
+                        message = "Save favorites or download songs to see artists here.",
+                        icon = Icons.Rounded.Person,
+                        iconContentDescription = null
+                    )
+                }
+            } else {
+                items(artistsState.artists, key = { it.name }) { artist ->
+                    val cardShape = RoundedCornerShape(WearsicDimens.CardRadius)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(cardShape)
+                            .background(LocalFlagshipColors.current.canvas) // OLED black — battery friendly
+                            .border(1.dp, LocalFlagshipColors.current.hairline, cardShape)
+                            .wearsicClickable { selected = artist }
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .testTag("artist_${artist.name}")
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Artist "portrait": a 1-4 artwork collage of
+                            // their saved songs — the nearest photo-like
+                            // avatar the offline groupings allow.
+                            WearsicArtistCollageAvatar(
+                                songs = artist.songs,
+                                size = 40.dp
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = artist.name,
+                                    color = LocalFlagshipColors.current.textPrimary,
+                                    fontFamily = FlagshipDisplayFont,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${artist.songs.size} saved songs",
+                                    color = wearsicSecondaryText(),
+                                    fontFamily = FlagshipBodyFont,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            item { Spacer(Modifier.height(56.dp)) }
+        }
+    }
+}
+
+@Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
+@Composable
+fun ArtistsScreenPreview() {
+    WearsicTheme {
+        ArtistsScreen(artistsState = ArtistsUiState(), onRefresh = {}, onPlayArtistSongs = { _, _ -> })
+    }
+}

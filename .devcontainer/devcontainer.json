@@ -1,0 +1,45 @@
+{
+  "name": "Wearsic — Wear OS Build",
+
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  "remoteUser": "vscode",
+
+  "mounts": [
+    "source=wearsic-gradle-cache,target=/home/vscode/.gradle,type=volume"
+  ],
+
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "24gb"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-gradle",
+        "fwcd.kotlin",
+        "redhat.vscode-xml"
+      ],
+      "settings": {
+        "java.import.gradle.enabled": true,
+        "gradle.autoDetect": "off",
+        "gradle.nestedProjects": false,
+        "files.watcherExclude": {
+          "**/.gradle/**": true,
+          "**/build/**": true
+        }
+      }
+    }
+  },
+
+  "otherPortsAttributes": {
+    "onAutoForward": "ignore"
+  },
+
+  "postCreateCommand": "chmod +x ./gradlew 2>/dev/null || true"
+}

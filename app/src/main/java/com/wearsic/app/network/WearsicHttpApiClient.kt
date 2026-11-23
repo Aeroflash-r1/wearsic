@@ -1,0 +1,1039 @@
+package com.wearsic.app.network
+
+import com.wearsic.app.model.HostUnreachableError
+import com.wearsic.app.model.HttpError
+import com.wearsic.app.model.InvalidUrlError
+import com.wearsic.app.model.ServerUrlNotConfiguredError
+import com.wearsic.app.model.TimeoutError
+import com.wearsic.app.model.UnknownError
+import com.wearsic.app.model.WearsicError
+import com.wearsic.app.network.model.AiPlaylistRequestDto
+import com.wearsic.app.network.model.AiPlaylistResponseDto
+import com.wearsic.app.network.model.AlbumDto
+import com.wearsic.app.network.model.AlbumResolveDto
+import com.wearsic.app.network.model.FavoritesResponseDto
+import com.wearsic.app.network.model.LyricsResponseDto
+import com.wearsic.app.network.model.MoodRequestDto
+import com.wearsic.app.network.model.MoodResponseDto
+import com.wearsic.app.network.model.PlaylistDto
+import com.wearsic.app.network.model.PlaylistWithTracksDto
+import com.wearsic.app.network.model.ReadyResponseDto
+import com.wearsic.app.network.model.RecommendationsRequestDto
+import com.wearsic.app.network.model.RecommendationsResponseDto
+import com.wearsic.app.network.model.SearchResponseDto
+import com.wearsic.app.network.model.SearchResultsResponseDto
+import com.wearsic.app.network.model.ServerHealthDto
+import com.wearsic.app.network.model.SuggestionsResponseDto
+import com.wearsic.app.network.model.TrackDto
+import com.wearsic.app.util.Validation
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.URLEncoder
+import java.net.UnknownHostException
+import java.util.concurrent.TimeUnit
+
+class WearsicHttpApiClient(
+    // Derived from the shared pool; only the faster connect timeout differs.
+    // Auth (X-Wearsic-Key) is injected centrally by WearsicHttp.
+    private val client: OkHttpClient = WearsicHttp.client.newBuilder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .build()
+) : WearsicApiClient {
+
+    /**
+     * Slow client for heavy extraction endpoints (playlist/album by URL):
+     * a full album fetch can legitimately take well over the default 30 s
+     * read timeout while YouTube resolves every track. Timeouts there made
+     * opening an album fail with a phantom "could not load playlist".
+     */
+    private val slowClient: OkHttpClient = client.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .callTimeout(120, TimeUnit.SECONDS)
+        .build()
+
+    /**
+     * Patient client for search endpoints. A search produces its page in one
+     * pass: NO bytes flow until the whole page is ready (worst case ~22s of
+     * multi-query searching, plus relay latency on remote links), so the
+     * shared 30s read timeout killed "slightly slower" searches with a
+     * phantom timeout while the server was still working. These budgets sit
+     * comfortably above the server's own search budgets without letting a
+     * hard stall hang the screen forever.
+     */
+    private val searchClient: OkHttpClient = client.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .callTimeout(50, TimeUnit.SECONDS)
+        .build()
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        coerceInputValues = true
+    }
+
+    override suspend fun checkHealth(baseUrl: String): Result<ServerHealthDto> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        val healthUrl = "$sanitizedUrl/health"
+
+        try {
+            val request = Request.Builder()
+                .url(healthUrl)
+                .get()
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError(healthUrl, response.code, "Server returned HTTP ${response.code}")
+                    )
+                }
+
+                val bodyString = response.body?.string() ?: ""
+                if (bodyString.isBlank()) {
+                    // An empty 200 is NOT a healthy answer: silently decoding
+                    // it used to report status="ok" with default telemetry on
+                    // the connection test.
+                    return@withContext Result.failure(
+                        HttpError(healthUrl, response.code, "Server returned an empty /health body")
+                    )
+                }
+                val dto = try {
+                    json.decodeFromString<ServerHealthDto>(bodyString)
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    return@withContext Result.failure(
+                        UnknownError("Server returned an unreadable /health response", e)
+                    )
+                }
+
+                Result.success(dto)
+            }
+        } catch (e: UnknownHostException) {
+            Result.failure(HostUnreachableError(e.message ?: "unknown"))
+        } catch (e: SocketTimeoutException) {
+            Result.failure(TimeoutError())
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not connect to server", e))
+        }
+    }
+
+    override suspend fun checkReady(baseUrl: String): Result<ReadyResponseDto> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        val readyUrl = "$sanitizedUrl/ready"
+
+        try {
+            val request = Request.Builder()
+                .url(readyUrl)
+                .get()
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError(readyUrl, response.code, "Server returned HTTP ${response.code}")
+                    )
+                }
+
+                val bodyString = response.body?.string() ?: ""
+                // /ready is cheap and stable, but a proxy or an intermediate
+                // server version may answer with a different shape; fall back
+                // to "not ready" rather than failing the whole probe.
+                val dto = try {
+                    json.decodeFromString<ReadyResponseDto>(bodyString)
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    return@withContext Result.failure(
+                        UnknownError("Server returned an unreadable /ready response", e)
+                    )
+                }
+
+                Result.success(dto)
+            }
+        } catch (e: UnknownHostException) {
+            Result.failure(HostUnreachableError(e.message ?: "unknown"))
+        } catch (e: SocketTimeoutException) {
+            Result.failure(TimeoutError())
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not connect to server", e))
+        }
+    }
+
+    override suspend fun searchTracks(baseUrl: String, query: String): Result<SearchResponseDto> {
+        return searchTracks(baseUrl, query, SEARCH_PAGE_SIZE, 0)
+    }
+
+    override suspend fun searchTracks(baseUrl: String, query: String, limit: Int): Result<SearchResponseDto> {
+        return searchTracks(baseUrl, query, limit, 0)
+    }
+
+    override suspend fun searchTracks(
+        baseUrl: String,
+        query: String,
+        limit: Int,
+        offset: Int
+    ): Result<SearchResponseDto> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        val queryValidation = Validation.validateQuery(query)
+        if (queryValidation.isFailure) {
+            val error = queryValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: com.wearsic.app.model.EmptyInputError("query"))
+        }
+        val encodedQuery = URLEncoder.encode(queryValidation.getOrThrow(), "UTF-8")
+        val page = limit.coerceIn(1, SEARCH_MAX_LIMIT)
+        val offsetClamped = offset.coerceAtLeast(0)
+        val searchUrl = "$sanitizedUrl/api/search?q=$encodedQuery&limit=$page&offset=$offsetClamped"
+
+        try {
+            val request = Request.Builder()
+                .url(searchUrl)
+                .get()
+                .build()
+
+            runInterruptible { searchClient.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError(searchUrl, response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+
+                val bodyString = response.body?.string() ?: ""
+                val dto = try {
+                    json.decodeFromString<SearchResultsResponseDto>(bodyString)
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    SearchResultsResponseDto()
+                }
+
+                Result.success(
+                    SearchResponseDto(
+                        query = query,
+                        tracks = dto.results.withStreamUrls(sanitizedUrl)
+                    )
+                )
+            }
+        } catch (e: UnknownHostException) {
+            Result.failure(HostUnreachableError(e.message ?: "unknown"))
+        } catch (e: SocketTimeoutException) {
+            Result.failure(TimeoutError())
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Search failed", e))
+        }
+    }
+
+    /**
+     * Resolve a track ahead of playback without pulling any audio.
+     *
+     * The previous warm-up requested `/api/stream/{id}` with
+     * `Range: bytes=0-0`. The server does not clamp tiny windows, so that
+     * request transferred the entire song through the response until the
+     * client hang-up was noticed — free on a LAN, but over Tailscale Funnel
+     * it relayed a whole track that raced the real playback request and threw
+     * away the connection (nothing was drained, so it could not be reused).
+     * This endpoint returns a few bytes of JSON and is fully drained, so the
+     * TCP+TLS connection it used stays in the pool for the stream request.
+     */
+    override suspend fun prewarmTrack(baseUrl: String, videoId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        val trackIdValidation = Validation.validateTrackId(videoId)
+        if (trackIdValidation.isFailure) {
+            val error = trackIdValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: com.wearsic.app.model.InvalidTrackIdError(videoId))
+        }
+        val prewarmUrl =
+            "$sanitizedUrl/api/prewarm/${URLEncoder.encode(trackIdValidation.getOrThrow(), "UTF-8")}"
+
+        try {
+            val request = Request.Builder()
+                .url(prewarmUrl)
+                .get()
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                // Drain the tiny body even on 404: a fully-read response keeps
+                // the connection alive for the stream request that follows.
+                val body = response.body?.string().orEmpty()
+                if (response.code == 404) return@withContext Result.success(false)
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError(prewarmUrl, response.code, "Server returned HTTP ${response.code}")
+                    )
+                }
+                Result.success(body.contains("\"ready\":true"))
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not warm track", e))
+        }
+    }
+
+    override suspend fun getFavorites(baseUrl: String): Result<List<TrackDto>> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+
+        try {
+            val request = Request.Builder()
+                .url("$sanitizedUrl/api/favorites")
+                .get()
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError("$sanitizedUrl/api/favorites", response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+                val bodyString = response.body?.string() ?: "[]"
+                val dto = try {
+                    json.decodeFromString<List<TrackDto>>(bodyString)
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    try {
+                        json.decodeFromString<FavoritesResponseDto>(bodyString).favorites
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
+                        emptyList()
+                    }
+                }
+                Result.success(dto.withStreamUrls(sanitizedUrl))
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not load favorites", e))
+        }
+    }
+
+    override suspend fun getRecommendations(
+        baseUrl: String,
+        seedTrackIds: List<String>,
+        topArtists: List<String>,
+        excludeTrackIds: List<String>,
+        limit: Int,
+        refreshNonce: Int,
+        genres: List<String>,
+    ): Result<List<TrackDto>> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+
+        try {
+            val body = RecommendationsRequestDto(
+                seedTrackIds = seedTrackIds,
+                topArtists = topArtists,
+                excludeTrackIds = excludeTrackIds,
+                limit = limit.coerceAtLeast(0),
+                refreshNonce = refreshNonce.coerceAtLeast(0),
+                genres = genres.distinct().take(5),
+            )
+            val request = Request.Builder()
+                .url("$sanitizedUrl/api/recommendations")
+                .post(json.encodeToString(RecommendationsRequestDto.serializer(), body).toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError("$sanitizedUrl/api/recommendations", response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+                val bodyString = response.body?.string() ?: ""
+                val dto = try {
+                    json.decodeFromString<RecommendationsResponseDto>(bodyString)
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    RecommendationsResponseDto()
+                }
+                Result.success(dto.results.withStreamUrls(sanitizedUrl))
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not load recommendations", e))
+        }
+    }
+    override suspend fun getMood(
+        baseUrl: String,
+        mood: String,
+        seedTrackIds: List<String>,
+        excludeTrackIds: List<String>,
+    ): Result<List<TrackDto>> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        try {
+            val body = MoodRequestDto(
+                mood = mood,
+                seedTrackIds = seedTrackIds,
+                excludeTrackIds = excludeTrackIds,
+            )
+            val request = Request.Builder()
+                .url("$sanitizedUrl/api/mood")
+                .post(json.encodeToString(MoodRequestDto.serializer(), body).toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError("$sanitizedUrl/api/mood", response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+                val bodyString = response.body?.string() ?: ""
+                val dto = try {
+                    json.decodeFromString<MoodResponseDto>(bodyString)
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    MoodResponseDto()
+                }
+                Result.success(dto.results.withStreamUrls(sanitizedUrl))
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not load mood mix", e))
+        }
+    }
+
+
+    override suspend fun addFavorite(baseUrl: String, track: TrackDto): Result<Unit> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+
+        try {
+            val request = Request.Builder()
+                .url("$sanitizedUrl/api/favorites")
+                .post(track.toRequestBodyJson().toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError("$sanitizedUrl/api/favorites", response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+                // Cached list reads must not re-serve the old favorites.
+                WearsicHttp.noteMutation()
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not add favorite", e))
+        }
+    }
+
+    override suspend fun removeFavorite(baseUrl: String, videoId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        val trackIdValidation = Validation.validateTrackId(videoId)
+        if (trackIdValidation.isFailure) {
+            val error = trackIdValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: com.wearsic.app.model.InvalidTrackIdError(videoId))
+        }
+
+        try {
+            val request = Request.Builder()
+                .url("$sanitizedUrl/api/favorites/${URLEncoder.encode(trackIdValidation.getOrThrow(), "UTF-8")}")
+                .delete()
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError("$sanitizedUrl/api/favorites", response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+                // Cached list reads must not re-serve the removed favorite.
+                WearsicHttp.noteMutation()
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not remove favorite", e))
+        }
+    }
+
+    override suspend fun getPlaylists(baseUrl: String): Result<List<PlaylistDto>> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+
+        try {
+            val request = Request.Builder()
+                .url("$sanitizedUrl/api/playlists")
+                .get()
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+                val bodyString = response.body?.string() ?: "[]"
+                val playlists = try {
+                    json.decodeFromString<List<PlaylistDto>>(bodyString)
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    emptyList()
+                }
+                Result.success(playlists)
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not load playlists", e))
+        }
+    }
+
+    override suspend fun getPlaylistTracks(baseUrl: String, playlistId: String): Result<PlaylistWithTracksDto> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+
+        try {
+            val request = Request.Builder()
+                .url("$sanitizedUrl/api/playlists/${URLEncoder.encode(playlistId, "UTF-8")}")
+                .get()
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+                val bodyString = response.body?.string() ?: "{}"
+                val dto = try {
+                    json.decodeFromString<PlaylistWithTracksDto>(bodyString)
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    PlaylistWithTracksDto(id = playlistId, name = "Playlist")
+                }
+                Result.success(dto.copy(tracks = dto.tracks.withStreamUrls(sanitizedUrl)))
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not load playlist", e))
+        }
+    }
+
+    override suspend fun removeTrackFromPlaylist(baseUrl: String, playlistId: String, videoId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        val trackIdValidation = Validation.validateTrackId(videoId)
+        if (trackIdValidation.isFailure) {
+            val error = trackIdValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: com.wearsic.app.model.InvalidTrackIdError(videoId))
+        }
+
+        try {
+            val request = Request.Builder()
+                .url("$sanitizedUrl/api/playlists/${URLEncoder.encode(playlistId, "UTF-8")}/tracks/${URLEncoder.encode(trackIdValidation.getOrThrow(), "UTF-8")}")
+                .delete()
+                .build()
+
+            runInterruptible { client.newCall(request).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
+                    )
+                }
+                // Cached playlist reads must not re-serve the removed track.
+                WearsicHttp.noteMutation()
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not remove track", e))
+        }
+    }
+
+
+    override suspend fun getSuggestions(baseUrl: String, query: String): Result<List<String>> =
+        withContext(Dispatchers.IO) {
+            val urlValidation = validateBaseUrl(baseUrl)
+            if (urlValidation.isFailure) {
+                val error = urlValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+            }
+            val sanitizedUrl = urlValidation.getOrThrow()
+            val queryValidation = Validation.validateQuery(query)
+            if (queryValidation.isFailure) {
+                val error = queryValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: com.wearsic.app.model.EmptyInputError("query"))
+            }
+            try {
+                val request = Request.Builder()
+                    .url("$sanitizedUrl/api/suggestions?q=${URLEncoder.encode(queryValidation.getOrThrow(), "UTF-8")}")
+                    .get()
+                    .build()
+
+                runInterruptible { client.newCall(request).execute() }.use { response ->
+                    if (!response.isSuccessful) {
+                        return@use Result.failure(
+                            HttpError("$sanitizedUrl/api/suggestions", response.code, "Server error: HTTP ${response.code}")
+                        )
+                    }
+                    val bodyString = response.body?.string() ?: "{}"
+                    val dto = try {
+                        json.decodeFromString<SuggestionsResponseDto>(bodyString)
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
+                        SuggestionsResponseDto()
+                    }
+                    Result.success(dto.suggestions)
+                }
+            } catch (e: Exception) {
+                Result.failure(UnknownError(e.message ?: "Could not load suggestions", e))
+            }
+        }
+
+    override suspend fun getRelated(
+        baseUrl: String,
+        videoId: String,
+        artist: String?,
+        title: String?,
+    ): Result<List<TrackDto>> =
+        withContext(Dispatchers.IO) {
+            val urlValidation = validateBaseUrl(baseUrl)
+            if (urlValidation.isFailure) {
+                val error = urlValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+            }
+            val sanitizedUrl = urlValidation.getOrThrow()
+            val trackIdValidation = Validation.validateTrackId(videoId)
+            if (trackIdValidation.isFailure) {
+                val error = trackIdValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: com.wearsic.app.model.InvalidTrackIdError(videoId))
+            }
+            try {
+                val urlBuilder = StringBuilder("$sanitizedUrl/api/related/${URLEncoder.encode(trackIdValidation.getOrThrow(), "UTF-8")}")
+                val params = mutableListOf<String>()
+                if (!artist.isNullOrBlank()) params += "artist=" + URLEncoder.encode(artist, "UTF-8")
+                if (!title.isNullOrBlank()) params += "title=" + URLEncoder.encode(title, "UTF-8")
+                if (params.isNotEmpty()) urlBuilder.append('?').append(params.joinToString("&"))
+                val request = Request.Builder()
+                    .url(urlBuilder.toString())
+                    .get()
+                    .build()
+
+                runInterruptible { client.newCall(request).execute() }.use { response ->
+                    if (!response.isSuccessful) {
+                        return@use Result.failure(
+                            HttpError("$sanitizedUrl/api/related", response.code, "Server error: HTTP ${response.code}")
+                        )
+                    }
+                    val bodyString = response.body?.string() ?: "{}"
+                    val dto = try {
+                        json.decodeFromString<com.wearsic.app.network.model.RelatedResponseDto>(bodyString)
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
+                        com.wearsic.app.network.model.RelatedResponseDto()
+                    }
+                    Result.success(dto.results.withStreamUrls(sanitizedUrl))
+                }
+            } catch (e: Exception) {
+                Result.failure(UnknownError(e.message ?: "Could not load related songs", e))
+            }
+        }
+
+    override suspend fun searchAlbums(baseUrl: String, query: String): Result<List<AlbumDto>> =
+        withContext(Dispatchers.IO) {
+            val urlValidation = validateBaseUrl(baseUrl)
+            if (urlValidation.isFailure) {
+                val error = urlValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+            }
+            val sanitizedUrl = urlValidation.getOrThrow()
+            val queryValidation = Validation.validateQuery(query)
+            if (queryValidation.isFailure) {
+                val error = queryValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: com.wearsic.app.model.EmptyInputError("query"))
+            }
+            try {
+                val request = Request.Builder()
+                    .url("$sanitizedUrl/api/search/albums?q=${URLEncoder.encode(queryValidation.getOrThrow(), "UTF-8")}")
+                    .get()
+                    .build()
+
+                runInterruptible { searchClient.newCall(request).execute() }.use { response ->
+                    if (!response.isSuccessful) {
+                        return@use Result.failure(
+                            HttpError("$sanitizedUrl/api/search/albums", response.code, "Server error: HTTP ${response.code}")
+                        )
+                    }
+                    val bodyString = response.body?.string() ?: "[]"
+                    val albums = try {
+                        json.decodeFromString<List<AlbumDto>>(bodyString)
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
+                        emptyList()
+                    }
+                    Result.success(albums)
+                }
+            } catch (e: Exception) {
+                Result.failure(UnknownError(e.message ?: "Could not load albums", e))
+            }
+        }
+
+    override suspend fun resolveTrackAlbum(
+        baseUrl: String,
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long?,
+    ): Result<AlbumDto?> =
+        withContext(Dispatchers.IO) {
+            val urlValidation = validateBaseUrl(baseUrl)
+            if (urlValidation.isFailure) {
+                val error = urlValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+            }
+            val sanitizedUrl = urlValidation.getOrThrow()
+            if (videoId.isBlank()) {
+                return@withContext Result.failure(com.wearsic.app.model.InvalidTrackIdError(videoId))
+            }
+            try {
+                val params = buildList {
+                    add("v=" + URLEncoder.encode(videoId, "UTF-8"))
+                    if (title.isNotBlank()) add("t=" + URLEncoder.encode(title, "UTF-8"))
+                    if (artist.isNotBlank()) add("a=" + URLEncoder.encode(artist, "UTF-8"))
+                    if (durationMs != null && durationMs > 0L) add("d=$durationMs")
+                }.joinToString("&")
+                val request = Request.Builder()
+                    .url("$sanitizedUrl/api/albums/resolve?$params")
+                    .get()
+                    .build()
+
+                runInterruptible { client.newCall(request).execute() }.use { response ->
+                    if (!response.isSuccessful) {
+                        return@use Result.failure(
+                            HttpError("$sanitizedUrl/api/albums/resolve", response.code, "Server error: HTTP ${response.code}")
+                        )
+                    }
+                    val bodyString = response.body?.string() ?: "{}"
+                    val dto = try {
+                        json.decodeFromString<AlbumResolveDto>(bodyString)
+                    } catch (e: Exception) {
+                        logDecodeFailure(e)
+                        AlbumResolveDto()
+                    }
+                    Result.success(dto.album)
+                }
+            } catch (e: Exception) {
+                Result.failure(UnknownError(e.message ?: "Could not resolve album", e))
+            }
+        }
+
+    override suspend fun getLyrics(
+        baseUrl: String,
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+    ): Result<LyricsResponseDto> =
+        withContext(Dispatchers.IO) {
+            val urlValidation = validateBaseUrl(baseUrl)
+            if (urlValidation.isFailure) {
+                val error = urlValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+            }
+            val sanitizedUrl = urlValidation.getOrThrow()
+            if (videoId.isBlank()) {
+                return@withContext Result.failure(com.wearsic.app.model.InvalidTrackIdError(videoId))
+            }
+            try {
+                val params = buildList {
+                    add("v=" + URLEncoder.encode(videoId, "UTF-8"))
+                    if (title.isNotBlank()) add("t=" + URLEncoder.encode(title, "UTF-8"))
+                    if (artist.isNotBlank()) add("a=" + URLEncoder.encode(artist, "UTF-8"))
+                    if (durationMs > 0L) add("d=$durationMs")
+                }.joinToString("&")
+                val request = Request.Builder()
+                    .url("$sanitizedUrl/api/lyrics?$params")
+                    .get()
+                    .build()
+
+                runInterruptible { client.newCall(request).execute() }.use { response ->
+                    if (!response.isSuccessful) {
+                        return@use Result.failure(
+                            HttpError("$sanitizedUrl/api/lyrics", response.code, "Server error: HTTP ${response.code}")
+                        )
+                    }
+                    val bodyString = response.body?.string() ?: "{}"
+                    val dto = try {
+                        json.decodeFromString<LyricsResponseDto>(bodyString)
+                    } catch (e: Exception) {
+                        logDecodeFailure(e)
+                        LyricsResponseDto()
+                    }
+                    Result.success(dto)
+                }
+            } catch (e: Exception) {
+                Result.failure(UnknownError(e.message ?: "Could not load lyrics", e))
+            }
+        }
+
+    override suspend fun getPlaylistByUrl(baseUrl: String, url: String): Result<PlaylistWithTracksDto> =
+        withContext(Dispatchers.IO) {
+            val urlValidation = validateBaseUrl(baseUrl)
+            if (urlValidation.isFailure) {
+                val error = urlValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+            }
+            val sanitizedUrl = urlValidation.getOrThrow()
+            try {
+                val request = Request.Builder()
+                    .url("$sanitizedUrl/api/playlist?url=${URLEncoder.encode(url, "UTF-8")}")
+                    .get()
+                    .build()
+
+                runInterruptible { slowClient.newCall(request).execute() }.use { response ->
+                    if (!response.isSuccessful) {
+                        return@use Result.failure(
+                            HttpError("$sanitizedUrl/api/playlist", response.code, "Server error: HTTP ${response.code}")
+                        )
+                    }
+                    val bodyString = response.body?.string() ?: "{}"
+                    val dto = try {
+                        json.decodeFromString<PlaylistWithTracksDto>(bodyString)
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
+                        PlaylistWithTracksDto(id = url, name = "Album")
+                    }
+                    Result.success(dto.copy(tracks = dto.tracks.withStreamUrls(sanitizedUrl)))
+                }
+            } catch (e: Exception) {
+                Result.failure(UnknownError(e.message ?: "Could not load album", e))
+            }
+        }
+
+    override suspend fun createAiPlaylist(
+        baseUrl: String,
+        request: AiPlaylistRequestDto,
+    ): Result<AiPlaylistResponseDto> = withContext(Dispatchers.IO) {
+        val urlValidation = validateBaseUrl(baseUrl)
+        if (urlValidation.isFailure) {
+            val error = urlValidation.exceptionOrNull() as? WearsicError
+            return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+        }
+        val sanitizedUrl = urlValidation.getOrThrow()
+        if (request.name.trim().isEmpty()) {
+            return@withContext Result.failure(
+                com.wearsic.app.model.EmptyInputError("playlist name")
+            )
+        }
+        try {
+            val body = json.encodeToString(AiPlaylistRequestDto.serializer(), request)
+                .toRequestBody(JSON_MEDIA_TYPE)
+            val httpRequest = Request.Builder()
+                .url("$sanitizedUrl/api/ai/playlist")
+                .post(body)
+                .build()
+            runInterruptible { client.newCall(httpRequest).execute() }.use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        HttpError(
+                            "$sanitizedUrl/api/ai/playlist",
+                            response.code,
+                            "Server error: HTTP ${response.code}",
+                        )
+                    )
+                }
+                WearsicHttp.noteMutation()
+                val text = runInterruptible { response.body?.string() }.orEmpty()
+                try {
+                    Result.success(json.decodeFromString<AiPlaylistResponseDto>(text))
+                } catch (e: Exception) {
+                    logDecodeFailure(e)
+                    Result.failure(UnknownError("Could not parse AI playlist response", e))
+                }
+            }
+        } catch (e: UnknownHostException) {
+            Result.failure(HostUnreachableError(e.message ?: "unknown"))
+        } catch (e: SocketTimeoutException) {
+            Result.failure(TimeoutError())
+        } catch (e: Exception) {
+            Result.failure(UnknownError(e.message ?: "Could not connect to server", e))
+        }
+    }
+
+    override suspend fun createPlaylist(baseUrl: String, name: String): Result<PlaylistDto> =
+        withContext(Dispatchers.IO) {
+            val urlValidation = validateBaseUrl(baseUrl)
+            if (urlValidation.isFailure) {
+                val error = urlValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+            }
+            val sanitizedUrl = urlValidation.getOrThrow()
+            val nameValidation = Validation.validatePlaylistName(name)
+            if (nameValidation.isFailure) {
+                val error = nameValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: com.wearsic.app.model.EmptyInputError("playlist name"))
+            }
+            try {
+                val body = kotlinx.serialization.json.Json.encodeToString(
+                    kotlinx.serialization.serializer<PlaylistDto>(),
+                    PlaylistDto(id = "", name = nameValidation.getOrThrow())
+                ).toRequestBody(JSON_MEDIA_TYPE)
+                val request = Request.Builder()
+                    .url("$sanitizedUrl/api/playlists")
+                    .post(body)
+                    .build()
+
+                runInterruptible { client.newCall(request).execute() }.use { response ->
+                    if (!response.isSuccessful) {
+                        return@use Result.failure(
+                            HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
+                        )
+                    }
+                    // Cached list reads must not miss the new playlist.
+                    WearsicHttp.noteMutation()
+                    val bodyString = response.body?.string() ?: "{}"
+                    val dto = try {
+                        json.decodeFromString<PlaylistDto>(bodyString)
+                    } catch (e: Exception) {
+                    logDecodeFailure(e)
+                        // Loud failure: falling back to PlaylistDto(id = "")
+                        // previously let a bad/unexpected response "create" a
+                        // playlist whose id was empty, and the follow-up
+                        // add-track call then hit /api/playlists//tracks (404)
+                        // and silently did nothing while the UI reported
+                        // success.
+                        return@use Result.failure(
+                            UnknownError("Server sent an unrecognisable playlist response", e)
+                        )
+                    }
+                    Result.success(dto)
+                }
+            } catch (e: Exception) {
+                Result.failure(UnknownError(e.message ?: "Could not create playlist", e))
+            }
+        }
+
+    override suspend fun addTrackToPlaylist(baseUrl: String, playlistId: String, track: TrackDto): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            val urlValidation = validateBaseUrl(baseUrl)
+            if (urlValidation.isFailure) {
+                val error = urlValidation.exceptionOrNull() as? WearsicError
+                return@withContext Result.failure(error ?: InvalidUrlError(baseUrl))
+            }
+            val sanitizedUrl = urlValidation.getOrThrow()
+            try {
+                val request = Request.Builder()
+                    .url("$sanitizedUrl/api/playlists/${URLEncoder.encode(playlistId, "UTF-8")}/tracks")
+                    .post(track.toRequestBodyJson().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+
+                runInterruptible { client.newCall(request).execute() }.use { response ->
+                    if (!response.isSuccessful) {
+                        return@use Result.failure(
+                            HttpError("$sanitizedUrl/api/playlists", response.code, "Server error: HTTP ${response.code}")
+                        )
+                    }
+                    // Cached playlist reads must not miss the added track.
+                    WearsicHttp.noteMutation()
+                    Result.success(Unit)
+                }
+            } catch (e: Exception) {
+                Result.failure(UnknownError(e.message ?: "Could not add to playlist", e))
+            }
+        }
+
+    /**
+     * Validates a base URL and normalizes it (trims trailing slashes).
+     *
+     * A URL whose scheme is not http/https fails with a clear
+     * "Invalid URL scheme" message so callers and the connection-test UI can
+     * report the real reason instead of a generic invalid-URL error.
+     */
+    private fun validateBaseUrl(baseUrl: String): Result<String> {
+        // A blank URL is not a malformed URL: it means this watch has not been
+        // paired with a server yet. Reporting "Invalid URL: " on the first tap
+        // looked like a bug instead of telling the user what to do.
+        if (baseUrl.isBlank()) return Result.failure(ServerUrlNotConfiguredError)
+        val result = Validation.validateServerUrl(baseUrl)
+        return if (result.exceptionOrNull() is InvalidUrlError) {
+            Result.failure(InvalidUrlError("Invalid URL scheme: $baseUrl"))
+        } else {
+            result
+        }
+    }
+
+    /**
+     * Servers never send a streamUrl — it's derived from the base URL and the
+     * track's videoId (this is how the pre-serialization client built it).
+     * Without it, played tracks have an empty media URI and can't start.
+     */
+    private fun List<TrackDto>.withStreamUrls(baseUrl: String): List<TrackDto> =
+        map { it.copy(streamUrl = "$baseUrl/api/stream/${it.id}") }
+
+    companion object {
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+        /** First search page: fast, enough to choose from. */
+        const val SEARCH_PAGE_SIZE = 10
+
+        /** Expanded page ("Show more"): server clamps to the same ceiling. */
+        const val SEARCH_MAX_LIMIT = 25
+    }
+}
+
+/**
+ * Logs a response-decode failure before a default/empty DTO fallback is
+ * returned. Without this, server contract drift (a changed response shape)
+ * shows up on the watch as a silently EMPTY library/search/favorites screen
+ * instead of an error — the exact failure the network-models KDoc documents
+ * for an earlier breakage.
+ */
+private fun logDecodeFailure(e: Exception) {
+    android.util.Log.e(
+        "WearsicHttpApi",
+        "Response decode failed — server response shape may have drifted: " +
+            "${e.javaClass.simpleName}: ${e.message ?: "no message"}"
+    )
+}

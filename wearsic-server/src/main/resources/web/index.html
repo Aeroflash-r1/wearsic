@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Wearsic Engine</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='12' fill='%23000'/%3E%3Cpath d='M9 18.2a2.2 2.2 0 1 1-1.5-2.08V7.5a1 1 0 0 1 .78-.98l6-1.5a1 1 0 0 1 1.22.97v2.5a1 1 0 0 1-.78.97l-4.72 1.18v7.56Z' fill='%23D0BCFF'/%3E%3C/svg%3E">
+<style>
+  /* ── Tokens: the exact palette of the watch app (OLED black, charcoal,
+     lavender) so the dashboard and the wrist feel like one product ── */
+  :root {
+    --bg: #000000;
+    --surface: #1c1b1f;
+    --surface-2: #232028;
+    --border: #36343b;
+    --text: #e6e1e5;
+    --muted: #938f99;
+    --accent: #d0bcff;
+    --accent-dim: #4a4458;
+    --green: #6dd58c;
+    --amber: #f9a825;
+    --red: #f28b82;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); }
+  body {
+    color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 28px 20px 48px;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+
+  /* ── Header ── */
+  header { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 22px; }
+  .logo {
+    width: 34px; height: 34px; border-radius: 50%;
+    display: grid; place-items: center; flex: none;
+    background: radial-gradient(circle at 30% 30%, #2b2632, #000);
+    border: 1px solid var(--accent-dim);
+  }
+  .logo svg { width: 18px; height: 18px; }
+  h1 { font-size: 19px; font-weight: 700; margin: 0; letter-spacing: .2px; }
+  h1 small { display: block; font-size: 11px; font-weight: 500; color: var(--muted); margin-top: 1px; }
+  .chip {
+    font-family: var(--mono); font-size: 11px; color: var(--accent);
+    background: var(--surface); border: 1px solid var(--accent-dim);
+    padding: 3px 9px; border-radius: 999px;
+  }
+  .pill {
+    margin-left: auto; font-weight: 700; font-size: 12px; letter-spacing: .4px;
+    padding: 6px 14px; border-radius: 999px; border: 1px solid;
+  }
+  .pill.ok   { color: var(--green); border-color: rgba(109,213,140,.45); background: rgba(109,213,140,.10); }
+  .pill.warn { color: var(--amber); border-color: rgba(249,168,37,.45);  background: rgba(249,168,37,.10); }
+  .pill.bad  { color: var(--red);   border-color: rgba(242,139,130,.45); background: rgba(242,139,130,.10); }
+
+  /* ── Cards ── */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 12px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px 16px 12px; min-width: 0;
+  }
+  .card h2 {
+    font-size: 11px; font-weight: 700; letter-spacing: 1.1px; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 10px;
+  }
+  .row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 4px 0; min-width: 0; }
+  .row .k { color: var(--muted); font-size: 12.5px; flex: none; }
+  .row .v { color: var(--text); font-size: 13px; text-align: right; overflow-wrap: anywhere; min-width: 0; }
+  .row .v.mono { font-family: var(--mono); font-size: 12.5px; }
+  .row .v.soft { color: var(--muted); }
+  .row .value-big { color: var(--text); font-family: var(--mono); font-size: 22px; font-weight: 700; }
+  .row .value-big .unit { font-size: 11px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; background: var(--muted); }
+  .dot.ok { background: var(--green); }
+  .dot.warn { background: var(--amber); }
+  .dot.bad { background: var(--red); }
+
+  /* Readiness tiles: four big checks in one line */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 8px; }
+  .tile {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 9px 6px 7px; text-align: center;
+  }
+  .tile .t-name { font-size: 10px; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+  .tile .t-val { font-family: var(--mono); font-weight: 700; font-size: 12px; margin-top: 3px; }
+  .t-ok { color: var(--green); } .t-warn { color: var(--amber); } .t-bad { color: var(--red); }
+
+  /* Notes block */
+  .notes {
+    font-size: 12.5px; color: var(--text); white-space: pre-line;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; max-height: 130px; overflow: auto;
+    margin-top: 8px;
+  }
+
+  /* Latency table */
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: right; padding: 4px 6px; font-size: 12px; font-family: var(--mono); }
+  thead th { color: var(--muted); font-weight: 600; font-size: 10.5px; letter-spacing: .6px; border-bottom: 1px solid var(--border); }
+  tbody td:first-child, thead th:first-child { text-align: left; font-family: system-ui, sans-serif; color: var(--text); }
+  tbody tr:nth-child(even) { background: var(--surface-2); }
+  .slow { color: var(--amber); }
+  .very-slow { color: var(--red); }
+
+  footer { margin-top: 22px; color: var(--muted); font-size: 11.5px; text-align: center; }
+  footer code { font-family: var(--mono); color: var(--text); }
+  .age { font-size: 11px; color: var(--muted); margin-top: 10px; text-align: right; }
+  .err { color: var(--red); font-size: 12px; overflow-wrap: anywhere; }
+  .mono-note { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M9 18.2a2.2 2.2 0 1 1-1.5-2.08V7.5a1 1 0 0 1 .78-.98l6-1.5a1 1 0 0 1 1.22.97v2.5a1 1 0 0 1-.78.97l-4.72 1.18v7.56Z" fill="#D0BCFF"/></svg>
+    </div>
+    <h1>Wearsic Engine <small id="sub">loading…</small></h1>
+    <span class="chip" id="version">…</span>
+    <span class="pill warn" id="pill">…</span>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Readiness</h2>
+      <div class="tiles">
+        <div class="tile"><div class="t-name">Engine</div><div class="t-val" id="t-ready">…</div></div>
+        <div class="tile"><div class="t-name">Database</div><div class="t-val" id="t-db">…</div></div>
+        <div class="tile"><div class="t-name">Extractor</div><div class="t-val" id="t-extract">…</div></div>
+        <div class="tile"><div class="t-name">Transcoder</div><div class="t-val" id="t-trans">…</div></div>
+        <div class="tile"><div class="t-name">Canary</div><div class="t-val" id="t-canary">…</div></div>
+      </div>
+      <div class="age" id="uptime-age">uptime …</div>
+    </section>
+
+    <section class="card">
+      <h2>Extraction</h2>
+      <div class="row"><span class="k">Successes</span><span class="v mono" id="x-ok">…</span></div>
+      <div class="row"><span class="k">Failures</span><span class="v mono" id="x-fail">…</span></div>
+      <div class="row"><span class="k">Failure rate</span><span class="v mono" id="x-rate">…</span></div>
+      <div class="row"><span class="k">Consecutive failures</span><span class="v mono" id="x-streak">…</span></div>
+      <div class="row" style="align-items:flex-start"><span class="k">Last error</span><span class="v err" id="x-err">—</span></div>
+      <div class="age" id="x-age">…</div>
+    </section>
+
+    <section class="card">
+      <h2>Engine update</h2>
+      <div class="row"><span class="k">State</span><span class="v mono" id="u-state">…</span></div>
+      <div class="row"><span class="k">Latest version</span><span class="v mono" id="u-latest">…</span></div>
+      <div class="row"><span class="k">Last check</span><span class="v soft" id="u-check">…</span></div>
+      <div class="row"><span class="k">Last error</span><span class="v err mono" id="u-err">—</span></div>
+      <div class="row"><span class="k">Rollback</span><span class="v err mono" id="u-rollback">—</span></div>
+      <div class="notes" id="u-notes" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2>Health record</h2>
+      <div class="row"><span class="k">Crashes since install</span><span class="v mono" id="c-count">…</span></div>
+      <div class="row"><span class="k">Last crash</span><span class="v soft" id="c-last">—</span></div>
+      <div class="row"><span class="k">CDN refusals (total)</span><span class="v mono" id="c-refusal">…</span></div>
+      <div class="row"><span class="k">CDN refusals (open range)</span><span class="v mono" id="c-refusal-open">…</span></div>
+      <div class="age">crashes are captured in the engine state dir</div>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:12px">
+    <h2>Latency percentiles (last ~256 samples)</h2>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>metric</th><th>count</th><th>p50</th><th>p90</th><th>p99</th><th>max</th></tr></thead>
+        <tbody id="latency-body"><tr><td colspan="6" style="color:var(--muted);text-align:left">waiting for first snapshot…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Wearsic · <code id="f-version">…</code> · status page served by your engine — the API itself lives under
+    <code>/api/*</code> and needs an API key; <code>/health</code>, <code>/diag</code> and <code>/ready</code> are public.
+  </footer>
+</div>
+
+<script>
+window.__W__ = "__WEARSIC_BOOT__";
+</script>
+<script>
+"use strict";
+(function () {
+  var state = window.__W__ || {};
+  var bootAt = state.nowMillis || Date.now();
+  function now() { return Date.now(); }
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  function fmtMs(ms) {
+    if (ms == null) return "—";
+    return ms >= 10000 ? (ms / 1000).toFixed(1) + " s" : Math.round(ms) + " ms";
+  }
+  function fmtUptime(ms) {
+    if (!ms) return "—";
+    var s = Math.floor(ms / 1000), d = Math.floor(s / 86400);
+    s -= d * 86400; var h = Math.floor(s / 3600); s -= h * 3600; var m = Math.floor(s / 60);
+    return (d > 0 ? d + "d " : "") + (d > 0 || h > 0 ? h + "h " : "") + m + "m";
+  }
+  function timeAgo(epochMillis) {
+    if (!epochMillis) return "—";
+    var diff = Math.max(0, now() - epochMillis), s = Math.floor(diff / 1000);
+    if (s < 90) return s + "s ago";
+    if (s < 5400) return Math.floor(s / 60) + "m ago";
+    if (s < 259200) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  }
+  function set(id, html) { var el = document.getElementById(id); if (el) el.innerHTML = html; }
+
+  // ---- Renderers ----
+  function renderHealth(h) {
+    if (!h) return;
+    var version = h.version || "?";
+    set("version", esc(version));
+    set("f-version", esc(version));
+    set("sub", esc(h.serverName || "Wearsic Engine") + (h.uptimeMs ? " · up " + fmtUptime(h.uptimeMs) : ""));
+    set("uptime-age", "server uptime " + (h.uptimeMs ? fmtUptime(h.uptimeMs) : "—"));
+
+    var pill = document.getElementById("pill");
+    set("pill", esc("ALIVE"));
+    pill.className = "pill ok";
+
+    var x = h.extraction || {};
+    set("x-ok", esc(String(x.successCount != null ? x.successCount : "…")));
+    set("x-fail", esc(String(x.failureCount != null ? x.failureCount : "…")));
+    set("x-rate", esc(x.failureRatePercent == null ? "…" : x.failureRatePercent + "%"));
+    var streak = x.consecutiveFailures;
+    var streakEl = document.getElementById("x-streak");
+    if (streakEl) {
+      streakEl.textContent = streak == null ? "…" : String(streak);
+      streakEl.style.color = streak > 0 ? "var(--amber)" : "";
+    }
+    set("x-err", x.lastError ? esc(x.lastError) : "—");
+    set("x-age", "last success " + timeAgo(x.lastSuccessAtMillis) + " · last failure " + timeAgo(x.lastFailureAtMillis));
+
+    var u = h.update || {};
+    set("u-state", '<span class="dot ' + (u.status === "staged" ? "warn" : "ok") + '"></span>' + esc(u.status || "unknown"));
+    set("u-latest", u.latestKnownVersion ? esc("v" + u.latestKnownVersion) : "—");
+    set("u-check", u.lastCheckAtMillis ? timeAgo(u.lastCheckAtMillis) : "never");
+    set("u-err", u.lastError ? esc(u.lastError) : "—");
+    set("u-rollback", u.rollbackReason ? esc(u.rollbackReason) : "—");
+    var notes = document.getElementById("u-notes");
+    if (u.latestNotes) { notes.hidden = false; notes.textContent = u.latestNotes; }
+    else { notes.hidden = true; }
+
+    set("c-count", esc(String(h.crashCount != null ? h.crashCount : "…")));
+    set("c-last", h.lastCrashAtMillis ? timeAgo(h.lastCrashAtMillis) : "none");
+    set("c-refusal", esc(String(h.upstreamRefusals != null ? h.upstreamRefusals : "…")));
+  }
+  function renderReady(r) {
+    if (!r) return;
+    function tile(id, ok, bad, text) {
+      var el = document.getElementById(id); if (!el) return;
+      var cls = ok === true ? "t-ok" : bad === true ? "t-bad" : "";
+      el.className = "t-val " + cls;
+      el.textContent = ok === true ? "YES" : bad === true ? "NO" : (text != null ? text : "…");
+    }
+    tile("t-ready", r.ready === true, r.ready === false);
+    tile("t-db", r.database === true, r.database === false);
+    tile("t-extract", r.extractor === true, r.extractor === false);
+    tile("t-trans", r.transcoder === true, r.transcoder === false);
+    // Canary: tri-state from the health payload (undefined until the first probe).
+    var h = state.health || {};
+    var c = h.canaryHealthy;
+    var canEl = document.getElementById("t-canary");
+    if (canEl) {
+      canEl.className = "t-val " + (c === true ? "t-ok" : c === false ? "t-bad" : "");
+      canEl.textContent = c === true ? "PASS" : c === false ? "FAIL" : "…";
+    }
+    // The header pill must say what the user would act on: when the engine
+    // cannot serve music, UNREADY is louder than ALIVE.
+    var pill = document.getElementById("pill");
+    if (r.ready === false) { pill.textContent = "UNREADY"; pill.className = "pill warn"; }
+    else if (r.ready === true) { pill.textContent = "READY"; pill.className = "pill ok"; }
+  }
+  function renderDiag(d) {
+    if (!d) return;
+    set("c-refusal-open", esc(String(d.upstreamOpenRangeRefusals != null ? d.upstreamOpenRangeRefusals : "…")));
+    var lat = d.latency || {};
+    var rows = [];
+    var names = Object.keys(lat).sort();
+    for (var i = 0; i < names.length; i++) {
+      var m = lat[names[i]];
+      var p99 = m.p99Ms || 0;
+      var cls = p99 >= 15000 ? "very-slow" : p99 >= 5000 ? "slow" : "";
+      rows.push(
+        "<tr><td>" + esc(names[i]) + "</td>" +
+        "<td>" + esc(String(m.count != null ? m.count : 0)) + "</td>" +
+        '<td class="' + cls + '">' + esc(fmtMs(m.p50Ms)) + "</td>" +
+        '<td class="' + cls + '">' + esc(fmtMs(m.p90Ms)) + "</td>" +
+        '<td class="' + cls + '">' + esc(fmtMs(m.p99Ms)) + "</td>" +
+        '<td class="' + cls + '">' + esc(fmtMs(m.maxMs)) + "</td></tr>"
+      );
+    }
+    var body = document.getElementById("latency-body");
+    body.innerHTML = rows.length ? rows.join("") :
+      '<tr><td colspan="6" style="color:var(--muted);text-align:left">no requests measured yet</td></tr>';
+  }
+
+  // ---- Initial paint from the server-embedded snapshot ----
+  renderHealth(state.health);
+  renderDiag(state.diag);
+
+  // ---- Polled refresh (errors keep the last good data on screen) ----
+  function tick() {
+    fetch("/health", { cache: "no-store" }).then(function (r) { return r.json(); })
+      .then(function (j) { state.health = j; renderHealth(state.health); }).catch(function () {});
+    fetch("/ready", { cache: "no-store" }).then(function (r) { return r.json(); })
+      .then(function (j) { renderReady(j); }).catch(function () {});
+    fetch("/diag", { cache: "no-store" }).then(function (r) { return r.json(); })
+      .then(function (j) { state.diag = j; renderDiag(state.diag); }).catch(function () {});
+  }
+  tick();
+  setInterval(tick, 5000);
+})();
+</script>
+</body>
+</html>

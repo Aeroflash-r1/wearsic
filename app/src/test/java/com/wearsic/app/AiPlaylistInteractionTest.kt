@@ -4,6 +4,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.wearsic.app.ui.screens.PlaylistsScreen
@@ -38,7 +39,10 @@ class AiPlaylistInteractionTest {
 
         composeTestRule.onNodeWithTag("ai_playlist_button").performClick()
         composeTestRule.onNodeWithText("Playlist name...").performTextInput("Evening")
-        composeTestRule.onNodeWithText("Chill").performClick()
+        // The vibe chips sit in the panel's scrollable column, below the fold
+        // on a 44 mm round face — scroll them into view first or the click
+        // lands outside the viewport and the genre stays null.
+        composeTestRule.onNodeWithText("Chill").performScrollTo().performClick()
         composeTestRule.onNodeWithText("Create AI Playlist").performClick()
 
         assertEquals("Evening" to "chill", created)

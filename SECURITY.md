@@ -26,7 +26,8 @@ reports as confidential until a fix is available.
 
 The Server is designed to run on a private LAN or behind a private tunnel.
 
-- **Always set `WEARSIC_API_KEY`** when the Server is reachable by more
+- **Keep `WEARSIC_API_KEY` set** — the installer auto-generates one into
+  `.env`; replace it with a longer key when the Server is reachable by more
   than yourself.
 - Never expose the Server's administrative endpoints to the public internet
   without authentication.

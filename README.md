@@ -16,7 +16,7 @@ machine — no cloud service, no subscription.
 curl -fsSL https://github.com/Aeroflash-r1/wearsic/releases/download/v1.0.0/wearsic-server-v1.0.0.sh -o wearsic-server.sh
 chmod +x wearsic-server.sh && ./wearsic-server.sh install
 wearsic start
-wearsic url   # shows the LAN address + API key (open server? the key is blank)
+wearsic url   # shows the LAN address + the auto-generated API key
 ```
 
 Health sample (version pins are kept live for the release bumper):
@@ -36,9 +36,11 @@ pairing, port and Cloudflare-funnel instructions.
 and sideload it (`wearsic sideload v1.0.0`, or `adb install -r`).
 
 **3. Pair** — open the app → Settings → Server URL + API key (or push the
-> The API key is **optional**: `wearsic setup` leaves the server open on your
-> LAN (no auto-created key). Set one any time with `wearsic api-key <key>`.
 pairing file with `wearsic pair`). Done — search and play.
+
+> The installer **auto-generates** the API key into `.env` on first install —
+> `wearsic url` prints it for pairing. Change it any time with
+> `wearsic api-key <key>`.
 
 ## Features
 

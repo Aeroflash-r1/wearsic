@@ -32,7 +32,7 @@ wearsic start
 wearsic stop
 wearsic status
 wearsic restart
-wearsic url    # prints the LAN address and API key (blank = open server)
+wearsic url    # prints the LAN address and the auto-generated API key
 ```
 
 The server listens on `0.0.0.0:8080` by default. Override with
@@ -99,7 +99,9 @@ If any AI call fails the server silently falls back to classic ranking.
 
 ## Self-hosted security
 
-- Set `WEARSIC_API_KEY` if the server is reachable beyond your phone.
+- The installer already generates `WEARSIC_API_KEY` into `.env`; set a
+  longer one (or rotate it with `wearsic api-key`) if the server is reachable
+  beyond your phone.
 - Never expose an unauthenticated server to the public internet.
 - Keep the YouTube cookie and AI key secret.
 

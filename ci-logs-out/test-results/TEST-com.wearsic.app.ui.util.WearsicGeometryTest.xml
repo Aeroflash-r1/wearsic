@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.ui.util.WearsicGeometryTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-11-27T18:12:33.310Z" hostname="runnervm3lb7s" time="0.001">
+  <properties/>
+  <testcase name="negative distance treated like positive" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="panel width at its bottom edge equals the chord there" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="panel padding is clamped into sane bounds" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="chord beyond radius clamps to zero" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="centred panel keeps its bottom corners inside the circle" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="bar at the bezel keeps clear of the curve" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="a degenerate face yields the minimum padding rather than nonsense" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="chord narrows toward the edge" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="centre row uses full width" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="radius follows the shorter axis" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="safety cut shrinks symmetrically" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="degenerate zero canvas does not crash or go negative" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <testcase name="bar inset further inward gains width" classname="com.wearsic.app.ui.util.WearsicGeometryTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

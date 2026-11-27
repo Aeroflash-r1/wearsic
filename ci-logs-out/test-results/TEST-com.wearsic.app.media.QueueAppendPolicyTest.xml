@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.media.QueueAppendPolicyTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-11-27T18:12:32.278Z" hostname="runnervm3lb7s" time="0.001">
+  <properties/>
+  <testcase name="staleItemCount_whileDisconnected_stillBuffersForCurrentSong" classname="com.wearsic.app.media.QueueAppendPolicyTest" time="0.0"/>
+  <testcase name="genuinelyIdle_disconnected_startsPlayback" classname="com.wearsic.app.media.QueueAppendPolicyTest" time="0.0"/>
+  <testcase name="liveTimeline_appends" classname="com.wearsic.app.media.QueueAppendPolicyTest" time="0.0"/>
+  <testcase name="noCurrentSong_butLiveItems_appends" classname="com.wearsic.app.media.QueueAppendPolicyTest" time="0.0"/>
+  <testcase name="emptyTimeline_withCurrentSong_rebuildsKeepingCurrent" classname="com.wearsic.app.media.QueueAppendPolicyTest" time="0.001"/>
+  <testcase name="genuinelyIdle_emptyTimeline_startsPlayback" classname="com.wearsic.app.media.QueueAppendPolicyTest" time="0.0"/>
+  <testcase name="reconnecting_withCurrentSong_buffersInsteadOfHijacking" classname="com.wearsic.app.media.QueueAppendPolicyTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

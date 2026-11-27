@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.AlbumBrowsingTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-11-27T18:11:54.873Z" hostname="runnervm3lb7s" time="0.415">
+  <properties/>
+  <testcase name="emptyCatalog_explainsHowToDiscoverAlbums" classname="com.wearsic.app.AlbumBrowsingTest" time="0.206"/>
+  <testcase name="artworkCard_opensExactAlbum_andDeduplicatesIds" classname="com.wearsic.app.AlbumBrowsingTest" time="0.206"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

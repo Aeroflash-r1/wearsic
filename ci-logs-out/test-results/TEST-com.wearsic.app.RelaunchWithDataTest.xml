@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.RelaunchWithDataTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-11-27T18:12:27.235Z" hostname="runnervm3lb7s" time="0.613">
+  <properties/>
+  <testcase name="relaunch_withPersistedState_rendersAndStaysResponsive" classname="com.wearsic.app.RelaunchWithDataTest" time="0.251"/>
+  <testcase name="relaunch_reconciliation_isIdempotentAcrossRepeatedRuns" classname="com.wearsic.app.RelaunchWithDataTest" time="0.13"/>
+  <testcase name="relaunch_navigationAfterRestart_doesNotDeadlock" classname="com.wearsic.app.RelaunchWithDataTest" time="0.23"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

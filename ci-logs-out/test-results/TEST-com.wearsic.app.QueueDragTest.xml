@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.QueueDragTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-11-27T18:12:25.934Z" hostname="runnervm3lb7s" time="1.14">
+  <properties/>
+  <testcase name="draggingSongCardDown_shiftsNeighborCleanly_andReordersOnRelease" classname="com.wearsic.app.QueueDragTest" time="0.236"/>
+  <testcase name="compactRoundFace_longPressHitsExactCard" classname="com.wearsic.app.QueueDragTest" time="0.149"/>
+  <testcase name="longPressingUpperHalfOfSongCard_liftsThatExactCard_notPreviousCard" classname="com.wearsic.app.QueueDragTest" time="0.179"/>
+  <testcase name="draggingSongCardUp_reordersUpward" classname="com.wearsic.app.QueueDragTest" time="0.272"/>
+  <testcase name="quickTapOnSongCard_playsWithoutStartingDrag" classname="com.wearsic.app.QueueDragTest" time="0.164"/>
+  <testcase name="holdingNowPlayingCard_doesNotLiftOrMove" classname="com.wearsic.app.QueueDragTest" time="0.135"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

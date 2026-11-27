@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.wearsic.app.PlayerInteractionTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-11-27T18:12:24.337Z" hostname="runnervm3lb7s" time="1.591">
+  <properties/>
+  <testcase name="lyrics_compactRoundFace_activeLineStaysCenteredAndClearsHeader" classname="com.wearsic.app.PlayerInteractionTest" time="0.106"/>
+  <testcase name="actionsPage_rotaryScroll_doesNotTriggerNowPlayingVolumeHud" classname="com.wearsic.app.PlayerInteractionTest" time="0.161"/>
+  <testcase name="lyrics_synced_firstMiddleAndLastLine_remainVerticallyCentered" classname="com.wearsic.app.PlayerInteractionTest" time="0.131"/>
+  <testcase name="pageSwitch_opensActions_andReturnsToTransport" classname="com.wearsic.app.PlayerInteractionTest" time="0.173"/>
+  <testcase name="pageSwitchRoundTrip_reacquiresNowPlayingRotaryVolumeFocus" classname="com.wearsic.app.PlayerInteractionTest" time="0.208"/>
+  <testcase name="nowPlaying_keepsEveryControlInsideTheRoundFace" classname="com.wearsic.app.PlayerInteractionTest" time="0.12"/>
+  <testcase name="emptyPlayer_disablesTransport" classname="com.wearsic.app.PlayerInteractionTest" time="0.085"/>
+  <testcase name="songRow_longPress_doesNotAlsoPlay" classname="com.wearsic.app.PlayerInteractionTest" time="0.1"/>
+  <testcase name="nowPlaying_keepsALongSongTitleOnOneLine" classname="com.wearsic.app.PlayerInteractionTest" time="0.077"/>
+  <testcase name="nowPlaying_rotaryScroll_showsVolumeHudInsideBounds_andAutoHides" classname="com.wearsic.app.PlayerInteractionTest" time="0.108"/>
+  <testcase name="nowPlaying_showsTitleAndArtist_withoutDuration" classname="com.wearsic.app.PlayerInteractionTest" time="0.069"/>
+  <testcase name="pageSwitch_return_diagnostic" classname="com.wearsic.app.PlayerInteractionTest" time="0.127"/>
+  <testcase name="compactRoundFace_volumePillStaysInsideInscribedWatchCircle" classname="com.wearsic.app.PlayerInteractionTest" time="0.121"/>
+  <system-out><![CDATA[PAGEDIAG t0 composed: playPause=1 favorite=0 nowplayingRoot=1 actionsRoot=0 dots=1 cd=[Show player actions]
+PAGEDIAG after click1 (actions visible): playPause=1 favorite=1 nowplayingRoot=1 actionsRoot=1 dots=1 cd=[Show now playing]
+PAGEDIAG after click2 (nowplaying visible): playPause=1 favorite=0 nowplayingRoot=1 actionsRoot=0 dots=1 cd=[Show player actions]
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

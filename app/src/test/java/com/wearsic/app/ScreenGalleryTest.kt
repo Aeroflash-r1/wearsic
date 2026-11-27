@@ -413,7 +413,6 @@ class ScreenGalleryTest {
     fun home_feed() = shoot("22-home-feed") {
         HomeScreen(
             recentTracks = tracks.take(3),
-            mostPlayedTracks = tracks.take(4),
             recommendationsState = RecommendationsUiState(tracks = tracks.take(6)),
             favorites = tracks.take(3),
             isServerReachable = true,
@@ -446,7 +445,6 @@ class ScreenGalleryTest {
         WearsicHubScreen(
             playbackState = playback,
             recentTracks = tracks.take(3),
-            mostPlayedTracks = tracks.take(4),
             favoritesState = FavoritesUiState(tracks = tracks.take(4)),
             playlistsState = PlaylistsUiState(favorites = tracks.take(3), playlists = playlists),
             playlistDetailState = PlaylistDetailUiState(playlistId = "p1", tracks = tracks),
@@ -507,7 +505,6 @@ class ScreenGalleryTest {
         WearsicHubScreen(
             playbackState = PlaybackUiState(),
             recentTracks = tracks.take(2),
-            mostPlayedTracks = tracks.take(3),
             favoritesState = FavoritesUiState(tracks = tracks.take(4)),
             playlistsState = PlaylistsUiState(favorites = tracks.take(3), playlists = playlists),
             playlistDetailState = PlaylistDetailUiState(),

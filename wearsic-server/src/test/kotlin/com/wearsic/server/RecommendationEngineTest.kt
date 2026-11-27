@@ -172,6 +172,48 @@ class RecommendationEngineTest {
         assertEquals(1, gateway.relatedCalls.get())
     }
 
+    // ---------------- Recency boost ("NEW songs") ----------------
+
+    @Test
+    fun `engine boosts recent uploads without letting them outrank taste`() = runBlocking {
+        val gateway = object : YoutubeMetadataClient {
+            override suspend fun search(query: String): List<TrackDto> = emptyList()
+            override suspend fun streamTarget(videoId: String): StreamTarget? = null
+            override suspend fun suggestions(prefix: String): List<String> = emptyList()
+            override suspend fun related(videoId: String): List<TrackDto> = listOf(
+                TrackDto("n1", "New Song", "ArtistA", uploadAgeText = "2 weeks ago"),
+                TrackDto("o1", "Old Song", "ArtistA", uploadAgeText = "5 years ago"),
+                TrackDto("n2", "Other New", "ArtistC", uploadAgeText = "1 week ago"),
+                TrackDto("x1", "Age Mystery", "ArtistA", uploadAgeText = "whenever"),
+            )
+            override suspend fun searchAlbums(query: String): List<AlbumDto> = emptyList()
+            override suspend fun playlistByUrl(url: String): PlaylistTracksResponse? = null
+        }
+        val result = RecommendationEngine(gateway).build(
+            RecommendationEngine.Seeds(
+                trackIds = listOf("seed1"),
+                artists = setOf("artista"),
+                exclude = emptySet(),
+            )
+        )
+        // Fresh same-artist (10+25+8) beats stale same-artist (10+25); an
+        // unparseable age earns no boost; fresh OFF-artist (10+8) stays last.
+        assertEquals(listOf("n1", "o1", "x1", "n2"), result.map { it.videoId })
+    }
+
+    @Test
+    fun `age text converts to days and junk is ignored`() {
+        assertEquals(365L, RecommendationEngine.ageTextToDays("1 year ago"))
+        assertEquals(90L, RecommendationEngine.ageTextToDays("3 months ago"))
+        assertEquals(14L, RecommendationEngine.ageTextToDays("2 weeks ago"))
+        assertEquals(5L, RecommendationEngine.ageTextToDays("5 days ago"))
+        assertEquals(0L, RecommendationEngine.ageTextToDays("5 hours ago"), "sub-day rounds to 0 — still 'recent'")
+        assertEquals(3L, RecommendationEngine.ageTextToDays("Streamed 3 days ago"), "prefix is tolerated")
+        assertEquals(null, RecommendationEngine.ageTextToDays("whenever"))
+        assertEquals(null, RecommendationEngine.ageTextToDays(null))
+        assertEquals(null, RecommendationEngine.ageTextToDays(""))
+    }
+
     private fun runBlocking(block: suspend () -> Unit) =
         kotlinx.coroutines.runBlocking { block() }
 }

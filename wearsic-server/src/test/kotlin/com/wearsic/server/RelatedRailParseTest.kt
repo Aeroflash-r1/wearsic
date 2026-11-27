@@ -35,6 +35,7 @@ class RelatedRailParseTest {
         assertEquals("Bruce Springsteen - Dancing In the Dark (Official Video)", tracks[0].title)
         assertEquals("Bruce Springsteen", tracks[0].uploader)
         assertEquals(239_000L, tracks[0].durationMs, "duration comes from the thumbnail badge")
+        assertEquals("17y ago", tracks[0].uploadAgeText, "age comes from metadata row 1")
         assertTrue(
             tracks[0].thumbnailUrl!!.contains("129kuDCQtHs"),
             "thumbnail is the lockup's image, got ${tracks[0].thumbnailUrl}"

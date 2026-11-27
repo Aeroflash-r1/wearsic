@@ -232,12 +232,20 @@ fi
 grep -q 'die()  { shim_clear_live; shim_cursor_show;' "$CLI" \
   && pass "the CLI's die() restores the cursor" \
   || fail "the CLI's die() does not restore the cursor"
-grep -q "trap 'shim_clear_live; shim_cursor_show; shim_cleanup" "$CLI" \
-  && pass "the CLI's exit trap restores the cursor" \
-  || fail "the CLI has no cursor-restoring exit trap"
+grep -q "trap 'cli_cleanup" "$CLI" \
+  && pass "the CLI's exit trap runs cleanup" \
+  || fail "the CLI has no cleanup exit trap"
+if grep -q 'cli_cleanup() {' "$CLI" \
+   && grep -q 'shim_stop_children' "$CLI" \
+   && grep -q 'download_cleanup' "$CLI" \
+   && grep -q 'shim_cursor_show; shim_cleanup' "$CLI"; then
+  pass "CLI cleanup restores the cursor and reaps animation/download children"
+else
+  fail "CLI cleanup does not restore the cursor / reap children"
+fi
 
 # Ctrl+C: the real CLI traps SIGINT and puts the cursor back.
-grep -q "shim_cursor_show; shim_cleanup; exit 130' INT" "$CLI" \
+grep -q "trap 'cli_cleanup; exit 130' INT" "$CLI" \
   && pass "the CLI traps SIGINT and restores the cursor" \
   || fail "the CLI does not restore the cursor on SIGINT"
 

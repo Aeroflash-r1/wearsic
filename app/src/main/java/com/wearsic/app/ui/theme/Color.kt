@@ -144,5 +144,9 @@ val WearsicAppColorChoices: List<Pair<String, Color>> = listOf(
     "Sky" to Color(0xFF8FD3FE),
     "Mint" to Color(0xFF7FD8B4),
     "Violet" to Color(0xFF8A5CF6),
-    "Teal" to Color(0xFF5FD4C8)
+    "Teal" to Color(0xFF5FD4C8),
+    // Monochrome grey — a neutral, production-console silver for users who
+    // want no hue at all. Surfaces stay OLED black, so the app reads as a
+    // disciplined grey/black/white system.
+    "Graphite" to Color(0xFFBDC1C6)
 )

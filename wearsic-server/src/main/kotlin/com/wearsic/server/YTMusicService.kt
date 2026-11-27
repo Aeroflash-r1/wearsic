@@ -1,5 +1,6 @@
 package com.wearsic.server
 
+import kotlinx.coroutines.future.await
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -86,6 +87,8 @@ class YTMusicService(
         /** Repeat searches within this window skip the InnerTube round trip. */
         const val SEARCH_CACHE_TTL_MS: Long = 5 * 60 * 1000L // 5 minutes
         private const val SEARCH_CACHE_MAX_SIZE = 64
+
+        private const val REQUEST_TIMEOUT_MS = 5_000L
 
         private const val USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0"
@@ -174,7 +177,6 @@ class YTMusicService(
                         continuation = token,
                     )
                 )
-                pages++
             }
             out
         }.onFailure { e ->
@@ -235,11 +237,13 @@ class YTMusicService(
             .build()
     }
 
+    private class YtmHttpStatusException(val status: Int) :
+        java.io.IOException("YTM HTTP $status")
+
     private suspend fun postInnerTube(url: String, body: String): String {
         postJson?.let { return it(url, body) }
-        // A single 429/5xx previously dropped straight to the ~4.7s NewPipe
-        // scrape. Two quick retries with exponential backoff + jitter turn
-        // a transient throttle into a sub-second success.
+        // Only transient statuses are retried. Replaying a terminal 400/401/
+        // 403 three times tripled bot-wall traffic and delayed every fallback.
         var lastError: Exception? = null
         repeat(3) { attempt ->
             try {
@@ -247,6 +251,9 @@ class YTMusicService(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 lastError = e
+                val status = (e as? YtmHttpStatusException)?.status
+                val retryable = status == null || status == 408 || status == 429 || status >= 500
+                if (!retryable) throw e
                 if (attempt < 2) {
                     kotlinx.coroutines.delay(120L * (1L shl attempt) + kotlin.random.Random.nextLong(0, 120))
                 }
@@ -256,22 +263,22 @@ class YTMusicService(
     }
 
     private suspend fun postInnerTubeOnce(url: String, body: String): String {
-        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val builder = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
-                .timeout(java.time.Duration.ofMillis(15_000))
-                .header("Content-Type", "application/json")
-                .header("Accept", "*/*")
-                .header("Origin", "https://music.youtube.com")
-                .header("User-Agent", USER_AGENT)
-            // Logged-in requests pass bot-walls that reject anonymous ones.
-            YoutubeSession.cookie?.let { builder.header("Cookie", it) }
-            val req = builder
-                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
-                .build()
-            val resp = ytmHttp.send(req, java.net.http.HttpResponse.BodyHandlers.ofString())
-            if (resp.statusCode() != 200) throw java.io.IOException("YTM HTTP ${resp.statusCode()}")
-            resp.body()
-        }
+        val builder = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
+            .timeout(java.time.Duration.ofMillis(REQUEST_TIMEOUT_MS))
+            .header("Content-Type", "application/json")
+            .header("Accept", "*/*")
+            .header("Origin", "https://music.youtube.com")
+            .header("User-Agent", USER_AGENT)
+        // Logged-in requests pass bot-walls that reject anonymous ones.
+        YoutubeSession.cookie?.let { builder.header("Cookie", it) }
+        val req = builder
+            .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
+            .build()
+        // sendAsync + cancellable await makes the orchestrator's page budget
+        // real: an abandoned search no longer occupies an IO worker for 15s.
+        val resp = ytmHttp.sendAsync(req, java.net.http.HttpResponse.BodyHandlers.ofString()).await()
+        if (resp.statusCode() != 200) throw YtmHttpStatusException(resp.statusCode())
+        return resp.body()
     }
 
     override fun close() {
@@ -326,24 +333,25 @@ class YTMusicService(
         // Recursive walk is layout-agnostic: any musicResponsiveListItemRenderer
         // anywhere in the tree is a candidate song row.
         val out = mutableListOf<YtmTrack>()
-        collectSongRenderers(root, out, limit)
-        // The same song can appear in several shelves of one response; a
-        // duplicate row must never displace a second distinct song from the
-        // (limited) result page.
-        return out.distinctBy { it.videoId }
+        // Dedupe WHILE collecting: repeated shelf rows used to consume the
+        // requested limit, producing a short/weak page and triggering the
+        // expensive general-YouTube rescue for no benefit.
+        collectSongRenderers(root, out, limit, mutableSetOf())
+        return out
     }
 
     private fun collectSongRenderers(
         element: kotlinx.serialization.json.JsonElement,
         out: MutableList<YtmTrack>,
         limit: Int,
+        seenIds: MutableSet<String>,
     ) {
         if (out.size >= limit) return
         val obj = runCatching { element.jsonObject }.getOrNull() ?: return
         // Direct hit: this object IS a shelf entry wrapper.
         obj.getObject("musicResponsiveListItemRenderer")?.let { renderer ->
             parseItem(renderer)?.let {
-                if (out.size < limit) out.add(it)
+                if (seenIds.add(it.videoId) && out.size < limit) out.add(it)
             }
             // Still descend: siblings may hide in adjacent keys, but don't
             // double-count this renderer itself.
@@ -356,10 +364,10 @@ class YTMusicService(
                 val arr = child.jsonArray
                 for (item in arr) {
                     if (out.size >= limit) break
-                    collectSongRenderers(item, out, limit)
+                    collectSongRenderers(item, out, limit, seenIds)
                 }
             }.getOrNull() ?: runCatching {
-                collectSongRenderers(child, out, limit)
+                collectSongRenderers(child, out, limit, seenIds)
             }
         }
     }

@@ -87,7 +87,14 @@ fi
 # Defined BEFORE the JVM-bootstrap block below: that block reports through
 # `log`, and a bash function must already exist when it is called (the old
 # order meant a shim-recovery path printed "log: command not found").
-log() { echo "[wearsic $(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
+log() {
+  local line
+  line="[wearsic $(date '+%H:%M:%S')] $*"
+  printf '%s\n' "$line" >>"$LOG"
+  # Supervisor output belongs in the log, not over the CLI's live UI.
+  [ "${WEARSIC_SUPERVISOR_VERBOSE:-0}" = "1" ] && printf '%s\n' "$line"
+  return 0
+}
 
 # The `__aot_*` entry points are CLI subcommands: they print their own plain
 # output and must not scatter supervisor chatter into it or append detection

@@ -1,8 +1,10 @@
 package com.wearsic.server
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Multi-seed "made for you" recommendations.
@@ -43,6 +45,35 @@ class RecommendationEngine(
         /** Boost per matching genre keyword. */
         private const val GENRE_BOOST = 6
 
+        /** Boost for an upload newer than [RECENT_UPLOAD_DAYS] — "new" should
+         *  mean new-ish, not merely unheard. Kept below the artist boost so
+         *  taste still outranks freshness. */
+        private const val RECENT_UPLOAD_BOOST = 8
+
+        /** Uploads at most this many days old count as "recent". */
+        internal const val RECENT_UPLOAD_DAYS = 365L
+
+        /** "17y ago", "3 months ago", "2 days ago", "5 hours ago". */
+        private val AGE_TEXT_RE =
+            Regex("(\\d+)\\s*(year|month|week|day|hour)s?\\s*ago", RegexOption.IGNORE_CASE)
+
+        /** Upload-age text ("3 months ago", "17y ago") → approximate days. Null when unparseable. */
+        internal fun ageTextToDays(text: String?): Long? {
+            if (text.isNullOrBlank()) return null
+            val m = AGE_TEXT_RE.find(text) ?: return null
+            val n = m.groupValues[1].toLongOrNull() ?: return null
+            return when (m.groupValues[2].lowercase()) {
+                "year" -> n * 365
+                "month" -> n * 30
+                "week" -> n * 7
+                "day" -> n
+                else -> n / 24 // "hours ago"
+            }
+        }
+
+        /** One slow seed must not hold every other recommendation hostage. */
+        internal const val RELATED_TIMEOUT_MS = 12_000L
+
         /**
          * Keyword groups for common vibe/Genre hints. A candidate matching a
          * hint's group earns [GENRE_BOOST]; matching several is fine, but the
@@ -71,7 +102,14 @@ class RecommendationEngine(
         coroutineScope {
             seeds.trackIds.take(MAX_SEEDS).map { seedId ->
                 async(Dispatchers.IO) {
-                    runCatching { gateway.related(seedId) }.getOrDefault(emptyList())
+                    try {
+                        withTimeoutOrNull(RELATED_TIMEOUT_MS) { gateway.related(seedId) }
+                            ?: emptyList()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
                 }
             }.forEach { deferred ->
                 val related = deferred.await()
@@ -108,6 +146,11 @@ class RecommendationEngine(
                 if (keywords.any { haystack.contains(it) }) genreBoost += GENRE_BOOST
             }
             s += genreBoost.coerceAtMost(seeds.genres.size * GENRE_BOOST)
+        }
+        // Recency: between otherwise-equal candidates the fresher upload wins.
+        // Unparseable or missing age text simply earns no boost.
+        if (ageTextToDays(track.uploadAgeText)?.let { it <= RECENT_UPLOAD_DAYS } == true) {
+            s += RECENT_UPLOAD_BOOST
         }
         return s
     }

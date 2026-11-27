@@ -50,13 +50,15 @@ class ApiIntegrationTest {
         apiKey: String? = null,
         healthMeter: ExtractionHealthMeter? = null,
         lyricsService: LyricsService = LyricsService(FakeLyricsProvider()),
+        gateway: YoutubeMetadataClient = FakeGateway(),
+        metadataSource: MetadataSource? = null,
+        aiReranker: AiReRanker? = null,
         block: suspend ApplicationTestBuilder.() -> Unit,
     ) = testApplication {
         val dbFile = Files.createTempFile("wearsic-test", ".db").toFile().apply { deleteOnExit() }
         val database = Database(dbFile.absolutePath)
-        val gateway = FakeGateway()
         val orchestrator = MetadataSearchOrchestrator(
-            metadata = object : MetadataSource {
+            metadata = metadataSource ?: object : MetadataSource {
                 override suspend fun searchSongs(query: String, limit: Int) = emptyList<YtmTrack>()
                 override fun toTrackDto(track: YtmTrack) = TrackDto(track.videoId, "t", "u")
             },
@@ -70,7 +72,11 @@ class ApiIntegrationTest {
 
         application {
             // module() installs ContentNegotiation itself — do not duplicate it here.
-            module(gateway, database, audioProxy, apiKey, orchestrator, transcoder, healthMeter, lyricsService = lyricsService)
+            module(
+                gateway, database, audioProxy, apiKey, orchestrator, transcoder, healthMeter,
+                lyricsService = lyricsService,
+                aiReRankerOverride = aiReranker,
+            )
         }
         block()
     }
@@ -354,6 +360,102 @@ class ApiIntegrationTest {
     fun `playlist without url parameter returns 400`() = withServer {
         val resp = client.get("/api/playlist")
         assertEquals(HttpStatusCode.BadRequest, resp.status)
+    }
+
+    // ---------------- AI playlist ----------------
+
+    private class CatalogMetadata : MetadataSource {
+        override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> =
+            (1..limit).map { i ->
+                YtmTrack(
+                    videoId = "song%07d".format(i),
+                    title = "Chill song $i",
+                    artist = "Artist $i",
+                    durationMs = 180_000L,
+                )
+            }
+
+        override fun toTrackDto(track: YtmTrack) = TrackDto(
+            videoId = track.videoId,
+            title = track.title ?: "Unknown",
+            uploader = track.artist ?: "Unknown",
+            durationMs = track.durationMs ?: 0L,
+        )
+    }
+
+    @Test
+    fun `AI playlist works without listening history and persists tracks`() =
+        withServer(metadataSource = CatalogMetadata()) {
+            val created = client.post("/api/ai/playlist") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Evening","genres":["chill"],"seedTrackIds":[],"limit":5}""")
+            }
+            assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+            val body = Json.parseToJsonElement(created.bodyAsText()).jsonObject
+            assertEquals(5, body["tracks"]!!.jsonArray.size)
+            assertEquals(false, body["aiUsed"]!!.jsonPrimitive.content.toBoolean())
+
+            val playlists = Json.parseToJsonElement(client.get("/api/playlists").bodyAsText()).jsonArray
+            assertEquals(1, playlists.size)
+            val id = playlists[0].jsonObject["id"]!!.jsonPrimitive.content
+            val detail = Json.parseToJsonElement(client.get("/api/playlists/$id").bodyAsText()).jsonObject
+            assertEquals(5, detail["tracks"]!!.jsonArray.size)
+        }
+
+    @Test
+    fun `AI playlist reports actual provider success and failure accurately`() {
+        val catalog = CatalogMetadata()
+        val tracks = (1..20).map { i ->
+            TrackDto("song%07d".format(i), "Song $i", "Artist $i")
+        }
+        val successReranker = AiReRanker(
+            apiKey = "provider-secret",
+            throttleMs = 0,
+            postChat = { _, _, _ ->
+                200 to """{"choices":[{"message":{"role":"assistant","content":"${tracks[1].videoId}"}}]}"""
+            },
+        )
+        withServer(metadataSource = catalog, aiReranker = successReranker) {
+            val response = client.post("/api/ai/playlist") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Ranked","genres":["chill"],"limit":5}""")
+            }
+            assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
+            val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+            assertEquals("true", body["aiUsed"]!!.jsonPrimitive.content)
+            assertEquals(tracks[1].videoId, body["tracks"]!!.jsonArray.first().jsonObject["videoId"]!!.jsonPrimitive.content)
+        }
+
+        val failedReranker = AiReRanker(
+            apiKey = "provider-secret",
+            throttleMs = 0,
+            postChat = { _, _, _ -> 503 to "unavailable" },
+        )
+        withServer(metadataSource = catalog, aiReranker = failedReranker) {
+            val response = client.post("/api/ai/playlist") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"name":"Fallback","genres":["chill"],"limit":5}""")
+            }
+            assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
+            val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+            assertEquals("false", body["aiUsed"]!!.jsonPrimitive.content)
+        }
+    }
+
+    @Test
+    fun `AI playlist validates name and reports an exhausted catalog`() = withServer {
+        val blank = client.post("/api/ai/playlist") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"name":"  "}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, blank.status)
+
+        val missing = client.post("/api/ai/playlist") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"name":"Empty","genres":["chill"]}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, missing.status)
+        assertTrue(missing.bodyAsText().contains("No songs found"), missing.bodyAsText())
     }
 
     // ---------------- Cookie config (must never echo the value; never writable in open mode) ----------------

@@ -31,6 +31,8 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -874,20 +876,28 @@ class WearsicHttpApiClient(
                 .url("$sanitizedUrl/api/ai/playlist")
                 .post(body)
                 .build()
-            runInterruptible { client.newCall(httpRequest).execute() }.use { response ->
+            // Playlist creation may need several related-track lookups and an
+            // optional model call; the normal 30s API budget is too short.
+            runInterruptible { slowClient.newCall(httpRequest).execute() }.use { response ->
+                val text = runInterruptible { response.body?.string() }.orEmpty()
                 if (!response.isSuccessful) {
+                    val serverMessage = runCatching {
+                        json.parseToJsonElement(text).jsonObject["error"]
+                            ?.jsonPrimitive?.content
+                    }.getOrNull()?.takeIf { it.isNotBlank() }
                     return@withContext Result.failure(
                         HttpError(
                             "$sanitizedUrl/api/ai/playlist",
                             response.code,
                             "Server error: HTTP ${response.code}",
+                            serverMessage = serverMessage,
                         )
                     )
                 }
                 WearsicHttp.noteMutation()
-                val text = runInterruptible { response.body?.string() }.orEmpty()
                 try {
-                    Result.success(json.decodeFromString<AiPlaylistResponseDto>(text))
+                    val dto = json.decodeFromString<AiPlaylistResponseDto>(text)
+                    Result.success(dto.copy(tracks = dto.tracks.withStreamUrls(sanitizedUrl)))
                 } catch (e: Exception) {
                     logDecodeFailure(e)
                     Result.failure(UnknownError("Could not parse AI playlist response", e))

@@ -153,6 +153,7 @@ dependencies {
 // CI (x86_64) and Macs still run the full suite. When adding a Robolectric
 // (or Roborazzi) test, append its class here or ARM builds go red.
 val robolectricOnlyClasses = listOf(
+  "com.wearsic.app.AiPlaylistInteractionTest",
   "com.wearsic.app.AlbumBrowsingTest",
   "com.wearsic.app.DownloadOwnershipTest",
   "com.wearsic.app.ExampleRobolectricTest",

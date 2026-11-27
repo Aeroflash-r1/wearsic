@@ -22,6 +22,13 @@ data class TrackDto(
      * guessing from the title alone.
      */
     val albumName: String? = null,
+    /**
+     * Raw upload-age text from the related rail ("17y ago", "3 months ago").
+     * Not parsed into a date — YouTube serves human text, not timestamps —
+     * so the recommendation engine translates it into a recency boost.
+     * Null on sources that do not carry it (search rows, extractor path).
+     */
+    val uploadAgeText: String? = null,
 )
 
 @Serializable

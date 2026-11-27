@@ -164,7 +164,6 @@ fun WearsicApp(
                             // library refresh never recomposes the other screens.
                             composable(Screen.Hub.route) {
                                 val recentTracks by libraryVM.recentTracks.collectAsStateWithLifecycle()
-                                val mostPlayedTracks by libraryVM.mostPlayedTracks.collectAsStateWithLifecycle()
                                 val favoritesState by libraryVM.favoritesState.collectAsStateWithLifecycle()
                                 val playlistsState by libraryVM.playlistsState.collectAsStateWithLifecycle()
                                 val playlistDetailState by libraryVM.playlistDetailState.collectAsStateWithLifecycle()
@@ -209,7 +208,6 @@ fun WearsicApp(
                                     playbackState = stablePlaybackState,
                                     currentTrackId = stablePlaybackState.currentTrack.id.takeIf { it.isNotBlank() },
                                     recentTracks = recentTracks,
-                                    mostPlayedTracks = mostPlayedTracks,
                                     favoritesState = favoritesState,
                                     playlistsState = playlistsState,
                                     playlistDetailState = playlistDetailState,
@@ -679,8 +677,14 @@ fun WearsicApp(
                             // Playlists & Favorites hub
                             composable(Screen.Playlists.route) {
                                 val playlistsState by libraryVM.playlistsState.collectAsStateWithLifecycle()
+                                val aiCreateState by libraryVM.aiCreateState.collectAsStateWithLifecycle()
                                 PlaylistsScreen(
                                     playlistsState = playlistsState,
+                                    aiCreateState = aiCreateState,
+                                    onCreateAiPlaylist = { name, genre ->
+                                        libraryVM.createAiPlaylist(name, genre)
+                                    },
+                                    onClearAiCreate = { libraryVM.clearAiCreateResult() },
                                     onRefresh = {
                                         libraryVM.refreshLibrary()
                                     },

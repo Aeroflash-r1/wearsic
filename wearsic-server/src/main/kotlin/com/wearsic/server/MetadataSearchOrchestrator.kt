@@ -141,6 +141,25 @@ class MetadataSearchOrchestrator(
     private class SearchPool(val tracks: List<TrackDto>, val expiresAt: Long)
 
     private val searchPoolCache = BoundedCache<String, SearchPool>(64)
+    /** Identical cache misses share one upstream build instead of duplicating it. */
+    private val searchPoolFlights = SingleFlight<String, List<TrackDto>>()
+
+    /** Keep a slow, shallow build from replacing a deeper page that finished first. */
+    private fun cacheSearchPool(query: String, tracks: List<TrackDto>) {
+        if (tracks.isEmpty()) return
+        synchronized(searchPoolCache) {
+            val current = searchPoolCache.get(query)
+            val merged = if (current != null && current.expiresAt >= System.currentTimeMillis()) {
+                if (current.tracks.size >= tracks.size) current.tracks else tracks
+            } else {
+                tracks
+            }
+            searchPoolCache.put(
+                query,
+                SearchPool(merged, System.currentTimeMillis() + SEARCH_POOL_TTL_MS),
+            )
+        }
+    }
 
     suspend fun search(query: String, limit: Int = 10, offset: Int = 0): List<TrackDto> =
         LatencyMetrics.time("search.total") { searchInternal(query, limit, offset) }
@@ -158,16 +177,29 @@ class MetadataSearchOrchestrator(
             // First build: keep it fast — only enough rows for the requested
             // window (no speculative 2x fetches on the first page).
             val budget = if (offsetClamped == 0) SEARCH_FIRST_PAGE_BUDGET_MS else SEARCH_TOTAL_BUDGET_MS
-            val built = buildPool(normalized, requiredEnd, budget, emptyList())
-            searchPoolCache.put(normalized, SearchPool(built, now + SEARCH_POOL_TTL_MS))
+            val built = searchPoolFlights.run("$normalized@$requiredEnd") {
+                // Another caller may have filled the cache before this flight
+                // became the winner; never repeat its upstream work.
+                searchPoolCache.get(normalized)
+                    ?.takeIf { System.currentTimeMillis() <= it.expiresAt && it.tracks.size >= requiredEnd }
+                    ?.tracks
+                    ?: buildPool(normalized, requiredEnd, budget, emptyList())
+            }
+            // Empty usually means an upstream timeout/failure. Caching it for
+            // five minutes turned one transient miss into a long empty page.
+            cacheSearchPool(normalized, built)
             return built.drop(offsetClamped).take(limit)
         }
 
         var pool = entry.tracks
         if (pool.size < requiredEnd) {
             // "Show more": extend the pool to cover the deeper window.
-            val extended = buildPool(normalized, requiredEnd, SEARCH_TOTAL_BUDGET_MS, pool)
-            searchPoolCache.put(normalized, SearchPool(extended, now + SEARCH_POOL_TTL_MS))
+            val extended = searchPoolFlights.run("$normalized@$requiredEnd") {
+                val current = searchPoolCache.get(normalized)?.tracks ?: pool
+                if (current.size >= requiredEnd) current
+                else buildPool(normalized, requiredEnd, SEARCH_TOTAL_BUDGET_MS, current)
+            }
+            cacheSearchPool(normalized, extended)
             pool = extended
         }
         return pool.drop(offsetClamped).take(limit)

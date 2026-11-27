@@ -6,15 +6,20 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Far-left bar: near-dot size (10 units + rounded 5-unit caps) -->
+    <!-- Wearsic mark: five vertical bars on ONE shared baseline (y=69),
+         heights 10 / 20 / 30 / 20 / 10. The tops trace /\\ — two triangles
+         joined along the tall centre bar, both standing on the same base.
+         Round caps keep the silhouette friendly at launcher sizes. -->
+
+    <!-- Far-left bar: shortest (10 units) -->
     <path
-        android:pathData="M30,49 L30,59"
+        android:pathData="M30,59 L30,69"
         android:strokeWidth="5"
         android:strokeLineCap="round">
         <aapt:attr name="android:strokeColor">
             <gradient
-                android:startX="30" android:startY="48"
-                android:endX="30" android:endY="60"
+                android:startX="30" android:startY="58"
+                android:endX="30" android:endY="70"
                 android:type="linear">
                 <item android:offset="0.0" android:color="#FFE0D2FF" />
                 <item android:offset="1.0" android:color="#FF8A5CF6" />
@@ -22,15 +27,15 @@
         </aapt:attr>
     </path>
 
-    <!-- Left-middle bar: +10 units -->
+    <!-- Left-middle bar: medium (20 units) -->
     <path
-        android:pathData="M42,44 L42,64"
+        android:pathData="M42,49 L42,69"
         android:strokeWidth="5"
         android:strokeLineCap="round">
         <aapt:attr name="android:strokeColor">
             <gradient
-                android:startX="42" android:startY="43"
-                android:endX="42" android:endY="65"
+                android:startX="42" android:startY="48"
+                android:endX="42" android:endY="70"
                 android:type="linear">
                 <item android:offset="0.0" android:color="#FFE8D9FF" />
                 <item android:offset="1.0" android:color="#FF8A5CF6" />
@@ -38,7 +43,7 @@
         </aapt:attr>
     </path>
 
-    <!-- Center bar: tallest, +10 units again -->
+    <!-- Centre bar: tallest (30 units) — the peak both triangles share -->
     <path
         android:pathData="M54,39 L54,69"
         android:strokeWidth="5"
@@ -56,13 +61,13 @@
 
     <!-- Right-middle bar: mirror of the left-middle -->
     <path
-        android:pathData="M66,44 L66,64"
+        android:pathData="M66,49 L66,69"
         android:strokeWidth="5"
         android:strokeLineCap="round">
         <aapt:attr name="android:strokeColor">
             <gradient
-                android:startX="66" android:startY="43"
-                android:endX="66" android:endY="65"
+                android:startX="66" android:startY="48"
+                android:endX="66" android:endY="70"
                 android:type="linear">
                 <item android:offset="0.0" android:color="#FFE8D9FF" />
                 <item android:offset="1.0" android:color="#FF8A5CF6" />
@@ -72,13 +77,13 @@
 
     <!-- Far-right bar: mirror of the far-left dot -->
     <path
-        android:pathData="M78,49 L78,59"
+        android:pathData="M78,59 L78,69"
         android:strokeWidth="5"
         android:strokeLineCap="round">
         <aapt:attr name="android:strokeColor">
             <gradient
-                android:startX="78" android:startY="48"
-                android:endX="78" android:endY="60"
+                android:startX="78" android:startY="58"
+                android:endX="78" android:endY="70"
                 android:type="linear">
                 <item android:offset="0.0" android:color="#FFE0D2FF" />
                 <item android:offset="1.0" android:color="#FF8A5CF6" />

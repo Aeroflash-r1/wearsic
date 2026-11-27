@@ -1,5 +1,7 @@
 package com.wearsic.server
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -302,6 +304,78 @@ class OrchestratorFallbackTest {
         try {
             kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> { orchestrator.search("music") }
             assertTrue(youtube.searchCalls.isEmpty())
+        } finally { orchestrator.shutdown() }
+    }
+
+    @Test
+    fun `empty result is not cached after an upstream miss`() = runTest {
+        val metadata = FakeMetadataSource()
+        val orchestrator = MetadataSearchOrchestrator(metadata, FakeYoutubeMetadataClient())
+        try {
+            assertTrue(orchestrator.search("music").isEmpty())
+            metadata.tracks = (1..10).map { track("fresh$it", "Music song $it") }
+
+            val recovered = orchestrator.search("music")
+
+            assertEquals(10, recovered.size)
+            assertTrue(recovered.first().videoId.startsWith("fresh"))
+        } finally { orchestrator.shutdown() }
+    }
+
+    @Test
+    fun `concurrent identical searches share one pool build`() = runTest {
+        val metadata = object : MetadataSource {
+            var calls = 0
+            override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> {
+                calls++
+                delay(50)
+                return (1..limit).map { track("shared$it", "Music song $it") }
+            }
+            override fun toTrackDto(track: YtmTrack) = TrackDto(
+                videoId = track.videoId,
+                title = track.title ?: "Unknown",
+                uploader = track.artist ?: "Unknown",
+            )
+        }
+        val orchestrator = MetadataSearchOrchestrator(metadata, FakeYoutubeMetadataClient())
+        try {
+            val answers = (1..5).map {
+                async { orchestrator.search("music") }
+            }.awaitAll()
+
+            assertEquals(1, metadata.calls, "one upstream build must feed the whole burst")
+            assertTrue(answers.all { it.size == 10 })
+        } finally { orchestrator.shutdown() }
+    }
+
+    @Test
+    fun `slower shallow search cannot replace a completed deeper pool`() = runTest {
+        val metadata = object : MetadataSource {
+            var calls = 0
+            override suspend fun searchSongs(query: String, limit: Int): List<YtmTrack> {
+                calls++
+                if (limit == 5) delay(100)
+                else delay(10)
+                return (1..limit).map { track("depth%07d".format(it), "Music song $it") }
+            }
+            override fun toTrackDto(track: YtmTrack) = TrackDto(
+                videoId = track.videoId,
+                title = track.title ?: "Unknown",
+                uploader = track.artist ?: "Unknown",
+            )
+        }
+        val orchestrator = MetadataSearchOrchestrator(metadata, FakeYoutubeMetadataClient())
+        try {
+            val shallow = async { orchestrator.search("music", limit = 5) }
+            delay(5)
+            val deep = async { orchestrator.search("music", limit = 20) }
+            shallow.await()
+            deep.await()
+
+            val page = orchestrator.search("music", limit = 10, offset = 10)
+
+            assertEquals(10, page.size)
+            assertEquals(2, metadata.calls, "the cached deep pool should satisfy the later page")
         } finally { orchestrator.shutdown() }
     }
 

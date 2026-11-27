@@ -10,7 +10,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -660,7 +662,7 @@ class YoutubeGateway(
             }
             YoutubeSession.cookie?.let { builder.header("Cookie", it) }
             val body = try {
-                val resp = leanHttp.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+                val resp = leanHttp.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString()).await()
                 if (resp.statusCode() != 200) {
                     logger.info("Lean next ({}) for {}: HTTP {}", profile.clientName, videoId, resp.statusCode())
                     continue
@@ -770,6 +772,19 @@ class YoutubeGateway(
             ?.get("sources")?.jsonArray
         val thumbUrl = thumbs?.lastOrNull()?.jsonObject
             ?.get("url")?.jsonPrimitive?.contentOrNull
+        // Row 1's parts are [view count, upload age] ("515M", "17y ago").
+        // The age is the last part that reads like an age — used by the
+        // recommendation engine's recency boost.
+        val ageText = runCatching {
+            meta["metadata"]?.jsonObject
+                ?.get("contentMetadataViewModel")?.jsonObject
+                ?.get("metadataRows")?.jsonArray
+                ?.getOrNull(1)?.jsonObject
+                ?.get("metadataParts")?.jsonArray
+                ?.mapNotNull { it.jsonObject["text"]?.jsonObject
+                    ?.get("content")?.jsonPrimitive?.contentOrNull }
+                ?.lastOrNull { it.endsWith("ago", ignoreCase = true) }
+        }.getOrNull()
         // The duration lives on a thumbnail badge ("3:59"); the MUSIC badge
         // next to it has no text and is simply skipped.
         val seconds = runCatching {
@@ -793,6 +808,7 @@ class YoutubeGateway(
             uploader = uploader,
             durationMs = seconds * 1000,
             thumbnailUrl = thumbUrl,
+            uploadAgeText = ageText,
         )
     }
 
@@ -865,7 +881,13 @@ class YoutubeGateway(
 
         // Fast path first: one lean POST instead of a 10s watch-page fetch.
         val leanStarted = System.currentTimeMillis()
-        val lean = runCatching { leanRelated(videoId) }.getOrNull()
+        val lean = try {
+            leanRelated(videoId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
         val rankedLean = if (lean != null) rankRelated(lean, artist, title) else null
         if (rankedLean != null) {
             LatencyMetrics.record("related.lean", System.currentTimeMillis() - leanStarted)
@@ -874,21 +896,25 @@ class YoutubeGateway(
         }
 
         val extractStarted = System.currentTimeMillis()
-        val result = runCatching {
-            val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
-            extractor.fetchPage()
-            val related = extractor.relatedItems?.items
-                .orEmpty()
-                .filterIsInstance<StreamInfoItem>()
-                .filter { it.duration == 0L || it.duration in 30..(MAX_RELATED_MINUTES * 60) }
-                .mapNotNull { it.toTrackDtoOrNull() }
-                .distinctBy { it.videoId }
-                .take(MAX_RESULTS)
-            rankRelated(related, artist, title)
+        val result = try {
+            runInterruptible {
+                val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
+                extractor.fetchPage()
+                val related = extractor.relatedItems?.items
+                    .orEmpty()
+                    .filterIsInstance<StreamInfoItem>()
+                    .filter { it.duration == 0L || it.duration in 30..(MAX_RELATED_MINUTES * 60) }
+                    .mapNotNull { it.toTrackDtoOrNull() }
+                    .distinctBy { it.videoId }
+                    .take(MAX_RESULTS)
+                rankRelated(related, artist, title)
+            }.also { healthMeter?.recordSuccess() }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            healthMeter?.recordFailure("related: ${failure.message}")
+            emptyList()
         }
-            .onSuccess { healthMeter?.recordSuccess() }
-            .onFailure { healthMeter?.recordFailure("related: ${it.message}") }
-            .getOrDefault(emptyList())
         LatencyMetrics.record("related.extract", System.currentTimeMillis() - extractStarted)
         if (result.isNotEmpty()) relatedCache.put(cacheKey, Timed(result, now + RELATED_TTL_MS))
         result
@@ -1491,7 +1517,7 @@ fun orderByDominantArtist(tracks: List<TrackDto>): List<TrackDto> {
                     .header("Accept-Language", "en-US,en;q=0.9")
                     .GET()
                     .build()
-                val resp = leanHttp.send(req, HttpResponse.BodyHandlers.ofString())
+                val resp = leanHttp.sendAsync(req, HttpResponse.BodyHandlers.ofString()).await()
                 if (resp.statusCode() != 200) {
                     logger.info("Visitor id fetch: HTTP {}", resp.statusCode())
                     return@runCatching null
@@ -1544,10 +1570,9 @@ fun orderByDominantArtist(tracks: List<TrackDto>): List<TrackDto> {
     ): List<LeanAudio>? {
         if (!VIDEO_ID_RE.matches(videoId)) return null
         if (profiles.isEmpty()) return null
-        // Queries run on a DETACHED scope on purpose: java.net.http's send()
-        // is blocking and not cancellation-interruptible, so structured
-        // concurrency would keep this call parked in join() until a stalled
-        // client hit its timeout even after an answer was picked.
+        // Late answers are dropped after the first usable result. The HTTP
+        // calls use sendAsync + cancellable await, so cancelling this scope
+        // also aborts their sockets instead of leaving stalled IO workers.
         val queryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val answers = Channel<Pair<LeanClientProfile, List<LeanAudio>>>(Channel.UNLIMITED)
         profiles.forEach { profile ->
@@ -1579,30 +1604,37 @@ fun orderByDominantArtist(tracks: List<TrackDto>): List<TrackDto> {
         val collected = mutableListOf<Pair<LeanClientProfile, List<LeanAudio>>>()
         var firstGoodAt = 0L
         var preferredAnswered = false
-        while (collected.size < profiles.size) {
-            var answer = answers.tryReceive().getOrNull()
-            if (answer == null) {
-                if (firstGoodAt == 0L) {
-                    // Nothing good yet — a null return here would send the
-                    // caller into the slow extraction path, so keep waiting.
-                    answer = answers.receive()
-                } else {
-                    // Formats already exist, so this is a pure quality wait:
-                    // brief once the primary has answered (its tickets are
-                    // the wall-safe ones); longer while it is still silent.
-                    val budget = if (preferredAnswered) LEAN_ANSWER_GRACE_MS else LEAN_PREFERRED_WAIT_MS
-                    val left = budget - (System.currentTimeMillis() - firstGoodAt)
-                    if (left <= 0) break
-                    answer = withTimeoutOrNull(left) { answers.receive() } ?: break
+        try {
+            while (collected.size < profiles.size) {
+                var answer = answers.tryReceive().getOrNull()
+                if (answer == null) {
+                    if (firstGoodAt == 0L) {
+                        // Nothing good yet — a null return here would send the
+                        // caller into the slow extraction path, so keep waiting.
+                        answer = answers.receive()
+                    } else {
+                        // Formats already exist, so this is a pure quality wait:
+                        // brief once the primary has answered (its tickets are
+                        // the wall-safe ones); longer while it is still silent.
+                        val budget =
+                            if (preferredAnswered) LEAN_ANSWER_GRACE_MS else LEAN_PREFERRED_WAIT_MS
+                        val left = budget - (System.currentTimeMillis() - firstGoodAt)
+                        if (left <= 0) break
+                        answer = withTimeoutOrNull(left) { answers.receive() } ?: break
+                    }
+                }
+                collected += answer
+                if (answer.first === preferred) preferredAnswered = true
+                if (firstGoodAt == 0L && answer.second.isNotEmpty()) {
+                    firstGoodAt = System.currentTimeMillis()
                 }
             }
-            collected += answer
-            if (answer.first === preferred) preferredAnswered = true
-            if (firstGoodAt == 0L && answer.second.isNotEmpty()) {
-                firstGoodAt = System.currentTimeMillis()
-            }
+        } finally {
+            // Includes caller cancellation: detached HTTP requests must not outlive
+            // the search/playback operation that owns this format lookup.
+            queryScope.cancel()
+            answers.cancel()
         }
-        queryScope.cancel() // late answers are dropped by design
         // Client order — not arrival order — ranks the tickets: an early IOS
         // answer must not demote VISIONOS's wall-safe URLs.
         val audios = collected
@@ -1632,7 +1664,7 @@ fun orderByDominantArtist(tracks: List<TrackDto>): List<TrackDto> {
     }
 
     /** One client's audio formats; empty on any failure. */
-    private fun fetchLeanFormats(
+    private suspend fun fetchLeanFormats(
         videoId: String,
         profile: LeanClientProfile,
         visitorData: String?,
@@ -1661,7 +1693,7 @@ fun orderByDominantArtist(tracks: List<TrackDto>): List<TrackDto> {
         // Bot-challenge workaround, same as the extractor path: attach
         // the session cookie when one is configured.
         YoutubeSession.cookie?.let { builder.header("Cookie", it) }
-        val resp = leanHttp.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+        val resp = leanHttp.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString()).await()
         if (resp.statusCode() != 200) return emptyList()
         val root = Json.parseToJsonElement(resp.body()).jsonObject
         val playability = root["playabilityStatus"]?.jsonObject

@@ -165,7 +165,7 @@ cur_cols() {
   _COLS_CACHE="$c"; _COLS_AT="$now"
   printf '%s' "$c"
 }
-trap '_COLS_CACHE=""' WINCH 2>/dev/null || true
+trap '_COLS_CACHE=""; COLUMNS=""' WINCH 2>/dev/null || true
 
 ESC="$(printf '\033')"
 
@@ -212,7 +212,10 @@ grad_word() {
 # Middle-elide: "downloading wears…v1.9.4.zip" — keeps both ends readable.
 elide_mid() { # string maxwidth
   local s="$1" w="$2" keep h t
-  if [ "$w" -lt 6 ] || [ ${#s} -le "$w" ]; then printf '%s' "$s"; return 0; fi
+  if [ ${#s} -le "$w" ]; then printf '%s' "$s"; return 0; fi
+  if [ "$w" -le 0 ]; then printf ''; return 0; fi
+  if [ "$w" -eq 1 ]; then printf '…'; return 0; fi
+  if [ "$w" -lt 6 ]; then printf '%s' "${s:0:w}"; return 0; fi
   keep=$(( w - 1 )); h=$(( keep * 2 / 3 )); t=$(( keep - h ))
   printf '%s…%s' "${s:0:h}" "${s:$(( ${#s} - t ))}"
 }
@@ -332,7 +335,7 @@ brand() {
   local tw lp rp gap left right
   tw="$(box_tw)"
   SECTION_FIRST=1
-  left="$(printf '%s♪%s %s' "$C_ACC" "$C_RESET" "$(grad_word 'wearsic')")"
+  left="$(printf '%s▁▃▅▃▁%s %s' "$C_ACC" "$C_RESET" "$(grad_word 'wearsic')")"
   if [ -n "${1:-}" ]; then
     left="$left$(printf ' %s·%s %s%s%s' "$C_DIM" "$C_RESET" "$C_BOLD" "$1" "$C_RESET")"
   fi
@@ -429,30 +432,51 @@ dot() {
 }
 
 # Spinner. Disabled when piped so scripted output stays line-clean.
-SPIN_PID=""; SPIN_MSG=""
+SPIN_PID=""; SPIN_MSG=""; SPIN_ACTIVE=0; DOWNLOAD_PID=""
 spinner_start() {
   SPIN_MSG="$1"
-  if [ "$TTY_OUT" != "1" ]; then note "$1…"; return 0; fi
+  SPIN_ACTIVE=0
+  if [ "$TTY_OUT" != "1" ] || ! color_on; then note "$1…"; return 0; fi
   printf '  '
   ( while :; do for f in $'\033[38;5;255m⠋' $'\033[38;5;158m⠙' $'\033[38;5;120m⠹' $'\033[38;5;114m⠸' $'\033[38;5;114m⠼' $'\033[38;5;120m⠴' $'\033[38;5;158m⠦' $'\033[38;5;255m⠧' $'\033[38;5;158m⠇' $'\033[38;5;120m⠏'; do printf '\b%s\033[0m' "$f"; sleep 0.09; done; done ) &
   SPIN_PID=$!
+  SPIN_ACTIVE=1
 }
 spinner_stop() {
   local msg="${2:-$SPIN_MSG}"
   if [ -n "$SPIN_PID" ]; then kill "$SPIN_PID" 2>/dev/null; wait "$SPIN_PID" 2>/dev/null; SPIN_PID=""; fi
-  if [ "$TTY_OUT" = "1" ]; then printf '\b'; fi
+  if [ "$SPIN_ACTIVE" = "1" ]; then printf '\b'; fi
+  SPIN_ACTIVE=0
   if [ "${1:-0}" = "0" ]; then ok "$msg"; else err "$msg"; fi
   SPIN_MSG=""
 }
 
 
-# The cursor and the temp status file are restored even when the script dies
-# halfway through an animation (a failed download, Ctrl+C, an unexpected
-# error). `wearsic update` sets its own EXIT trap later and repeats both.
-trap 'shim_clear_live; shim_cursor_show; shim_cleanup; rm -rf "${UPDATE_WORK:-}"' EXIT
-# Ctrl+C (and a polite TERM) must never leave a hidden cursor behind.
-trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 130' INT
-trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 143' TERM
+spinner_cleanup() {
+  if [ -n "$SPIN_PID" ]; then
+    kill "$SPIN_PID" 2>/dev/null || true
+    wait "$SPIN_PID" 2>/dev/null || true
+    SPIN_PID=""
+  fi
+}
+download_cleanup() {
+  if [ -n "${DOWNLOAD_PID:-}" ]; then
+    kill "$DOWNLOAD_PID" 2>/dev/null || true
+    wait "$DOWNLOAD_PID" 2>/dev/null || true
+    DOWNLOAD_PID=""
+  fi
+}
+cli_cleanup() {
+  spinner_cleanup
+  download_cleanup
+  shim_stop_children
+  shim_clear_live; shim_cursor_show; shim_cleanup
+}
+# The cursor, temp files and every animation child are restored even when the
+# script dies halfway through a download or a wait.
+trap 'cli_cleanup; rm -rf "${UPDATE_WORK:-}"' EXIT
+trap 'cli_cleanup; exit 130' INT
+trap 'cli_cleanup; exit 143' TERM
 # ── WSHIM-CORE-BEGIN ───────────────────────────────────────────────────────
 # Shimmer: a soft highlight band travels left → right across the text.
 #
@@ -490,6 +514,7 @@ SHIM_LIVE_SHORT=""
 SHIM_STATUS_FILE=""
 SHIM_STAGE_NAME=""
 SHIM_STAGE_DETAIL=""
+SHIM_CHILD_PID=""
 
 # The shimmer palette is deliberately gray and self-contained: the file's own
 # theme (green/cyan/lavender) stays out of the animated area so the wave
@@ -529,8 +554,13 @@ shim_depth() {
 }
 
 shim_init() {
-  shim_palette
   SHIM_DEPTH="$(shim_depth)"
+  if [ "$SHIM_DEPTH" = "0" ]; then
+    # Plain output means PLAIN: no ANSI in stage summaries, logs, or pipes.
+    SHIM_DIM=""; SHIM_OK=""; SHIM_WARN=""; SHIM_ERR=""; SHIM_RESET=""
+  else
+    shim_palette
+  fi
 }
 
 # Smooth falloff: 100 at the band centre → 0 at the band edge.
@@ -813,11 +843,14 @@ shim_run() { # $1 = live text, rest = command
   local log rc=0
   log="$(mktemp "${TMPDIR:-/tmp}/wearsic-shim.XXXXXX" 2>/dev/null)" || log="/dev/null"
   SHIM_LIVE_TEXT="$text"
+  SHIM_LIVE_SHORT=""
   if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
     "$@" >"$log" 2>&1 &
     local pid=$!
+    SHIM_CHILD_PID="$pid"
     shim_animate "$pid"
     wait "$pid"; rc=$?
+    SHIM_CHILD_PID=""
     shim_clear_live
   else
     "$@" >"$log" 2>&1
@@ -1065,6 +1098,7 @@ shim_fetch_done() {
     line="…${line:$cut}"
   fi
   printf '\r%s[K%s\n' "$SHIM_ESC" "$line"
+  SHIM_LIVE_ACTIVE=0
 }
 
 shim_fetch_wait() {  # optional $1 = hard ceiling in seconds
@@ -1109,6 +1143,7 @@ shim_fetch_wait() {  # optional $1 = hard ceiling in seconds
 shim_stage_begin() { # $1 = stage name, $2 = detail (optional)
   SHIM_STAGE_NAME="$1"
   SHIM_STAGE_DETAIL="${2:-}"
+  SHIM_LIVE_SHORT=""
   SHIM_LIVE_TEXT="$1"
   [ -n "$SHIM_STAGE_DETAIL" ] && SHIM_LIVE_TEXT="$1  $SHIM_STAGE_DETAIL"
   [ "$SHIM_DEPTH" = "0" ] && return 0
@@ -1159,8 +1194,10 @@ shim_stage_run() { # $1 = stage name, $2 = detail, rest = command
   if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
     "$@" >"$log" 2>&1 &
     local pid=$!
+    SHIM_CHILD_PID="$pid"
     shim_animate "$pid"
     wait "$pid"; rc=$?
+    SHIM_CHILD_PID=""
     shim_clear_live
   else
     "$@" >"$log" 2>&1
@@ -1174,6 +1211,21 @@ shim_stage_run() { # $1 = stage name, $2 = detail, rest = command
   fi
   [ "$log" = "/dev/null" ] || rm -f "$log" 2>/dev/null
   return "$rc"
+}
+
+# Reap every child owned by the animation core before temp files are removed.
+# Safe to call repeatedly from EXIT/INT/TERM traps.
+shim_stop_children() {
+  local pid
+  for pid in "$SHIM_CHILD_PID" "$SHIM_FETCH_PID"; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    kill "$pid" 2>/dev/null || true
+  done
+  for pid in "$SHIM_CHILD_PID" "$SHIM_FETCH_PID"; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    wait "$pid" 2>/dev/null || true
+  done
+  SHIM_CHILD_PID=""; SHIM_FETCH_PID=""
 }
 
 # The animation is opt-in per terminal: a real TTY with colour support gets
@@ -1240,6 +1292,7 @@ download_bar() { # $1 = url, $2 = out file, $3 = label
   printf '  %s%s%s\n' "$C_DIM" "$label" "$C_RESET"
   curl -fL --retry 3 --retry-delay 2 -o "$out" "$url" >/dev/null 2>&1 &
   local pid=$! have=0 pct=0
+  DOWNLOAD_PID=$pid
   while kill -0 "$pid" 2>/dev/null; do
     # curl creates $out only when its first bytes arrive: before that, an
     # unguarded `wc -c < "$out"` makes the SHELL's redirection print
@@ -1256,7 +1309,8 @@ download_bar() { # $1 = url, $2 = out file, $3 = label
     draw_bar "$label" "$pct" "$have" "$total"
     sleep 0.2
   done
-  wait "$pid" || { printf '\n'; return 1; }
+  wait "$pid" || { DOWNLOAD_PID=""; printf '\n'; return 1; }
+  DOWNLOAD_PID=""
   draw_bar "$label" 100 "$total" "$total"
   printf '\n  %s✓%s %sdownloaded (%s)%s\n' "$C_OK" "$C_RESET" "$C_DIM" "$(human_bytes "$total")" "$C_RESET"
   return 0
@@ -6843,24 +6897,36 @@ dashboard_draw() { # $1 = frame
   done <<EOF
 $frame
 EOF
+  # Clear rows left by a taller previous frame (e.g. Cloudflare was stopped).
+  if [ "$TTY_OUT" = "1" ] && [ "${DASH_LINES:-0}" -gt "$n" ]; then
+    local i extra=$(( DASH_LINES - n ))
+    for (( i=0; i<extra; i++ )); do printf '\r%s[K\n' "$ESC"; done
+    # Return to the line immediately after this frame; otherwise each shorter
+    # redraw would drift down by the number of stale rows it just cleared.
+    printf '%s[%dA' "$ESC" "$extra"
+  fi
   DASH_LINES="$n"
 }
 
 # One dashboard row: label, value, optional state chip.
 dash_row() { # $1 = label, $2 = value, $3 = state (ok|warn|err|off|empty)
-  local label="$1" value="$2" state="${3:-}" chip="" plain w
-  plain="$(vis "$value")"
-  w=$(( COLS - 16 ))
-  [ "$w" -lt 12 ] && w=12
-  if [ ${#plain} -gt "$w" ]; then
-    value="$(elide_mid "$value" "$w")"
-  fi
+  local label="$1" value="$2" state="${3:-}" chip="" plain w chip_plain
   case "$state" in
     ok)   chip="$(pill ok ok)" ;;
     warn) chip="$(pill warn watch)" ;;
     err)  chip="$(pill err down)" ;;
     off)  chip="$(pill off off)" ;;
   esac
+  plain="$(vis "$value")"
+  chip_plain="$(vis "$chip")"
+  # Budget the chip BEFORE eliding: the old row was chip-width too long and
+  # wrapped onto an extra line the next redraw could not erase.
+  w=$(( COLS - 16 ))
+  [ -n "$chip" ] && w=$(( w - 2 - ${#chip_plain} ))
+  [ "$w" -lt 1 ] && w=1
+  if [ ${#plain} -gt "$w" ]; then
+    value="$(elide_mid "$value" "$w")"
+  fi
   if [ -n "$chip" ]; then
     printf '    %s%-10s%s  %s  %s\n' "$C_DIM" "$label" "$C_RESET" "$value" "$chip"
   else
@@ -6915,6 +6981,7 @@ dashboard_frame() {
     act="$(tail -1 "$LOG" 2>/dev/null | sed -E 's/^[0-9]{2}:[0-9]{2}:[0-9]{2} +//; s/^(INFO|WARN|ERROR) +//' | cut -c1-48)"
   fi
   [ -n "$act" ] || act="idle"
+  act="$(elide_mid "$act" "$(( COLS - 16 ))")"
 
   local head="  ${C_ACC}♪${C_RESET} ${C_BOLD}wearsic${C_RESET} ${C_DIM}·${C_RESET} ${C_BOLD}dashboard${C_RESET}"
   local right
@@ -6974,7 +7041,11 @@ dashboard_frame() {
 "
   out="$out
 "
-  out="$out$(printf '    %swearsic start · stop · restart · logs · doctor · cloudflare%s\n' "$C_DIM" "$C_RESET")"
+  if [ "$COLS" -lt 56 ]; then
+    out="$out$(printf '    %sstart · stop · logs · doctor%s\n' "$C_DIM" "$C_RESET")"
+  else
+    out="$out$(printf '    %swearsic start · stop · restart · logs · doctor · cloudflare%s\n' "$C_DIM" "$C_RESET")"
+  fi
   printf '%s' "$out"
 }
 
@@ -6992,6 +7063,7 @@ cmd_dashboard() {
   [ "$TTY_OUT" = "1" ] || once=1
   trap 'shim_cursor_show; printf "\n"; exit 0' INT
   while :; do
+    COLS="$(cur_cols)"
     dashboard_draw "$(dashboard_frame)"
     [ "$once" = "1" ] && break
     sleep 2

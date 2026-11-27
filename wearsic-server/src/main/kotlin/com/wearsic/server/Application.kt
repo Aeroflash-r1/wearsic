@@ -463,6 +463,7 @@ fun Application.module(
     engineUpdater: EngineUpdater? = null,
     crashReporter: CrashReporter? = null,
     lyricsService: LyricsService = LyricsService(LrclibProvider(HttpClient(CIO))),
+    aiReRankerOverride: AiReRanker? = null,
 ) {
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true; encodeDefaults = true })
@@ -788,10 +789,13 @@ fun Application.module(
             // env: WEARSIC_AI_API_KEY, WEARSIC_AI_BASE_URL, WEARSIC_AI_MODEL.
             // Purely enhancement: any failure silently falls back to the
             // engine's classic ranking.
-            val aiReRanker = AiReRanker(
+            val aiReRanker = aiReRankerOverride ?: AiReRanker(
                 apiKey = System.getenv("WEARSIC_AI_API_KEY"),
                 baseUrl = System.getenv("WEARSIC_AI_BASE_URL") ?: "https://api.openai.com/v1",
                 model = System.getenv("WEARSIC_AI_MODEL") ?: "gpt-4o-mini",
+                // The explicit playlist action may do related lookups plus
+                // search fallback before the optional provider call.
+                requestTimeoutMs = 8_000L,
             )
 
             // Route-level metadata caches (TtlLoaderCache). These endpoints are
@@ -1110,6 +1114,9 @@ fun Application.module(
             // saves it as a real playlist. Without an AI key, falls back to
             // the classic engine's picks — the endpoint still works.
             post("/ai/playlist") {
+                if (!call.checkRateLimited(metaLimiter, apiKey, "Too many playlist requests; slow down and retry shortly")) {
+                    return@post
+                }
                 val req = call.receive<AiPlaylistRequest>()
                 val name = req.name.trim().take(80)
                 if (name.isBlank()) {
@@ -1122,9 +1129,7 @@ fun Application.module(
                 val excluded = database.listFavorites().map { it.videoId }.toSet()
                 val limit = req.limit.coerceIn(5, 40)
 
-                val pool = if (seeds.isEmpty()) {
-                    // No seeds: recommend from the server's own current taste
-                    // profile is not possible, so pick a broad-but-safe set.
+                var pool = if (seeds.isEmpty()) {
                     emptyList()
                 } else {
                     recommendationEngine.build(
@@ -1133,20 +1138,33 @@ fun Application.module(
                     )
                 }
                 if (pool.isEmpty()) {
+                    // First run (or an exhausted related rail): a vibe/artist
+                    // query still creates a useful playlist. With no hints at
+                    // all, use a broad catalog query instead of failing.
+                    val query = (genres + artists).joinToString(" ").trim()
+                        .ifEmpty { "popular songs" }
+                    pool = searchOrchestrator.search(query, limit = limit.coerceAtLeast(20))
+                        .filter { it.videoId !in excluded }
+                }
+                if (pool.isEmpty()) {
                     call.respond(
                         HttpStatusCode.NotFound,
-                        ErrorResponse("No candidate tracks found — play or favorite a few songs first"),
+                        ErrorResponse("No songs found for this playlist — try another vibe or play a few songs first"),
                     )
                     return@post
                 }
 
-                val aiUsed = aiReRanker.isConfigured
-                val finalTracks = aiReRanker.rerank(pool, seeds, artists, genres).take(limit)
+                // Playlist creation is an explicit AI action, so it must pass
+                // force=true. aiApplied is false on provider failure/throttle;
+                // configured-but-not-called must never be reported as AI.
+                val ranked = aiReRanker.rerankDetailed(pool, seeds, artists, genres, force = true)
+                val finalTracks = ranked.tracks.take(limit)
                 val playlist = database.createPlaylist(name)
                 for (track in finalTracks) {
                     database.addTrackToPlaylist(playlist.id, track)
                 }
-                call.respond(HttpStatusCode.Created, AiPlaylistResponse(name, finalTracks, aiUsed))
+                searchOrchestrator.prefetchVideoIds(finalTracks.take(3).map { it.videoId })
+                call.respond(HttpStatusCode.Created, AiPlaylistResponse(name, finalTracks, ranked.aiApplied))
             }
             get("/playlists/{id}") {
                 val result = database.getPlaylistTracks(call.parameters["id"]!!)

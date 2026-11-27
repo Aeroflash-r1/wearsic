@@ -10,9 +10,12 @@ Health/version pins (kept live for the release bumper):
 All endpoints are `application/json`. `TrackDto` shape:
 
 ```json
-{ "videoId": "…", "title": "…", "artist": "…", "durationMs": 0,
-  "thumbnailUrl": "…", "streamUrl": "…", "mimeType": "audio/mp4" }
+{ "videoId": "…", "title": "…", "uploader": "…", "durationMs": 0,
+  "thumbnailUrl": "…", "albumName": "…", "uploadAgeText": "3 months ago",
+  "streamUrl": "…", "mimeType": "audio/mp4" }
 ```
+
+`albumName` and `uploadAgeText` are optional (null when the source does not carry them); `uploadAgeText` is raw YouTube text ("17y ago") used only by the recommendation engine's recency boost.
 
 ## Health & status
 

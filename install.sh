@@ -31,10 +31,19 @@ set -u
 REPO="${WEARSIC_REPO:-Aeroflash-r1/wearsic}"
 DEST="${WEARSIC_DIR:-$HOME/wearsic-server}"
 WORK="$(mktemp -d)"
-trap 'shim_clear_live; shim_cursor_show; shim_cleanup; rm -rf "$WORK"' EXIT
-# Ctrl+C (and a polite TERM) must never leave a hidden cursor behind.
-trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 130' INT
-trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 143' TERM
+installer_cleanup() {
+  shim_stop_children
+  if [ "${PKG_PID:-0}" != "0" ]; then
+    kill "$PKG_PID" 2>/dev/null || true
+    wait "$PKG_PID" 2>/dev/null || true
+    PKG_PID=0
+  fi
+  shim_clear_live; shim_cursor_show; shim_cleanup
+}
+trap 'installer_cleanup; rm -rf "$WORK"' EXIT
+# Ctrl+C (and a polite TERM) must never leave a hidden cursor or child behind.
+trap 'installer_cleanup; exit 130' INT
+trap 'installer_cleanup; exit 143' TERM
 
 # ── output helpers ──────────────────────────────────────────────────────────
 # Theme: quiet green. The tag stays dim (grep-able, not shouty); content
@@ -43,9 +52,22 @@ trap 'shim_clear_live; shim_cursor_show; shim_cleanup; exit 143' TERM
 # Real escape sequences (not backslash text): the same variables are used in
 # printf FORMAT strings and in plain text (box bodies), so they must be the
 # actual bytes.
-C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_PURPLE=$'\033[38;5;114m'
-C_GREEN=$'\033[1;32m'; C_YELLOW=$'\033[1;33m'; C_RED=$'\033[1;31m'; C_DIM=$'\033[2m'; C_CYAN=$'\033[38;5;157m'
-C_TAG=$'\033[2m'; C_ACC=$'\033[38;5;114m'
+installer_color_on() {
+  [ -n "${NO_COLOR:-}" ] && return 1
+  case "${WEARSIC_COLOR:-auto}" in
+    never) return 1 ;;
+    always) return 0 ;;
+    *) [ -t 1 ] ;;
+  esac
+}
+if installer_color_on; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_PURPLE=$'\033[38;5;114m'
+  C_GREEN=$'\033[1;32m'; C_YELLOW=$'\033[1;33m'; C_RED=$'\033[1;31m'; C_DIM=$'\033[2m'; C_CYAN=$'\033[38;5;157m'
+  C_TAG=$'\033[2m'; C_ACC=$'\033[38;5;114m'
+else
+  C_RESET=""; C_BOLD=""; C_PURPLE=""; C_GREEN=""; C_YELLOW=""; C_RED=""
+  C_DIM=""; C_CYAN=""; C_TAG=""; C_ACC=""
+fi
 
 TTY_OUT=0; [ -t 1 ] && TTY_OUT=1   # animations off when piped/logged
 
@@ -114,6 +136,7 @@ SHIM_LIVE_SHORT=""
 SHIM_STATUS_FILE=""
 SHIM_STAGE_NAME=""
 SHIM_STAGE_DETAIL=""
+SHIM_CHILD_PID=""
 
 # The shimmer palette is deliberately gray and self-contained: the file's own
 # theme (green/cyan/lavender) stays out of the animated area so the wave
@@ -153,8 +176,13 @@ shim_depth() {
 }
 
 shim_init() {
-  shim_palette
   SHIM_DEPTH="$(shim_depth)"
+  if [ "$SHIM_DEPTH" = "0" ]; then
+    # Plain output means PLAIN: no ANSI in stage summaries, logs, or pipes.
+    SHIM_DIM=""; SHIM_OK=""; SHIM_WARN=""; SHIM_ERR=""; SHIM_RESET=""
+  else
+    shim_palette
+  fi
 }
 
 # Smooth falloff: 100 at the band centre → 0 at the band edge.
@@ -437,11 +465,14 @@ shim_run() { # $1 = live text, rest = command
   local log rc=0
   log="$(mktemp "${TMPDIR:-/tmp}/wearsic-shim.XXXXXX" 2>/dev/null)" || log="/dev/null"
   SHIM_LIVE_TEXT="$text"
+  SHIM_LIVE_SHORT=""
   if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
     "$@" >"$log" 2>&1 &
     local pid=$!
+    SHIM_CHILD_PID="$pid"
     shim_animate "$pid"
     wait "$pid"; rc=$?
+    SHIM_CHILD_PID=""
     shim_clear_live
   else
     "$@" >"$log" 2>&1
@@ -689,6 +720,7 @@ shim_fetch_done() {
     line="…${line:$cut}"
   fi
   printf '\r%s[K%s\n' "$SHIM_ESC" "$line"
+  SHIM_LIVE_ACTIVE=0
 }
 
 shim_fetch_wait() {  # optional $1 = hard ceiling in seconds
@@ -733,6 +765,7 @@ shim_fetch_wait() {  # optional $1 = hard ceiling in seconds
 shim_stage_begin() { # $1 = stage name, $2 = detail (optional)
   SHIM_STAGE_NAME="$1"
   SHIM_STAGE_DETAIL="${2:-}"
+  SHIM_LIVE_SHORT=""
   SHIM_LIVE_TEXT="$1"
   [ -n "$SHIM_STAGE_DETAIL" ] && SHIM_LIVE_TEXT="$1  $SHIM_STAGE_DETAIL"
   [ "$SHIM_DEPTH" = "0" ] && return 0
@@ -783,8 +816,10 @@ shim_stage_run() { # $1 = stage name, $2 = detail, rest = command
   if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
     "$@" >"$log" 2>&1 &
     local pid=$!
+    SHIM_CHILD_PID="$pid"
     shim_animate "$pid"
     wait "$pid"; rc=$?
+    SHIM_CHILD_PID=""
     shim_clear_live
   else
     "$@" >"$log" 2>&1
@@ -798,6 +833,21 @@ shim_stage_run() { # $1 = stage name, $2 = detail, rest = command
   fi
   [ "$log" = "/dev/null" ] || rm -f "$log" 2>/dev/null
   return "$rc"
+}
+
+# Reap every child owned by the animation core before temp files are removed.
+# Safe to call repeatedly from EXIT/INT/TERM traps.
+shim_stop_children() {
+  local pid
+  for pid in "$SHIM_CHILD_PID" "$SHIM_FETCH_PID"; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    kill "$pid" 2>/dev/null || true
+  done
+  for pid in "$SHIM_CHILD_PID" "$SHIM_FETCH_PID"; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    wait "$pid" 2>/dev/null || true
+  done
+  SHIM_CHILD_PID=""; SHIM_FETCH_PID=""
 }
 
 # The animation is opt-in per terminal: a real TTY with colour support gets
@@ -876,7 +926,7 @@ $line"
         [ -n "$chunk" ] || continue
         wrapped="$wrapped
    $chunk"
-      done < <(box_words "$maxw" "$plain")
+      done < <(box_words "$((maxw - 3))" "$plain")
     fi
   done <<EOF
 $BOX_BODY
@@ -1161,7 +1211,13 @@ deps_start() {
 deps_wait() {
   [ "$PKG_PID" != "0" ] || return 0
   shim_stage_status "waiting for the dependencies (Java is ~100MB on first install)"
+  # Keep the active stage moving during a first JDK download instead of
+  # freezing one frame for minutes. Plain/piped output just blocks on wait().
+  if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
+    shim_animate "$PKG_PID"
+  fi
   if ! wait "$PKG_PID"; then
+    PKG_PID=0
     shim_log_tail "$WORK/pkg.log" 6
     die "Failed to install dependencies. Run: pkg update -y && pkg install -y openjdk-25 unzip curl"
   fi
@@ -1475,6 +1531,8 @@ SERVER_URL=""
 [ -n "$LAN_IP" ] && SERVER_URL="http://${LAN_IP}:$(port)"
 
 shim_stage_begin "Ready" "connect the watch"
+shim_clear_live
+shim_cursor_show
 printf '\n'
 box_begin "Wearsic server is ready"
 box_line ""

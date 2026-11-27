@@ -332,24 +332,18 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             _aiCreateState.update {
                 it.copy(isLoading = true, errorMessage = null, createdName = null)
             }
-            val favs = _favoritesState.value.tracks
-            val seeds = when {
-                favs.isNotEmpty() -> favs.take(6).map { it.id }
-                else -> recentTracks.value.take(6).map { it.id }
-            }
-            if (seeds.isEmpty()) {
-                _aiCreateState.update {
-                    it.copy(
-                        isLoading = false,
-                        errorMessage = "Play or favorite a few songs first",
-                    )
-                }
-                return@launch
-            }
-            val artists = favs.groupBy { it.artist.trim().lowercase() }
+            // Favorites are the strongest taste signal, recents fill the gaps.
+            // An empty history is still a valid request: a selected vibe (or
+            // the server's broad catalog fallback) can create a first playlist.
+            val tasteTracks = (_favoritesState.value.tracks + recentTracks.value)
+                .distinctBy { it.id }
+                .filter { it.id.isNotBlank() }
+            val seeds = tasteTracks.take(6).map { it.id }
+            val artists = tasteTracks.groupBy { it.artist.trim().lowercase() }
                 .entries.sortedByDescending { it.value.size }
                 .take(5)
                 .map { it.value.first().artist.trim() }
+                .filter { it.isNotEmpty() }
             val genres = listOfNotNull(genre?.trim()?.lowercase()?.takeIf { it.isNotEmpty() })
             musicRepository.createAiPlaylist(
                 name = name,
@@ -873,15 +867,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             _searchState.update {
                 it.copy(query = query, isSearching = true, errorMessage = null, isOffline = false)
             }
-            var result = musicRepository.searchMusic(query)
-            // A search computes its WHOLE page before answering, so a run past
-            // one client timeout window does not mean the server failed — it
-            // was still working. ONE silent retry keeps genuinely slow
-            // searches working instead of reading "Search failed"; a real
-            // outage surfaces after the second attempt.
-            if (result.exceptionOrNull() is TimeoutError) {
-                result = musicRepository.searchMusic(query)
-            }
+            // The server already bounds a page and the HTTP client has a
+            // patient search budget. A second full request after a timeout
+            // doubled upstream load and made a congested server slower.
+            val result = musicRepository.searchMusic(query)
             reportServerResult(result)
             result.onSuccess { tracks ->
                 _searchState.update {
@@ -911,12 +900,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * "Show more": fetches the next page of results and appends them. The
-     * request uses BOTH a growing limit and the offset — a server that
-     * honours offset returns the next window; an older server that ignores it
-     * returns the first rows again, which the dedupe drops, and we still make
-     * progress as long as the server has more rows to give. The button stays
-     * visible until a page comes back duplicated or short (exhausted).
+     * "Show more": fetches exactly one next page and appends it. Asking for
+     * (loaded + pageSize) rows AS WELL AS an offset made the server build a
+     * much larger pool than needed (page 2 fetched 30 rows to show 10).
      */
     fun loadMoreResults() {
         val state = _searchState.value
@@ -926,9 +912,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         searchJob = viewModelScope.launch {
             _searchState.update { it.copy(isLoadingMore = true, errorMessage = null) }
             val pageSize = com.wearsic.app.network.WearsicHttpApiClient.SEARCH_PAGE_SIZE
-            val maxLimit = com.wearsic.app.network.WearsicHttpApiClient.SEARCH_MAX_LIMIT
-            val reqLimit = (state.results.size + pageSize).coerceAtMost(maxLimit)
-            val result = musicRepository.searchMusic(state.query, reqLimit, state.results.size)
+            val result = musicRepository.searchMusic(state.query, pageSize, state.results.size)
             result.onSuccess { tracks ->
                 val known = state.results.map { it.id }.toSet()
                 val fresh = tracks.filter { t -> t.id !in known }
@@ -939,7 +923,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         errorMessage = null,
                         // Exhausted when the server returned nothing new or a
                         // page smaller than requested.
-                        canLoadMore = fresh.isNotEmpty() && tracks.size >= reqLimit
+                        canLoadMore = fresh.isNotEmpty() && tracks.size >= pageSize
                     )
                 }
             }.onFailure { err ->

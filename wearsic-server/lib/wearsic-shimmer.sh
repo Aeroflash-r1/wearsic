@@ -35,6 +35,7 @@ SHIM_LIVE_SHORT=""
 SHIM_STATUS_FILE=""
 SHIM_STAGE_NAME=""
 SHIM_STAGE_DETAIL=""
+SHIM_CHILD_PID=""
 
 # The shimmer palette is deliberately gray and self-contained: the file's own
 # theme (green/cyan/lavender) stays out of the animated area so the wave
@@ -74,8 +75,13 @@ shim_depth() {
 }
 
 shim_init() {
-  shim_palette
   SHIM_DEPTH="$(shim_depth)"
+  if [ "$SHIM_DEPTH" = "0" ]; then
+    # Plain output means PLAIN: no ANSI in stage summaries, logs, or pipes.
+    SHIM_DIM=""; SHIM_OK=""; SHIM_WARN=""; SHIM_ERR=""; SHIM_RESET=""
+  else
+    shim_palette
+  fi
 }
 
 # Smooth falloff: 100 at the band centre → 0 at the band edge.
@@ -358,11 +364,14 @@ shim_run() { # $1 = live text, rest = command
   local log rc=0
   log="$(mktemp "${TMPDIR:-/tmp}/wearsic-shim.XXXXXX" 2>/dev/null)" || log="/dev/null"
   SHIM_LIVE_TEXT="$text"
+  SHIM_LIVE_SHORT=""
   if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
     "$@" >"$log" 2>&1 &
     local pid=$!
+    SHIM_CHILD_PID="$pid"
     shim_animate "$pid"
     wait "$pid"; rc=$?
+    SHIM_CHILD_PID=""
     shim_clear_live
   else
     "$@" >"$log" 2>&1
@@ -610,6 +619,7 @@ shim_fetch_done() {
     line="…${line:$cut}"
   fi
   printf '\r%s[K%s\n' "$SHIM_ESC" "$line"
+  SHIM_LIVE_ACTIVE=0
 }
 
 shim_fetch_wait() {  # optional $1 = hard ceiling in seconds
@@ -654,6 +664,7 @@ shim_fetch_wait() {  # optional $1 = hard ceiling in seconds
 shim_stage_begin() { # $1 = stage name, $2 = detail (optional)
   SHIM_STAGE_NAME="$1"
   SHIM_STAGE_DETAIL="${2:-}"
+  SHIM_LIVE_SHORT=""
   SHIM_LIVE_TEXT="$1"
   [ -n "$SHIM_STAGE_DETAIL" ] && SHIM_LIVE_TEXT="$1  $SHIM_STAGE_DETAIL"
   [ "$SHIM_DEPTH" = "0" ] && return 0
@@ -704,8 +715,10 @@ shim_stage_run() { # $1 = stage name, $2 = detail, rest = command
   if [ "$SHIM_DEPTH" != "0" ] && [ "$TTY_OUT" = "1" ]; then
     "$@" >"$log" 2>&1 &
     local pid=$!
+    SHIM_CHILD_PID="$pid"
     shim_animate "$pid"
     wait "$pid"; rc=$?
+    SHIM_CHILD_PID=""
     shim_clear_live
   else
     "$@" >"$log" 2>&1
@@ -719,6 +732,21 @@ shim_stage_run() { # $1 = stage name, $2 = detail, rest = command
   fi
   [ "$log" = "/dev/null" ] || rm -f "$log" 2>/dev/null
   return "$rc"
+}
+
+# Reap every child owned by the animation core before temp files are removed.
+# Safe to call repeatedly from EXIT/INT/TERM traps.
+shim_stop_children() {
+  local pid
+  for pid in "$SHIM_CHILD_PID" "$SHIM_FETCH_PID"; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    kill "$pid" 2>/dev/null || true
+  done
+  for pid in "$SHIM_CHILD_PID" "$SHIM_FETCH_PID"; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    wait "$pid" 2>/dev/null || true
+  done
+  SHIM_CHILD_PID=""; SHIM_FETCH_PID=""
 }
 
 # The animation is opt-in per terminal: a real TTY with colour support gets

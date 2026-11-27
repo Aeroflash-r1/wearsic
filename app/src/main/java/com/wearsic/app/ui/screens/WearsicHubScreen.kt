@@ -48,7 +48,6 @@ enum class WearsicHubSection(val label: String, val page: Int) {
 fun WearsicHubScreen(
     playbackState: PlaybackUiState,
     recentTracks: List<Track>,
-    mostPlayedTracks: List<Track>,
     favoritesState: FavoritesUiState,
     playlistsState: PlaylistsUiState,
     playlistDetailState: PlaylistDetailUiState,
@@ -121,7 +120,6 @@ fun WearsicHubScreen(
                 when (page) {
                     0 -> HomeScreen(
                         recentTracks = recentTracks,
-                        mostPlayedTracks = mostPlayedTracks,
                         recommendationsState = recommendationsState,
                         favorites = favoritesState.tracks,
                         isServerReachable = serverReachable,

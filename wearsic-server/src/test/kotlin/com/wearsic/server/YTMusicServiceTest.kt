@@ -87,7 +87,11 @@ class YTMusicServiceTest {
         // slot of the limited result page.
         val tracks = service.parseSearchResponse(CARD_AND_DUPLICATE_FIXTURE, 10)
         assertEquals(2, tracks.size)
-        assertEquals(1, service.parseSearchResponse(CARD_AND_DUPLICATE_FIXTURE, 2).size)
+        assertEquals(
+            listOf("NZ3Ck43m_ZY", "H7UMRkp7m80"),
+            service.parseSearchResponse(CARD_AND_DUPLICATE_FIXTURE, 2).map { it.videoId },
+            "a duplicate shelf row must not consume a distinct song's slot",
+        )
     }
 
     @Test

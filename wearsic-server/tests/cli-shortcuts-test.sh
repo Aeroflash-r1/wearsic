@@ -43,7 +43,7 @@ grep -q '^cur_cols()' "$CLI" \
   && pass "cur_cols is defined (live terminal width)" \
   || fail "cur_cols missing"
 
-grep -q "trap '_COLS_CACHE=\"\"' WINCH" "$CLI" \
+grep -q "trap '_COLS_CACHE=\"\"; COLUMNS=\"\"' WINCH" "$CLI" \
   && pass "SIGWINCH invalidates the width cache" \
   || fail "SIGWINCH trap missing"
 

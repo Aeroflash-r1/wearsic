@@ -98,7 +98,9 @@ sealed class ServerError(
 data class HttpError(
     val url: String,
     override val statusCode: Int,
-    override val message: String = "HTTP $statusCode"
+    override val message: String = "HTTP $statusCode",
+    /** Actionable, server-provided wording when the generic status is not enough. */
+    val serverMessage: String? = null,
 ) : ServerError(message, statusCode) {
     /**
      * 503 (service unavailable) is the one HTTP status the server explicitly
@@ -106,6 +108,9 @@ data class HttpError(
      * request.
      */
     override val isRetryable: Boolean get() = statusCode == 503
+
+    override fun getDisplayMessage(): String =
+        serverMessage?.takeIf { it.isNotBlank() } ?: super.getDisplayMessage()
 }
 
 /** Server is rate limiting requests */

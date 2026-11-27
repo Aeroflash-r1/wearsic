@@ -68,8 +68,6 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.SelfImprovement
-import androidx.compose.material.icons.rounded.Whatshot
-import androidx.compose.material.icons.rounded.Radio
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import com.wearsic.app.model.Track
@@ -108,19 +106,18 @@ import java.util.Calendar
  * HOME — the premium entry tab for the redesigned Wear experience.
  *
  * Personal discovery, designed (not shrunk) for the 44 mm round
- * display: a personal "listen again" hero, a Fresh picks carousel (the
- * server's taste-ranked recommendations), Moods that run real searches,
- * most-played and recent shelves.
+ * display: a personal "listen again" hero, a "New for you" shelf (the
+ * server's taste-ranked recommendations of songs you have not heard),
+ * Moods that run real searches, and a recent shelf.
  *
- * Data: everything renders EXISTING state — recentTracks, most played
- * (Room), recommendations (one POST, 30-minute server cache), favorites
- * (Room). The only network call happens when recommendations are empty,
- * so cold app opens on the wrist stay at one request max.
+ * Data: everything renders EXISTING state — recentTracks, recommendations
+ * (one POST, 30-minute server cache), favorites (Room). The only network
+ * call happens when recommendations are empty, so cold app opens on the
+ * wrist stay at one request max.
  */
 @Composable
 fun HomeScreen(
     recentTracks: List<Track>,
-    mostPlayedTracks: List<Track>,
     recommendationsState: RecommendationsUiState,
     favorites: List<Track>,
     isServerReachable: Boolean,
@@ -152,6 +149,16 @@ fun HomeScreen(
 ) {
     var showShufflePicker by remember { mutableStateOf(false) }
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
+    // "New for you" must never show something the user already knows —
+    // recents + favorites ids, derived from state the screen already holds
+    // (no extra work per recomposition, no extra network).
+    val knownIds = remember(recentTracks, favorites) {
+        (recentTracks + favorites).map { it.id }.toSet()
+    }
+    // Derived once per state change; the shelf below only renders it.
+    val freshPicks = remember(recommendationsState.tracks, knownIds) {
+        filterNewToYou(recommendationsState.tracks, knownIds)
+    }
     // Recommendations: fetch ONCE when the tab is first shown with an empty
     // list (the server holds a 30-min cache, so this is one cheap POST).
     // A previous FAILED fetch pins errorMessage — the guard keeps that state
@@ -357,20 +364,24 @@ fun HomeScreen(
                 }
             }
 
-            // ---- Most played (≥3 ranked rows = a real taste signal) ----
-            if (mostPlayedTracks.size >= 3) {
+            // ---- New for you: the server's taste-ranked picks — songs
+            //      related to your artists, genres and history that you
+            //      have NOT heard yet. Renders the same cached state the
+            //      Mix tab refreshes (one POST, 30-min server cache); this
+            //      shelf itself triggers no network work. ----
+            if (freshPicks.isNotEmpty()) {
                 item {
                     WearsicSectionTitle(
-                        label = "Most played",
-                        icon = Icons.Rounded.Whatshot,
-                        iconContentDescription = "Most played"
+                        label = "New for you",
+                        icon = Icons.Rounded.AutoAwesome,
+                        iconContentDescription = "New songs picked for you"
                     )
                 }
                 item {
                     WearsicTrackShelf(
-                        tracks = mostPlayedTracks.take(10),
+                        tracks = freshPicks,
                         onPlayTrack = onPlay,
-                        placeholderIcon = Icons.Rounded.Radio
+                        placeholderIcon = Icons.Rounded.AutoAwesome
                     )
                 }
             }

@@ -15,6 +15,17 @@ import java.net.ConnectException
  */
 class ErrorTest {
 
+    @Test
+    fun httpErrorPrefersActionableServerMessage() {
+        val error = HttpError(
+            url = "http://server/api/ai/playlist",
+            statusCode = 404,
+            serverMessage = "No songs found for this vibe",
+        )
+        assertEquals("No songs found for this vibe", error.getDisplayMessage())
+        assertEquals("Not found", HttpError("http://server", 404).getDisplayMessage())
+    }
+
     // ============================================================================
     // NetworkError Tests
     // ============================================================================
